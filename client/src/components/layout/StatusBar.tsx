@@ -1,0 +1,80 @@
+import type { ReactNode } from "react";
+import { MERIDIAN_VERSION } from "../../constants/version";
+import { MaterialIcon } from "../ui/MaterialIcon";
+import { transitionBase } from "../ui/styles";
+import { useWorkspaceStore } from "../../store/useWorkspaceStore";
+import type { LanguageMode } from "../../types";
+
+const LANGUAGE_LABELS: Record<LanguageMode, string> = {
+  typescript: "TypeScript",
+  javascript: "JavaScript",
+  python: "Python",
+  go: "Go",
+  rust: "Rust",
+  html: "HTML",
+  css: "CSS",
+  json: "JSON",
+};
+
+function StatusBarSegment({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <span
+      className={[
+        "inline-flex h-full items-center gap-1 px-2.5",
+        transitionBase,
+        "hover:bg-on-primary/10",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {children}
+    </span>
+  );
+}
+
+export function StatusBar() {
+  const cursorPosition = useWorkspaceStore((s) => s.cursorPosition);
+  const activeFileId = useWorkspaceStore((s) => s.activeFileId);
+  const openTabs = useWorkspaceStore((s) => s.openTabs);
+  const diagnosticCounts = useWorkspaceStore((s) => s.diagnosticCounts);
+
+  const activeTab = openTabs.find((t) => t.fileId === activeFileId);
+  const languageLabel = activeTab ? LANGUAGE_LABELS[activeTab.language] : "Plain Text";
+
+  return (
+    <footer
+      className="flex h-[22px] shrink-0 items-center justify-between bg-primary-container px-0.5 font-mono text-[11px] leading-none text-on-primary"
+      role="contentinfo"
+      aria-label="Status bar"
+    >
+      <div className="flex h-full min-w-0 items-center overflow-x-auto">
+        <StatusBarSegment>
+          <MaterialIcon name="sync" className="text-[12px]" aria-hidden />
+          <span>main</span>
+        </StatusBarSegment>
+        <StatusBarSegment>
+          <MaterialIcon name="error_outline" className="text-[12px]" aria-hidden />
+          <span className="tabular-nums">{diagnosticCounts.errors}</span>
+          <MaterialIcon name="warning_amber" className="ml-0.5 text-[12px]" aria-hidden />
+          <span className="tabular-nums">{diagnosticCounts.warnings}</span>
+        </StatusBarSegment>
+      </div>
+      <div className="flex h-full shrink-0 items-center">
+        <StatusBarSegment className="tabular-nums">
+          Ln {cursorPosition.line}, Col {cursorPosition.column}
+        </StatusBarSegment>
+        <StatusBarSegment className="hidden md:inline-flex">Spaces: 4</StatusBarSegment>
+        <StatusBarSegment className="hidden lg:inline-flex">UTF-8</StatusBarSegment>
+        <StatusBarSegment className="hidden sm:inline-flex">{languageLabel}</StatusBarSegment>
+        <StatusBarSegment className="hidden md:inline-flex">
+          <MaterialIcon name="check_circle" className="text-[12px]" aria-hidden />
+          Prettier
+        </StatusBarSegment>
+        <StatusBarSegment className="font-semibold tabular-nums">
+          Meridian v{MERIDIAN_VERSION}
+        </StatusBarSegment>
+      </div>
+    </footer>
+  );
+}

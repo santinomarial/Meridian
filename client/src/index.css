@@ -1,3 +1,150 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: #3525cd;
+    --color-on-primary: #ffffff;
+    --color-primary-container: #2d20b0;
+    --color-surface: #eceef2;
+    --color-surface-dim: #e4e7eb;
+    --color-surface-variant: #dde1e8;
+    --color-surface-container-low: #e8ebf0;
+    --color-surface-container: #dde1e8;
+    --color-surface-container-high: #d0d5de;
+    --color-surface-container-highest: #c4cad4;
+    --color-surface-container-lowest: #fafbfc;
+    --color-on-surface: #12131a;
+    --color-on-surface-variant: #3d4050;
+    --color-outline: #5c6070;
+    --color-outline-variant: #b4b9c6;
+    --color-secondary: #565e74;
+    --color-on-secondary: #ffffff;
+    --color-tertiary: #d97721;
+    --color-error: #c62828;
+    --color-on-error: #ffffff;
+  }
+
+  .dark {
+    --color-primary: #3525cd;
+    --color-on-primary: #ffffff;
+    --color-primary-container: #4a3de6;
+    --color-surface: #111218;
+    --color-surface-dim: #111218;
+    --color-surface-variant: #1c1e27;
+    --color-surface-container-low: #15171e;
+    --color-surface-container: #1a1c24;
+    --color-surface-container-high: #22252e;
+    --color-surface-container-highest: #2a2e38;
+    --color-surface-container-lowest: #0c0b12;
+    --color-on-surface: #ebe9f4;
+    --color-on-surface-variant: #a8a4bc;
+    --color-outline: #7a7690;
+    --color-outline-variant: #3a3848;
+    --color-secondary: #4edea3;
+    --color-on-secondary: #003824;
+    --color-tertiary: #ffb783;
+    --color-error: #ffb4ab;
+    --color-on-error: #ffffff;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--color-surface-container-lowest);
+    color: var(--color-on-surface);
+    font-family: Geist, ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: "tnum" 0;
+  }
+}
+
+@layer components {
+  .meridian-panel {
+    background-color: var(--color-surface-container-low);
+  }
+
+  .meridian-editor-chrome {
+    background-color: var(--color-surface-container-lowest);
+  }
+
+  .meridian-crisp-border {
+    border-color: var(--color-outline-variant);
+  }
+
+  .glass-panel {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    background-color: rgba(26, 26, 26, 0.88);
+  }
+
+  .label-caps {
+    font-size: 11px;
+    line-height: 1.2;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+}
+
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined";
+  font-weight: normal;
+  font-style: normal;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 20;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-outline-variant) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-outline-variant);
+  border-radius: 2px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-outline);
+}
+
+@keyframes cursor-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.cursor-blink {
+  animation: cursor-blink 1s step-end infinite;
+}
