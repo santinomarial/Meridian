@@ -1,575 +1,343 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
-import { focusRing, transitionBase } from "../components/ui/styles";
 
-type AuthTab = "signup" | "signin" | "trial";
+type AuthMode = "signup" | "signin";
 
-const FEATURES = [
-  {
-    icon: "bolt",
-    title: "OT engine from scratch",
-    description: "Conflict-free merges with a purpose-built operational transform core.",
-  },
-  {
-    icon: "groups",
-    title: "30+ concurrent users, zero drops",
-    description: "Scale live sessions without frame loss or reconnect storms.",
-  },
-  {
-    icon: "ads_click",
-    title: "Live cursors, presence, history",
-    description: "See who is where, replay edits, and audit every keystroke.",
-  },
-] as const;
-
-const AVATAR_SWATCHES = [
-  "#3525cd",
-  "#0ea5e9",
-  "#10b981",
-  "#f59e0b",
-  "#ef4444",
-  "#8b5cf6",
-  "#ec4899",
-  "#14b8a6",
-] as const;
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-type FieldErrors = Record<string, string>;
-
-function getPasswordStrength(password: string): {
-  score: number;
-  label: string;
-} {
-  if (!password) {
-    return { score: 0, label: "" };
-  }
-
+function getPasswordStrengthScore(password: string): number {
+  if (!password) return 0;
   let score = 0;
   if (password.length >= 8) score += 1;
-  if (password.length >= 12) score += 1;
+  if (/[^A-Za-z0-9]/.test(password)) score += 1;
   if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1;
   if (/\d/.test(password)) score += 1;
-  if (/[^A-Za-z0-9]/.test(password)) score += 1;
-
-  const normalized = Math.min(4, Math.max(1, Math.ceil(score * 0.8)));
-  const labels = ["", "Weak", "Fair", "Good", "Strong"];
-  return { score: normalized, label: labels[normalized] ?? "" };
+  return score;
 }
 
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
-}
+function AmbientBackground() {
+  const primaryRef = useRef<HTMLDivElement>(null);
+  const secondaryRef = useRef<HTMLDivElement>(null);
 
-async function simulateSubmit(ms = 900): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
+  useEffect(() => {
+    const onMove = (event: MouseEvent) => {
+      const x = event.clientX / window.innerWidth;
+      const y = event.clientY / window.innerHeight;
+      if (primaryRef.current) {
+        primaryRef.current.style.transform = `translate(${x * 20}px, ${y * 20}px)`;
+      }
+      if (secondaryRef.current) {
+        secondaryRef.current.style.transform = `translate(${-x * 30}px, ${-y * 30}px)`;
+      }
+    };
+    window.addEventListener("mousemove", onMove);
+    return () => window.removeEventListener("mousemove", onMove);
+  }, []);
 
-type TextFieldProps = {
-  id: string;
-  label: string;
-  type?: string;
-  value: string;
-  onChange: (value: string) => void;
-  error?: string;
-  autoComplete?: string;
-  required?: boolean;
-};
-
-function TextField({
-  id,
-  label,
-  type = "text",
-  value,
-  onChange,
-  error,
-  autoComplete,
-  required,
-}: TextFieldProps) {
   return (
-    <div>
-      <label htmlFor={id} className="mb-1.5 block text-label-md font-medium text-on-surface">
-        {label}
-      </label>
-      <input
-        id={id}
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        autoComplete={autoComplete}
-        required={required}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${id}-error` : undefined}
-        className={[
-          "w-full rounded-lg border bg-white px-3 py-2.5 text-body-md text-on-surface outline-none",
-          transitionBase,
-          focusRing,
-          error
-            ? "border-error focus-visible:ring-error/40"
-            : "border-outline-variant focus-visible:border-primary",
-        ].join(" ")}
+    <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden>
+      <div
+        ref={primaryRef}
+        className="absolute -left-[10%] -top-[20%] h-[60%] w-[60%] rounded-full bg-primary/5 blur-[120px]"
       />
-      {error ? (
-        <p id={`${id}-error`} className="mt-1.5 text-label-md text-error" role="alert">
-          {error}
-        </p>
-      ) : null}
+      <div
+        ref={secondaryRef}
+        className="absolute -right-[10%] top-[40%] h-[50%] w-[50%] rounded-full bg-secondary/5 blur-[100px]"
+      />
     </div>
   );
 }
 
-type PasswordFieldProps = {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  error?: string;
-  autoComplete?: string;
-  showStrength?: boolean;
-};
-
-function PasswordField({
-  id,
-  label,
-  value,
-  onChange,
-  error,
-  autoComplete,
-  showStrength = false,
-}: PasswordFieldProps) {
-  const [visible, setVisible] = useState(false);
-  const strength = getPasswordStrength(value);
+function LandingHeader({ onGetStarted }: { onGetStarted: () => void }) {
+  const navLinks = ["Docs", "Pricing", "Changelog"] as const;
 
   return (
-    <div>
-      <label htmlFor={id} className="mb-1.5 block text-label-md font-medium text-on-surface">
+    <header className="fixed top-0 z-50 flex w-full items-center justify-between border-b border-outline-variant bg-surface-dim/80 px-6 py-3 backdrop-blur-md">
+      <div className="flex items-center gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded bg-primary">
+          <MaterialIcon name="polymer" className="text-xl text-on-primary" aria-hidden />
+        </div>
+        <span className="text-display-lg font-bold text-on-surface">Meridian</span>
+      </div>
+      <nav className="hidden gap-6 md:flex" aria-label="Site">
+        {navLinks.map((link) => (
+          <a
+            key={link}
+            href="#"
+            className="text-body-md text-on-surface-variant transition-colors duration-200 hover:text-primary"
+          >
+            {link}
+          </a>
+        ))}
+      </nav>
+      <button
+        type="button"
+        onClick={onGetStarted}
+        className="rounded-lg bg-primary-container px-4 py-1.5 text-body-md font-medium text-on-primary-container transition-all hover:opacity-90 active:scale-95"
+      >
+        Get Started
+      </button>
+    </header>
+  );
+}
+
+type IconFieldProps = {
+  id: string;
+  label: string;
+  icon: string;
+  type?: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+  autoComplete?: string;
+};
+
+function IconField({
+  id,
+  label,
+  icon,
+  type = "text",
+  placeholder,
+  value,
+  onChange,
+  autoComplete,
+}: IconFieldProps) {
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="label-caps ml-1 text-on-surface-variant">
         {label}
       </label>
-      <div className="relative">
+      <div className="group relative">
+        <MaterialIcon
+          name={icon}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-outline transition-colors group-focus-within:text-primary"
+          aria-hidden
+        />
         <input
           id={id}
-          type={visible ? "text" : "password"}
+          type={type}
           value={value}
           onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
           autoComplete={autoComplete}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={
-            [error ? `${id}-error` : null, showStrength ? `${id}-strength` : null]
-              .filter(Boolean)
-              .join(" ") || undefined
-          }
-          className={[
-            "w-full rounded-lg border bg-white py-2.5 pl-3 pr-11 text-body-md text-on-surface outline-none",
-            transitionBase,
-            focusRing,
-            error
-              ? "border-error focus-visible:ring-error/40"
-              : "border-outline-variant focus-visible:border-primary",
-          ].join(" ")}
+          className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-outline-variant focus:border-primary focus:ring-1 focus:ring-primary"
         />
-        <button
-          type="button"
-          onClick={() => setVisible((v) => !v)}
-          className={[
-            "absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-on-surface-variant",
-            transitionBase,
-            "hover:bg-surface-container hover:text-on-surface",
-            focusRing,
-          ].join(" ")}
-          aria-label={visible ? "Hide password" : "Show password"}
-        >
-          <MaterialIcon name={visible ? "visibility_off" : "visibility"} className="text-[20px]" />
-        </button>
       </div>
-      {showStrength && value ? (
-        <div id={`${id}-strength`} className="mt-2 space-y-1">
-          <div className="flex gap-1" aria-hidden>
-            {[1, 2, 3, 4].map((segment) => (
-              <span
-                key={segment}
-                className={[
-                  "h-1 flex-1 rounded-full transition-colors duration-200",
-                  strength.score >= segment
-                    ? strength.score <= 1
-                      ? "bg-error"
-                      : strength.score === 2
-                        ? "bg-amber-500"
-                        : strength.score === 3
-                          ? "bg-primary"
-                          : "bg-emerald-500"
-                    : "bg-outline-variant/60",
-                ].join(" ")}
-              />
-            ))}
-          </div>
-          <p className="text-label-md text-on-surface-variant">
-            Password strength: <span className="font-medium text-on-surface">{strength.label}</span>
-          </p>
-        </div>
-      ) : null}
-      {error ? (
-        <p id={`${id}-error`} className="mt-1.5 text-label-md text-error" role="alert">
-          {error}
-        </p>
-      ) : null}
     </div>
   );
 }
 
-function PrimaryButton({
-  children,
-  loading,
-  type = "submit",
-}: {
-  children: string;
-  loading: boolean;
-  type?: "submit" | "button";
-}) {
-  return (
-    <button
-      type={type}
-      disabled={loading}
-      className={[
-        "flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-body-md font-bold text-on-primary",
-        transitionBase,
-        focusRing,
-        "hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60",
-      ].join(" ")}
-    >
-      {loading ? (
-        <>
-          <span
-            className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-on-primary/30 border-t-on-primary"
-            aria-hidden
-          />
-          <span>Please wait…</span>
-        </>
-      ) : (
-        children
-      )}
-    </button>
-  );
-}
-
-function AuthTabs({
-  active,
-  onChange,
-}: {
-  active: AuthTab;
-  onChange: (tab: AuthTab) => void;
-}) {
-  const tabs: { id: AuthTab; label: string }[] = [
-    { id: "signup", label: "Sign up" },
-    { id: "signin", label: "Sign in" },
-    { id: "trial", label: "Free Trial" },
-  ];
+function PasswordStrength({ password }: { password: string }) {
+  const score = getPasswordStrengthScore(password);
+  const filled = password ? score : 2;
 
   return (
-    <div
-      className="mb-8 flex rounded-lg border border-outline-variant/80 bg-surface-container-low p-1"
-      role="tablist"
-      aria-label="Authentication"
-    >
-      {tabs.map((tab) => {
-        const selected = active === tab.id;
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={selected}
-            onClick={() => onChange(tab.id)}
+    <>
+      <div className="mt-2 flex gap-1 px-1" aria-hidden>
+        {[1, 2, 3, 4].map((segment) => (
+          <div
+            key={segment}
             className={[
-              "flex-1 rounded-md px-3 py-2 text-label-md font-semibold sm:text-body-md",
-              transitionBase,
-              focusRing,
-              selected
-                ? "bg-white text-on-surface shadow-sm"
-                : "text-on-surface-variant hover:text-on-surface",
+              "h-1 flex-grow rounded-full transition-all",
+              segment <= filled ? "bg-primary" : "bg-outline-variant",
             ].join(" ")}
-          >
-            {tab.label}
-          </button>
-        );
-      })}
-    </div>
+          />
+        ))}
+      </div>
+      <p className="px-1 text-[10px] italic text-on-surface-variant">
+        Password must include 8+ characters and a symbol.
+      </p>
+    </>
   );
 }
 
-function SignUpForm() {
+function AuthCard({
+  mode,
+  onModeChange,
+}: {
+  mode: AuthMode;
+  onModeChange: (mode: AuthMode) => void;
+}) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [acceptedTerms, setAcceptedTerms] = useState(false);
-  const [errors, setErrors] = useState<FieldErrors>({});
   const [loading, setLoading] = useState(false);
-  const termsId = useId();
 
-  const validate = (): FieldErrors => {
-    const next: FieldErrors = {};
-    if (!name.trim()) next.name = "Enter your name.";
-    if (!email.trim()) next.email = "Enter your email.";
-    else if (!EMAIL_PATTERN.test(email)) next.email = "Enter a valid email address.";
-    if (!password) next.password = "Enter a password.";
-    else if (password.length < 8) next.password = "Use at least 8 characters.";
-    else if (getPasswordStrength(password).score < 2)
-      next.password = "Choose a stronger password.";
-    if (!confirmPassword) next.confirmPassword = "Confirm your password.";
-    else if (confirmPassword !== password) next.confirmPassword = "Passwords do not match.";
-    if (!acceptedTerms) next.terms = "Accept the terms to continue.";
-    return next;
-  };
-
-  const handleSubmit = async (event: FormEvent): Promise<void> => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    const next = validate();
-    setErrors(next);
-    if (Object.keys(next).length > 0) return;
-
     setLoading(true);
-    await simulateSubmit();
+    await new Promise((resolve) => setTimeout(resolve, 600));
     setLoading(false);
   };
 
+  const isSignUp = mode === "signup";
+
   return (
-    <form onSubmit={handleSubmit} noValidate className="space-y-4" aria-label="Sign up">
-      <TextField
-        id="signup-name"
-        label="Name"
-        value={name}
-        onChange={setName}
-        error={errors.name}
-        autoComplete="name"
-      />
-      <TextField
-        id="signup-email"
-        label="Email"
-        type="email"
-        value={email}
-        onChange={setEmail}
-        error={errors.email}
-        autoComplete="email"
-      />
-      <PasswordField
-        id="signup-password"
-        label="Password"
-        value={password}
-        onChange={setPassword}
-        error={errors.password}
-        autoComplete="new-password"
-        showStrength
-      />
-      <PasswordField
-        id="signup-confirm"
-        label="Confirm password"
-        value={confirmPassword}
-        onChange={setConfirmPassword}
-        error={errors.confirmPassword}
-        autoComplete="new-password"
-      />
-      <div>
-        <label className="flex cursor-pointer items-start gap-2.5">
-          <input
-            id={termsId}
-            type="checkbox"
-            checked={acceptedTerms}
-            onChange={(event) => setAcceptedTerms(event.target.checked)}
-            className={["mt-0.5 h-4 w-4 rounded border-outline-variant text-primary", focusRing].join(
-              " ",
-            )}
+    <div className="glass-panel inner-glow flex w-full max-w-[420px] flex-col gap-8 rounded-xl p-8">
+      <div className="space-y-2 text-center">
+        <div className="mb-2 inline-flex items-center justify-center rounded border border-outline-variant/30 bg-surface-container-high px-2 py-0.5 uppercase text-primary-fixed-dim label-caps">
+          {isSignUp ? "Start Coding" : "Welcome Back"}
+        </div>
+        <h1 className="text-headline-md font-semibold tracking-tight text-on-surface">
+          {isSignUp ? "Create your workspace" : "Sign in to Meridian"}
+        </h1>
+        <p className="text-body-sm text-on-surface-variant">
+          {isSignUp
+            ? "Sign up to join the collaborative IDE environment."
+            : "Enter your credentials to access your workspace."}
+        </p>
+      </div>
+
+      <form className="space-y-4" onSubmit={handleSubmit} noValidate>
+        {isSignUp ? (
+          <IconField
+            id="name"
+            label="Full Name"
+            icon="person"
+            placeholder="John Doe"
+            value={name}
+            onChange={setName}
+            autoComplete="name"
           />
-          <span className="text-label-md text-on-surface-variant">
-            I agree to the{" "}
-            <a href="#" className="font-medium text-primary hover:underline">
+        ) : null}
+
+        <IconField
+          id="email"
+          label="Email Address"
+          icon="alternate_email"
+          type="email"
+          placeholder="name@company.com"
+          value={email}
+          onChange={setEmail}
+          autoComplete="email"
+        />
+
+        <div className="space-y-1.5">
+          <label htmlFor="password" className="label-caps ml-1 text-on-surface-variant">
+            Password
+          </label>
+          <div className="group relative">
+            <MaterialIcon
+              name="lock"
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-outline transition-colors group-focus-within:text-primary"
+              aria-hidden
+            />
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="••••••••"
+              autoComplete={isSignUp ? "new-password" : "current-password"}
+              className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-outline-variant focus:border-primary focus:ring-1 focus:ring-primary"
+            />
+          </div>
+          {isSignUp ? <PasswordStrength password={password} /> : null}
+        </div>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="group mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-inverse-primary py-3 text-body-md font-semibold text-on-primary-fixed shadow-lg shadow-primary/10 transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-60"
+        >
+          {loading ? "Please wait…" : isSignUp ? "Create Account" : "Sign In"}
+          {!loading ? (
+            <MaterialIcon
+              name="arrow_forward"
+              className="text-lg transition-transform group-hover:translate-x-1"
+              aria-hidden
+            />
+          ) : null}
+        </button>
+      </form>
+
+      {isSignUp ? (
+        <>
+          <div className="relative flex items-center justify-center">
+            <div className="absolute w-full border-t border-outline-variant" />
+            <span className="relative bg-surface-dim px-4 text-outline label-caps">OR</span>
+          </div>
+
+          <button
+            type="button"
+            className="flex w-full items-center justify-center gap-3 rounded-lg border border-outline-variant bg-surface-container-high py-3 text-body-md text-on-surface transition-colors hover:bg-surface-variant active:scale-[0.98]"
+          >
+            <MaterialIcon name="terminal" aria-hidden />
+            Sign up with GitHub
+          </button>
+        </>
+      ) : null}
+
+      <div className="space-y-4 pt-2">
+        <p className="text-center text-body-sm text-on-surface-variant">
+          {isSignUp ? "Already have an account? " : "Don't have an account? "}
+          <button
+            type="button"
+            onClick={() => onModeChange(isSignUp ? "signin" : "signup")}
+            className="font-medium text-primary hover:underline"
+          >
+            {isSignUp ? "Log in" : "Sign up"}
+          </button>
+        </p>
+        {isSignUp ? (
+          <p className="text-center text-[11px] leading-relaxed text-outline">
+            By creating an account, you agree to our{" "}
+            <a href="#" className="text-on-surface-variant underline">
               Terms of Service
             </a>{" "}
             and{" "}
-            <a href="#" className="font-medium text-primary hover:underline">
+            <a href="#" className="text-on-surface-variant underline">
               Privacy Policy
             </a>
-          </span>
-        </label>
-        {errors.terms ? (
-          <p className="mt-1.5 text-label-md text-error" role="alert">
-            {errors.terms}
+            .
           </p>
         ) : null}
       </div>
-      <PrimaryButton loading={loading}>Create account</PrimaryButton>
-    </form>
+    </div>
   );
 }
 
-function SignInForm() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(false);
-  const [errors, setErrors] = useState<FieldErrors>({});
-  const [loading, setLoading] = useState(false);
-  const rememberId = useId();
-
-  const validate = (): FieldErrors => {
-    const next: FieldErrors = {};
-    if (!email.trim()) next.email = "Enter your email.";
-    else if (!EMAIL_PATTERN.test(email)) next.email = "Enter a valid email address.";
-    if (!password) next.password = "Enter your password.";
-    return next;
-  };
-
-  const handleSubmit = async (event: FormEvent): Promise<void> => {
-    event.preventDefault();
-    const next = validate();
-    setErrors(next);
-    if (Object.keys(next).length > 0) return;
-
-    setLoading(true);
-    await simulateSubmit();
-    setLoading(false);
-  };
+function LandingFooter() {
+  const links = ["Privacy Policy", "Terms of Service", "Status"] as const;
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="space-y-4" aria-label="Sign in">
-      <TextField
-        id="signin-email"
-        label="Email"
-        type="email"
-        value={email}
-        onChange={setEmail}
-        error={errors.email}
-        autoComplete="email"
-      />
-      <PasswordField
-        id="signin-password"
-        label="Password"
-        value={password}
-        onChange={setPassword}
-        error={errors.password}
-        autoComplete="current-password"
-      />
-      <div className="flex items-center justify-between gap-3">
-        <a
-          href="#"
-          className="text-label-md font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-sm"
-        >
-          Forgot password?
-        </a>
-        <label htmlFor={rememberId} className="flex cursor-pointer items-center gap-2">
-          <input
-            id={rememberId}
-            type="checkbox"
-            checked={rememberMe}
-            onChange={(event) => setRememberMe(event.target.checked)}
-            className={["h-4 w-4 rounded border-outline-variant text-primary", focusRing].join(" ")}
-          />
-          <span className="text-label-md text-on-surface-variant">Remember me</span>
-        </label>
+    <footer className="relative z-10 flex w-full flex-col items-center justify-between gap-4 border-t border-outline-variant bg-surface-container-lowest/50 px-8 py-6 backdrop-blur-sm md:flex-row">
+      <div className="flex items-center gap-6">
+        <span className="text-on-surface-variant label-caps">© 2024 Meridian Systems Inc.</span>
       </div>
-      <PrimaryButton loading={loading}>Sign in</PrimaryButton>
-    </form>
-  );
-}
-
-function FreeTrialForm() {
-  const navigate = useNavigate();
-  const [displayName, setDisplayName] = useState("");
-  const [avatarColor, setAvatarColor] = useState<string>(AVATAR_SWATCHES[0]);
-  const [errors, setErrors] = useState<FieldErrors>({});
-  const [loading, setLoading] = useState(false);
-
-  const validate = (): FieldErrors => {
-    const next: FieldErrors = {};
-    if (!displayName.trim()) next.displayName = "Enter a display name.";
-    else if (displayName.trim().length < 2)
-      next.displayName = "Use at least 2 characters.";
-    return next;
-  };
-
-  const handleSubmit = async (event: FormEvent): Promise<void> => {
-    event.preventDefault();
-    const next = validate();
-    setErrors(next);
-    if (Object.keys(next).length > 0) return;
-
-    setLoading(true);
-    await simulateSubmit(500);
-    navigate("/workspace");
-  };
-
-  return (
-    <form onSubmit={handleSubmit} noValidate className="space-y-5" aria-label="Free trial">
-      <TextField
-        id="trial-name"
-        label="Display name"
-        value={displayName}
-        onChange={setDisplayName}
-        error={errors.displayName}
-        autoComplete="nickname"
-      />
-
-      <div>
-        <p className="mb-3 text-label-md font-medium text-on-surface">Avatar color</p>
-        <div className="flex items-center gap-4">
-          <span
-            className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-2 border-outline-variant/50 text-lg font-bold text-white shadow-md"
-            style={{ backgroundColor: avatarColor }}
-            aria-hidden
+      <div className="flex gap-6">
+        {links.map((link) => (
+          <a
+            key={link}
+            href="#"
+            className="text-body-sm text-on-surface-variant transition-colors hover:text-primary"
           >
-            {getInitials(displayName)}
-          </span>
-          <div
-            className="flex flex-wrap gap-2"
-            role="radiogroup"
-            aria-label="Choose avatar color"
-          >
-            {AVATAR_SWATCHES.map((color) => {
-              const selected = avatarColor === color;
-              return (
-                <button
-                  key={color}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  aria-label={`Color ${color}`}
-                  onClick={() => setAvatarColor(color)}
-                  className={[
-                    "h-9 w-9 rounded-full border-2 transition-transform duration-200",
-                    focusRing,
-                    selected
-                      ? "scale-110 border-on-surface ring-2 ring-primary/40 ring-offset-2"
-                      : "border-transparent hover:scale-105",
-                  ].join(" ")}
-                  style={{ backgroundColor: color }}
-                />
-              );
-            })}
-          </div>
-        </div>
+            {link}
+          </a>
+        ))}
       </div>
-
-      <PrimaryButton loading={loading}>Start free session</PrimaryButton>
-    </form>
+    </footer>
   );
 }
 
 export function LandingPage() {
-  const [activeTab, setActiveTab] = useState<AuthTab>("signup");
+  const navigate = useNavigate();
+  const [authMode, setAuthMode] = useState<AuthMode>("signup");
 
   useEffect(() => {
     const html = document.documentElement;
     const body = document.body;
     const root = document.getElementById("root");
+
+    html.classList.add("dark");
+    html.style.colorScheme = "dark";
+
     const prevHtmlOverflow = html.style.overflow;
     const prevBodyOverflow = body.style.overflow;
     const prevRootOverflow = root?.style.overflow ?? "";
     const prevRootHeight = root?.style.height ?? "";
 
-    html.style.overflow = "auto";
-    body.style.overflow = "auto";
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
     if (root) {
       root.style.overflow = "auto";
       root.style.height = "auto";
@@ -588,83 +356,15 @@ export function LandingPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-white text-on-surface">
-      <div className="flex min-h-screen flex-col lg:flex-row">
-        <section
-          className="flex flex-1 flex-col justify-between bg-[#0f0e17] px-6 py-10 text-white sm:px-10 lg:min-h-screen lg:max-w-[50%] lg:px-14 lg:py-14"
-          aria-labelledby="landing-headline"
-        >
-          <div>
-            <span className="inline-flex items-center gap-2.5">
-              <span
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/15 bg-white/10"
-                aria-hidden
-              >
-                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 text-white" fill="none">
-                  <path
-                    d="M4 14L10 4L16 14"
-                    stroke="currentColor"
-                    strokeWidth="1.75"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path d="M7 11H13" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-                </svg>
-              </span>
-              <span className="font-black tracking-tight text-headline-md text-white">Meridian</span>
-            </span>
-            <h1
-              id="landing-headline"
-              className="mt-8 max-w-lg font-black tracking-tight text-white text-[clamp(2rem,5vw,2.75rem)] leading-[1.15]"
-            >
-              Code together, ship faster
-            </h1>
-            <p className="mt-4 max-w-md text-body-md leading-relaxed text-white/75">
-              Real-time collaborative editing with sub-10ms sync. No setup required.
-            </p>
+    <div className="flex min-h-screen flex-col overflow-hidden bg-background text-body-md text-on-background selection:bg-primary-container selection:text-on-primary-container">
+      <AmbientBackground />
+      <LandingHeader onGetStarted={() => navigate("/workspace")} />
 
-            <ul className="mt-10 space-y-6">
-              {FEATURES.map((feature) => (
-                <li key={feature.title} className="flex gap-4">
-                  <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-white/10 text-primary-container">
-                    <MaterialIcon name={feature.icon} className="text-[24px] text-white" />
-                  </span>
-                  <div>
-                    <p className="font-semibold text-body-md text-white">{feature.title}</p>
-                    <p className="mt-1 text-label-md leading-relaxed text-white/60">
-                      {feature.description}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
+      <main className="relative z-10 mt-12 flex flex-grow items-center justify-center p-6">
+        <AuthCard mode={authMode} onModeChange={setAuthMode} />
+      </main>
 
-          <p className="mt-12 text-label-md text-white/40 lg:mt-16">
-            Trusted by 2,400+ engineering teams shipping together this week
-          </p>
-        </section>
-
-        <section
-          className="flex flex-1 flex-col justify-center px-6 py-10 sm:px-10 lg:min-h-screen lg:max-w-[50%] lg:px-14 lg:py-14"
-          aria-label="Get started"
-        >
-          <div className="mx-auto w-full max-w-md">
-            <h2 className="mb-2 font-bold text-headline-md text-on-surface">Welcome</h2>
-            <p className="mb-8 text-body-md text-on-surface-variant">
-              Create an account, sign in, or jump straight into a free session.
-            </p>
-
-            <AuthTabs active={activeTab} onChange={setActiveTab} />
-
-            <div role="tabpanel">
-              {activeTab === "signup" ? <SignUpForm /> : null}
-              {activeTab === "signin" ? <SignInForm /> : null}
-              {activeTab === "trial" ? <FreeTrialForm /> : null}
-            </div>
-          </div>
-        </section>
-      </div>
+      <LandingFooter />
     </div>
   );
 }
