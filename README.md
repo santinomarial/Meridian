@@ -1,73 +1,63 @@
-# React + TypeScript + Vite
+# Meridian
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Meridian is a real-time collaborative browser IDE for engineering teams. It provides a polished workspace where developers can edit code, manage project files, view live collaborators, discuss changes, review notes, and work inside an IDE-style interface from the browser.
 
-Currently, two official plugins are available:
+## Overview
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Meridian is built as a production-style frontend for a collaborative code editor. The current version focuses on the frontend workspace experience: a professional IDE layout, file explorer, editor tabs, terminal panel, collaboration sidebar, live chat, review notes, theme support, and a premium landing/auth screen.
 
-## React Compiler
+The long-term goal is to connect this frontend to a real-time backend using WebSockets, Yjs, Redis, PostgreSQL, and Prisma.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Features
 
-## Expanding the ESLint configuration
+- Professional browser IDE workspace
+- File explorer with nested project structure
+- Editor tabs and active file navigation
+- Monaco-powered code editor experience
+- Dark and light theme support
+- Live collaborator panel with user presence
+- Mock live chat for collaboration sessions
+- Review notes panel for code feedback
+- Terminal/output/debug/AI assistant bottom panel
+- Status bar with editor metadata
+- Premium split-screen landing and auth UI
+- Responsive frontend structure built for future backend integration
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Tech Stack
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### Frontend
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- React 18
+- TypeScript
+- Vite
+- Tailwind CSS
+- Zustand
+- Monaco Editor
+- React Router
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+### Planned Backend
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+- NestJS
+- WebSockets / Socket.IO
+- Yjs
+- Redis Pub/Sub or Redis Streams
+- PostgreSQL
+- Prisma
+- Authentication with Clerk or custom auth
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Project Structure
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+```text
+client/
+  src/
+    components/
+      layout/
+      workspace/
+    constants/
+    data/
+    hooks/
+    pages/
+    store/
+    types/
+    App.tsx
+    index.css
