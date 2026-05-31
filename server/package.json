@@ -1,0 +1,50 @@
+{
+  "name": "meridian-server",
+  "version": "0.1.0",
+  "description": "Meridian collaborative IDE backend",
+  "author": "",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11",
+    "@nestjs/config": "^4",
+    "@nestjs/core": "^11",
+    "@nestjs/platform-express": "^11",
+    "@nestjs/platform-socket.io": "^11",
+    "@nestjs/websockets": "^11",
+    "reflect-metadata": "^0.2",
+    "rxjs": "^7",
+    "socket.io": "^4"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11",
+    "@nestjs/schematics": "^11",
+    "@nestjs/testing": "^11",
+    "@types/jest": "*",
+    "@types/node": "^22",
+    "jest": "^29",
+    "source-map-support": "*",
+    "ts-jest": "^29",
+    "ts-loader": "*",
+    "tsconfig-paths": "*",
+    "typescript": "^5.7"
+  },
+  "jest": {
+    "moduleFileExtensions": ["js", "json", "ts"],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node"
+  }
+}
