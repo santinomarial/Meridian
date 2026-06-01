@@ -8,6 +8,7 @@ import { buildLoggerParams } from './config/logger.config';
 import type { AppConfig } from './config/configuration.type';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { PrismaModule } from './prisma/prisma.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -24,6 +25,7 @@ import { AppService } from './app.service';
         return buildLoggerParams(config);
       },
     }),
+    PrismaModule,
   ],
   controllers: [AppController],
   providers: [
