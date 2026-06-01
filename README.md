@@ -4,7 +4,7 @@ Meridian is a real-time collaborative browser IDE for engineering teams. It prov
 
 ## Overview
 
-Meridian is built as a production-style frontend for a collaborative code editor. The current version focuses on the frontend workspace experience: a professional IDE layout, file explorer, editor tabs, terminal panel, collaboration sidebar, live chat, review notes, theme support, and a premium landing/auth screen.
+Meridian is built as a production-style frontend for a collaborative code editor. It focuses on the frontend workspace experience: a professional IDE layout, file explorer, editor tabs, terminal panel, collaboration sidebar, live chat, review notes, theme support, and a premium landing/auth screen.
 
 The long-term goal is to connect this frontend to a real-time backend using WebSockets, Yjs, Redis, PostgreSQL, and Prisma.
 
