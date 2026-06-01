@@ -9,6 +9,11 @@ export interface CreateUserData {
   avatarUrl?: string;
 }
 
+export interface UpdateUserData {
+  displayName?: string;
+  avatarUrl?: string | null;
+}
+
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -27,5 +32,13 @@ export class UsersService {
 
   async listUsers(): Promise<User[]> {
     return this.prisma.user.findMany({ orderBy: { createdAt: 'asc' } });
+  }
+
+  async updateUser(id: string, data: UpdateUserData): Promise<User> {
+    return this.prisma.user.update({ where: { id }, data });
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await this.prisma.user.delete({ where: { id } });
   }
 }

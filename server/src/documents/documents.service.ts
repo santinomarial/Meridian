@@ -22,6 +22,10 @@ export interface UpdateDocumentData {
   parentId?: string | null;
 }
 
+export interface PatchDocumentData extends UpdateDocumentData {
+  content?: string | null;
+}
+
 export type DocumentNode = Document & { children: DocumentNode[] };
 
 @Injectable()
@@ -79,6 +83,16 @@ export class DocumentsService {
   async updateMetadata(
     documentId: string,
     data: UpdateDocumentData,
+  ): Promise<Document> {
+    return this.prisma.document.update({
+      where: { id: documentId },
+      data,
+    });
+  }
+
+  async patchDocument(
+    documentId: string,
+    data: PatchDocumentData,
   ): Promise<Document> {
     return this.prisma.document.update({
       where: { id: documentId },

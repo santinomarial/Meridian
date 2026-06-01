@@ -9,6 +9,9 @@ import type { AppConfig } from './config/configuration.type';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { PrismaModule } from './prisma/prisma.module';
+import { UsersModule } from './users/users.module';
+import { WorkspacesModule } from './workspaces/workspaces.module';
+import { DocumentsModule } from './documents/documents.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -26,6 +29,9 @@ import { AppService } from './app.service';
       },
     }),
     PrismaModule,
+    UsersModule,
+    WorkspacesModule,
+    DocumentsModule,
   ],
   controllers: [AppController],
   providers: [

@@ -8,6 +8,10 @@ export interface CreateWorkspaceData {
   ownerId: string;
 }
 
+export interface UpdateWorkspaceData {
+  name?: string;
+}
+
 @Injectable()
 export class WorkspacesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -20,11 +24,37 @@ export class WorkspacesService {
     return this.prisma.workspace.findUnique({ where: { id: workspaceId } });
   }
 
+  async listAll(): Promise<Workspace[]> {
+    return this.prisma.workspace.findMany({ orderBy: { createdAt: 'asc' } });
+  }
+
   async listForUser(userId: string): Promise<Workspace[]> {
     return this.prisma.workspace.findMany({
       where: { members: { some: { userId } } },
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  async updateWorkspace(
+    workspaceId: string,
+    data: UpdateWorkspaceData,
+  ): Promise<Workspace> {
+    return this.prisma.workspace.update({ where: { id: workspaceId }, data });
+  }
+
+  async deleteWorkspace(workspaceId: string): Promise<void> {
+    await this.prisma.workspace.delete({ where: { id: workspaceId } });
+  }
+
+  async listMembers(workspaceId: string): Promise<WorkspaceMember[]> {
+    return this.prisma.workspaceMember.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async findMember(memberId: string): Promise<WorkspaceMember | null> {
+    return this.prisma.workspaceMember.findUnique({ where: { id: memberId } });
   }
 
   async addMember(
@@ -35,6 +65,20 @@ export class WorkspacesService {
     return this.prisma.workspaceMember.create({
       data: { workspaceId, userId, role },
     });
+  }
+
+  async updateMemberRole(
+    memberId: string,
+    role: WorkspaceRole,
+  ): Promise<WorkspaceMember> {
+    return this.prisma.workspaceMember.update({
+      where: { id: memberId },
+      data: { role },
+    });
+  }
+
+  async removeMember(memberId: string): Promise<void> {
+    await this.prisma.workspaceMember.delete({ where: { id: memberId } });
   }
 
   async canUserAccessWorkspace(
