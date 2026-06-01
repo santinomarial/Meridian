@@ -7,8 +7,117 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Placeholder model — will be replaced when real domain models are added.
-model Placeholder {
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum WorkspaceRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+enum DocumentType {
+  FILE
+  FOLDER
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String?
+  displayName  String
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ownedWorkspaces Workspace[]       @relation("WorkspaceOwner")
+  memberships     WorkspaceMember[]
+  sessions        Session[]
+}
+
+model Workspace {
   id        String   @id @default(cuid())
+  name      String
+  ownerId   String
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner     User              @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  documents Document[]
+  members   WorkspaceMember[]
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+}
+
+model Document {
+  id          String       @id @default(cuid())
+  workspaceId String
+  parentId    String?
+  type        DocumentType
+  path        String
+  name        String
+  language    String?
+  content     String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent    Document?        @relation("DocumentTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Document[]       @relation("DocumentTree")
+  updates   DocumentUpdate[]
+  snapshots Snapshot[]
+
+  @@unique([workspaceId, path])
+}
+
+model DocumentUpdate {
+  id         String   @id @default(cuid())
+  documentId String
+  update     Bytes
+  seq        Int
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, seq])
+  @@index([documentId, seq])
+}
+
+model Snapshot {
+  id         String   @id @default(cuid())
+  documentId String
+  state      Bytes
+  seq        Int
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, seq])
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  jti       String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
