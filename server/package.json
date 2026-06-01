@@ -13,7 +13,10 @@
     "test": "jest",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:seed": "echo \"No seed defined yet\"",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
   },
   "dependencies": {
     "@nestjs/common": "^11",
