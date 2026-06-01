@@ -12,6 +12,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { UsersModule } from './users/users.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { DocumentsModule } from './documents/documents.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -32,6 +33,7 @@ import { AppService } from './app.service';
     UsersModule,
     WorkspacesModule,
     DocumentsModule,
+    RealtimeModule,
   ],
   controllers: [AppController],
   providers: [

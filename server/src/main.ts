@@ -3,10 +3,29 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import type { INestApplication } from '@nestjs/common';
+import type { ServerOptions } from 'socket.io';
 import { AppModule } from './app.module';
 import type { AppConfig } from './config/configuration.type';
 import { APP_CONFIG_KEY } from './config/app.config';
+
+class SocketIoAdapter extends IoAdapter {
+  constructor(
+    app: INestApplication,
+    private readonly corsOrigin: string,
+  ) {
+    super(app);
+  }
+
+  override createIOServer(port: number, options: Partial<ServerOptions> = {}) {
+    return super.createIOServer(port, {
+      ...options,
+      cors: { origin: this.corsOrigin, credentials: true },
+    });
+  }
+}
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
@@ -26,6 +45,8 @@ async function bootstrap(): Promise<void> {
     origin: config.clientOrigin,
     credentials: true,
   });
+
+  app.useWebSocketAdapter(new SocketIoAdapter(app, config.clientOrigin));
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Meridian API')
