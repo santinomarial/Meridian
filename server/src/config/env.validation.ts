@@ -13,6 +13,7 @@ const envSchema = z.object({
     .min(16, 'JWT_SECRET must be at least 16 characters'),
   JWT_EXPIRES_IN: z.string().default('15m'),
   LOG_LEVEL: z.string().default('info'),
+  DOC_TEARDOWN_GRACE_MS: z.coerce.number().int().positive().default(30000),
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;

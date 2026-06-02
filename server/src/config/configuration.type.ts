@@ -7,4 +7,5 @@ export interface AppConfig {
   jwtSecret: string;
   jwtExpiresIn: string;
   logLevel: string;
+  docTeardownGraceMs: number;
 }

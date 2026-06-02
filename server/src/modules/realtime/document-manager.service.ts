@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
+import type { AppConfig } from '../../config/configuration.type';
+import { APP_CONFIG_KEY } from '../../config/app.config';
 
 interface DocEntry {
   doc: Y.Doc;
@@ -15,11 +18,18 @@ interface DocEntry {
 @Injectable()
 export class DocumentManagerService {
   private readonly docs = new Map<string, DocEntry>();
+  private readonly graceMs: number;
+
+  constructor(configService: ConfigService) {
+    const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
+    this.graceMs = config.docTeardownGraceMs;
+  }
 
   acquire(documentId: string): Y.Doc {
     const existing = this.docs.get(documentId);
 
     if (existing !== undefined) {
+      // Cancel any pending teardown so the document stays alive.
       if (existing.teardownTimer !== undefined) {
         clearTimeout(existing.teardownTimer);
         existing.teardownTimer = undefined;
@@ -39,7 +49,16 @@ export class DocumentManagerService {
     if (entry === undefined) return;
 
     entry.refCount = Math.max(0, entry.refCount - 1);
-    // Teardown deferred: doc is kept alive until explicitly destroyed.
+
+    // When the last client leaves, schedule deferred teardown.  The grace
+    // period lets late-joining clients or quick reconnects reuse the already
+    // warm Y.Doc instead of rebuilding it from the database.
+    if (entry.refCount === 0 && entry.teardownTimer === undefined) {
+      entry.teardownTimer = setTimeout(
+        () => this.teardown(documentId),
+        this.graceMs,
+      );
+    }
   }
 
   getDoc(documentId: string): Y.Doc | undefined {
@@ -74,12 +93,28 @@ export class DocumentManagerService {
     return this.docs.size;
   }
 
-  /** Destroys all in-memory docs and awareness instances. Intended for tests. */
+  /** Destroys all in-memory docs and cancels pending timers. Intended for tests. */
   destroyAll(): void {
     for (const entry of this.docs.values()) {
+      if (entry.teardownTimer !== undefined) {
+        clearTimeout(entry.teardownTimer);
+      }
       entry.awareness.destroy();
       entry.doc.destroy();
     }
     this.docs.clear();
+  }
+
+  // ---------------------------------------------------------------------------
+
+  private teardown(documentId: string): void {
+    const entry = this.docs.get(documentId);
+    if (entry === undefined) return;
+    // Defensive guard: skip if a concurrent acquire raced the timer.
+    if (entry.refCount > 0) return;
+
+    entry.awareness.destroy();
+    entry.doc.destroy();
+    this.docs.delete(documentId);
   }
 }
