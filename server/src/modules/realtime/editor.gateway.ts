@@ -10,11 +10,15 @@ import {
 } from '@nestjs/websockets';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { Server, Socket } from 'socket.io';
+import * as encoding from 'lib0/encoding';
+import * as decoding from 'lib0/decoding';
+import * as syncProtocol from 'y-protocols/sync';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
 import { JoinDocumentDto } from './dto/join-document.dto';
 import { LeaveDocumentDto } from './dto/leave-document.dto';
 import { YjsUpdateDto } from './dto/yjs-update.dto';
+import { YjsSyncDto } from './dto/yjs-sync.dto';
 import { WsValidationFilter } from './filters/ws-exception.filter';
 
 // CORS is configured on the IoAdapter in main.ts so it reads from typed config.
@@ -53,7 +57,6 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const documentIds = this.registry.getDocumentsForSocket(client.id);
 
     for (const documentId of documentIds) {
-      // Notify peers before the socket is gone from rooms.
       client.to(`document:${documentId}`).emit('userLeft', {
         documentId,
         socketId: client.id,
@@ -80,13 +83,24 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await client.join(room);
     this.registry.join(client.id, dto.documentId);
 
-    // Acquire the authoritative Y.Doc (creates it if not yet in memory).
+    // Acquire the authoritative Y.Doc (creates it on first join).
     this.documentManager.acquire(dto.documentId);
 
-    // Send the current document state to the joining client so it can
-    // initialise its local Y.Doc and catch up with any prior edits.
-    const state = this.documentManager.getState(dto.documentId);
-    client.emit('yjs:state', { documentId: dto.documentId, state });
+    // Sync step 1: send the server's state vector to the joining client.
+    //
+    // A state vector is a compact summary of which updates a replica already
+    // has (clock per client-id). The client uses it to compute only the
+    // updates the server is missing and sends them back as sync step 2.
+    // This avoids resending the whole document to late joiners — only the
+    // delta (what the client has that the server doesn't) travels over the
+    // wire, and the server sends its own delta back.
+    const doc = this.documentManager.getDoc(dto.documentId)!;
+    const step1Encoder = encoding.createEncoder();
+    syncProtocol.writeSyncStep1(step1Encoder, doc);
+    client.emit('yjs:sync', {
+      documentId: dto.documentId,
+      message: encoding.toUint8Array(step1Encoder),
+    });
 
     // Notify peers already in the room.
     client.to(room).emit('userJoined', {
@@ -119,7 +133,6 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.registry.leave(client.id, dto.documentId);
     this.documentManager.release(dto.documentId);
 
-    // Notify remaining room members.
     this.server.to(room).emit('userLeft', {
       documentId: dto.documentId,
       socketId: client.id,
@@ -132,7 +145,51 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   // ---------------------------------------------------------------------------
-  // Yjs collaboration
+  // Yjs sync protocol
+  // ---------------------------------------------------------------------------
+
+  @SubscribeMessage('yjs:sync')
+  handleYjsSync(
+    @MessageBody() dto: YjsSyncDto,
+    @ConnectedSocket() client: Socket,
+  ): void {
+    const message = toUint8Array(dto.message);
+    if (message === null) {
+      client.emit('error', { message: 'yjs:sync — message must be binary data' });
+      return;
+    }
+
+    const doc = this.documentManager.getDoc(dto.documentId);
+    if (doc === undefined) {
+      client.emit('error', {
+        message: `yjs:sync — document ${dto.documentId} not in memory; send joinDocument first`,
+      });
+      return;
+    }
+
+    const decoder = decoding.createDecoder(message);
+    const responseEncoder = encoding.createEncoder();
+
+    // readSyncMessage dispatches on the message type:
+    //   Step 1 (state vector): writes a step 2 response containing all updates
+    //     the server has that the client's state vector does not reference.
+    //     Only the missing delta is sent — not the whole document.
+    //   Step 2 (update): applies the update to the authoritative Y.Doc so the
+    //     server stays current and future joiners receive an up-to-date state.
+    syncProtocol.readSyncMessage(decoder, responseEncoder, doc, null);
+
+    // If readSyncMessage produced a response (always true for step 1, never
+    // true for step 2), send it back to the client.
+    if (encoding.length(responseEncoder) > 0) {
+      client.emit('yjs:sync', {
+        documentId: dto.documentId,
+        message: encoding.toUint8Array(responseEncoder),
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Live update relay (runs alongside the sync handshake)
   // ---------------------------------------------------------------------------
 
   @SubscribeMessage('yjs:update')
@@ -157,8 +214,7 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // apply the same update twice, leading to duplicated content or spurious
     // state-vector growth. Other clients still receive the update and merge
     // it into their own docs via Y.applyUpdate.
-    const room = `document:${dto.documentId}`;
-    client.to(room).emit('yjs:update', {
+    client.to(`document:${dto.documentId}`).emit('yjs:update', {
       documentId: dto.documentId,
       update,
     });
