@@ -16,6 +16,7 @@ import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
+import { DocumentPersistenceService } from './document-persistence.service';
 import { JoinDocumentDto } from './dto/join-document.dto';
 import { LeaveDocumentDto } from './dto/leave-document.dto';
 import { YjsUpdateDto } from './dto/yjs-update.dto';
@@ -39,6 +40,7 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly registry: ConnectionRegistryService,
     private readonly documentManager: DocumentManagerService,
+    private readonly persistence: DocumentPersistenceService,
     @InjectPinoLogger(EditorGateway.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -247,6 +249,10 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
       documentId: dto.documentId,
       update,
     });
+
+    // Persist asynchronously — relay already happened above so peers are not
+    // blocked by the database write.
+    this.persistence.persistUpdate(dto.documentId, update);
 
     this.logger.debug(
       { socketId: client.id, documentId: dto.documentId, bytes: update.byteLength },
