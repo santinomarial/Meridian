@@ -13,12 +13,14 @@ import type { Server, Socket } from 'socket.io';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import * as syncProtocol from 'y-protocols/sync';
+import * as awarenessProtocol from 'y-protocols/awareness';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
 import { JoinDocumentDto } from './dto/join-document.dto';
 import { LeaveDocumentDto } from './dto/leave-document.dto';
 import { YjsUpdateDto } from './dto/yjs-update.dto';
 import { YjsSyncDto } from './dto/yjs-sync.dto';
+import { AwarenessUpdateDto } from './dto/awareness-update.dto';
 import { WsValidationFilter } from './filters/ws-exception.filter';
 
 // CORS is configured on the IoAdapter in main.ts so it reads from typed config.
@@ -29,6 +31,10 @@ import { WsValidationFilter } from './filters/ws-exception.filter';
 export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
+
+  // Maps socketId → documentId → Set of Yjs awareness clientIds.
+  // Used to identify which awareness states to remove on leave/disconnect.
+  private readonly socketAwarenessIds = new Map<string, Map<string, Set<number>>>();
 
   constructor(
     private readonly registry: ConnectionRegistryService,
@@ -57,6 +63,11 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const documentIds = this.registry.getDocumentsForSocket(client.id);
 
     for (const documentId of documentIds) {
+      // Remove and broadcast cursor/selection disappearance before the socket
+      // leaves the room.  Cursors should disappear on disconnect immediately
+      // so other clients do not see ghost cursors from absent users.
+      this.removeAwarenessForSocket(client, documentId);
+
       client.to(`document:${documentId}`).emit('userLeft', {
         documentId,
         socketId: client.id,
@@ -64,6 +75,7 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.documentManager.release(documentId);
     }
 
+    this.socketAwarenessIds.delete(client.id);
     this.registry.disconnect(client.id);
 
     this.logger.info({ socketId: client.id }, 'Socket disconnected');
@@ -102,6 +114,21 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
       message: encoding.toUint8Array(step1Encoder),
     });
 
+    // Send current awareness states so the joining client immediately sees
+    // where all other users' cursors and selections are.
+    const awareness = this.documentManager.getAwareness(dto.documentId)!;
+    const currentStates = awareness.getStates();
+    if (currentStates.size > 0) {
+      const awarenessUpdate = awarenessProtocol.encodeAwarenessUpdate(
+        awareness,
+        [...currentStates.keys()],
+      );
+      client.emit('awareness:update', {
+        documentId: dto.documentId,
+        update: awarenessUpdate,
+      });
+    }
+
     // Notify peers already in the room.
     client.to(room).emit('userJoined', {
       documentId: dto.documentId,
@@ -128,6 +155,10 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
     const room = `document:${dto.documentId}`;
+
+    // Remove and broadcast cursor disappearance before leaving the room so
+    // remaining clients receive the removal while the socket is still in-room.
+    this.removeAwarenessForSocket(client, dto.documentId);
 
     await client.leave(room);
     this.registry.leave(client.id, dto.documentId);
@@ -178,8 +209,6 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     //     server stays current and future joiners receive an up-to-date state.
     syncProtocol.readSyncMessage(decoder, responseEncoder, doc, null);
 
-    // If readSyncMessage produced a response (always true for step 1, never
-    // true for step 2), send it back to the client.
     if (encoding.length(responseEncoder) > 0) {
       client.emit('yjs:sync', {
         documentId: dto.documentId,
@@ -224,14 +253,122 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
       'Yjs update relayed',
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Awareness — ephemeral presence (cursors / selections)
+  // ---------------------------------------------------------------------------
+
+  @SubscribeMessage('awareness:update')
+  handleAwarenessUpdate(
+    @MessageBody() dto: AwarenessUpdateDto,
+    @ConnectedSocket() client: Socket,
+  ): void {
+    const update = toUint8Array(dto.update);
+    if (update === null) {
+      client.emit('error', { message: 'awareness:update — update must be binary data' });
+      return;
+    }
+
+    const awareness = this.documentManager.getAwareness(dto.documentId);
+    if (awareness === undefined) {
+      client.emit('error', {
+        message: `awareness:update — document ${dto.documentId} not in memory; send joinDocument first`,
+      });
+      return;
+    }
+
+    // Track which Yjs clientIds this socket is advertising for cleanup later.
+    const clientIds = extractAwarenessClientIds(update);
+    let docMap = this.socketAwarenessIds.get(client.id);
+    if (docMap === undefined) {
+      docMap = new Map();
+      this.socketAwarenessIds.set(client.id, docMap);
+    }
+    const tracked = docMap.get(dto.documentId) ?? new Set<number>();
+    for (const id of clientIds) tracked.add(id);
+    docMap.set(dto.documentId, tracked);
+
+    // Apply to the server's Awareness instance.
+    // Awareness is ephemeral: cursor positions and selections are NOT persisted
+    // to the database.  Only document text (via Yjs updates) is persisted.
+    awarenessProtocol.applyAwarenessUpdate(awareness, update, client.id);
+
+    // Relay to all other sockets in the room.
+    // Echo suppression: the sender already applied the update locally.
+    client.to(`document:${dto.documentId}`).emit('awareness:update', {
+      documentId: dto.documentId,
+      update,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Removes the socket's awareness state for one document and broadcasts the
+   * removal.  Cursors should disappear on disconnect/leave so other clients do
+   * not see ghost cursors from users who are no longer present.
+   */
+  private removeAwarenessForSocket(client: Socket, documentId: string): void {
+    const docMap = this.socketAwarenessIds.get(client.id);
+    if (docMap === undefined) return;
+
+    const clientIds = [...(docMap.get(documentId) ?? [])];
+    docMap.delete(documentId);
+
+    if (clientIds.length === 0) return;
+
+    const awareness = this.documentManager.getAwareness(documentId);
+    if (awareness === undefined) return;
+
+    // Remove the states from the awareness instance (updates meta clocks).
+    awarenessProtocol.removeAwarenessStates(awareness, clientIds, 'server-disconnect');
+
+    // Encode a null-state update for the removed clientIds.  Passing an empty
+    // Map causes encodeAwarenessUpdate to write null for each state entry
+    // (Map.get returns undefined → undefined || null = null), which signals
+    // to receiving clients that these cursors should be removed.
+    const removalUpdate = awarenessProtocol.encodeAwarenessUpdate(
+      awareness,
+      clientIds,
+      new Map<number, { [x: string]: unknown }>(),
+    );
+
+    client.to(`document:${documentId}`).emit('awareness:update', {
+      documentId,
+      update: removalUpdate,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Module-level helpers
 // ---------------------------------------------------------------------------
 
 function toUint8Array(value: unknown): Uint8Array | null {
   if (value instanceof Uint8Array) return value; // covers Buffer (Node.js subclass)
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   return null;
+}
+
+/**
+ * Decodes the leading clientId entries from a y-protocols awareness update
+ * without constructing a full Awareness object.  Used to track which Yjs
+ * clientIds a socket is responsible for so they can be removed on disconnect.
+ */
+function extractAwarenessClientIds(update: Uint8Array): number[] {
+  try {
+    const decoder = decoding.createDecoder(update);
+    const len = decoding.readVarUint(decoder);
+    const ids: number[] = [];
+    for (let i = 0; i < len; i++) {
+      ids.push(decoding.readVarUint(decoder)); // clientId
+      decoding.readVarUint(decoder);           // clock  (skip)
+      decoding.readVarString(decoder);          // state  (skip)
+    }
+    return ids;
+  } catch {
+    return [];
+  }
 }

@@ -1,8 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import * as Y from 'yjs';
+import * as awarenessProtocol from 'y-protocols/awareness';
 
 interface DocEntry {
   doc: Y.Doc;
+  // Awareness is ephemeral: cursor positions and selections are kept only in
+  // memory and are never written to the database.  Document text (via Yjs
+  // updates) is what gets persisted.
+  awareness: awarenessProtocol.Awareness;
   refCount: number;
   teardownTimer?: NodeJS.Timeout;
 }
@@ -24,7 +29,8 @@ export class DocumentManagerService {
     }
 
     const doc = new Y.Doc();
-    this.docs.set(documentId, { doc, refCount: 1 });
+    const awareness = new awarenessProtocol.Awareness(doc);
+    this.docs.set(documentId, { doc, awareness, refCount: 1 });
     return doc;
   }
 
@@ -38,6 +44,10 @@ export class DocumentManagerService {
 
   getDoc(documentId: string): Y.Doc | undefined {
     return this.docs.get(documentId)?.doc;
+  }
+
+  getAwareness(documentId: string): awarenessProtocol.Awareness | undefined {
+    return this.docs.get(documentId)?.awareness;
   }
 
   getState(documentId: string): Uint8Array {
@@ -58,5 +68,18 @@ export class DocumentManagerService {
 
   refCount(documentId: string): number {
     return this.docs.get(documentId)?.refCount ?? 0;
+  }
+
+  size(): number {
+    return this.docs.size;
+  }
+
+  /** Destroys all in-memory docs and awareness instances. Intended for tests. */
+  destroyAll(): void {
+    for (const entry of this.docs.values()) {
+      entry.awareness.destroy();
+      entry.doc.destroy();
+    }
+    this.docs.clear();
   }
 }

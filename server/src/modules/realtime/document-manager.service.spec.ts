@@ -8,6 +8,10 @@ describe('DocumentManagerService', () => {
     manager = new DocumentManagerService();
   });
 
+  afterEach(() => {
+    manager.destroyAll();
+  });
+
   describe('acquire', () => {
     it('creates a Y.Doc for a new documentId', () => {
       const doc = manager.acquire('doc-1');
