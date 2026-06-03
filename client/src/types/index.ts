@@ -79,7 +79,11 @@ export type CursorPosition = {
   column: number;
 };
 
-export type SaveStatus = "saved" | "saving" | "unsaved";
+export type SaveStatus = "saved" | "saving" | "unsaved" | "error";
+
+export type ConnectionStatus = "connected" | "connecting" | "disconnected";
+
+export type BackendStatus = "pending" | "available" | "unavailable";
 
 export type PanelKey = "explorer" | "collaboration" | "bottom";
 
@@ -105,4 +109,6 @@ export type WorkspaceState = {
   theme: WorkspaceTheme;
   cursorPosition: CursorPosition;
   saveStatus: SaveStatus;
+  backendStatus: BackendStatus;
+  connectionStatus: ConnectionStatus;
 };

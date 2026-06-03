@@ -8,14 +8,24 @@ import {
 } from "../data/mock";
 import type {
   ActivityItem,
+  BackendStatus,
   ChatMessage,
+  ConnectionStatus,
   CursorPosition,
   FileNode,
+  OpenTab,
   PanelKey,
+  SaveStatus,
   TerminalTab,
   WorkspaceState as WorkspaceData,
   WorkspaceTheme,
 } from "../types";
+
+type BackendLoadData = {
+  files: FileNode[];
+  editorContent: Record<string, string>;
+  defaultFileId: string | null;
+};
 
 type WorkspaceActions = {
   openFile: (fileId: string) => void;
@@ -31,6 +41,11 @@ type WorkspaceActions = {
   toggleTheme: () => void;
   setCursorPosition: (pos: CursorPosition) => void;
   addChatMessage: (msg: ChatMessage) => void;
+  setSaveStatus: (status: SaveStatus) => void;
+  setBackendStatus: (status: BackendStatus) => void;
+  setConnectionStatus: (status: ConnectionStatus) => void;
+  batchLoadBackend: (data: BackendLoadData) => void;
+  clearTabDirty: (fileId: string) => void;
 };
 
 export type WorkspaceState = WorkspaceData & WorkspaceActions;
@@ -68,19 +83,15 @@ function applyThemeToDocument(theme: WorkspaceTheme): void {
   root.style.colorScheme = theme;
 }
 
-const INITIAL_OPEN_TABS = [
-  { fileId: "file-auth", name: "auth.ts", language: "typescript" as const, dirty: false },
-  {
-    fileId: "file-database",
-    name: "database.ts",
-    language: "typescript" as const,
-    dirty: false,
-  },
+const INITIAL_OPEN_TABS: OpenTab[] = [
+  { fileId: "file-auth", name: "auth.ts", language: "typescript", dirty: false },
+  { fileId: "file-database", name: "database.ts", language: "typescript", dirty: false },
 ];
 
 applyThemeToDocument("dark");
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
+  // ── Data state ────────────────────────────────────────────────────────────
   files: mockFiles,
   activeFileId: "file-auth",
   openTabs: INITIAL_OPEN_TABS,
@@ -89,6 +100,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   chatMessages: mockChatMessages,
   reviewNotes: mockReviewNotes,
   diagnosticCounts: { errors: 0, warnings: 2 },
+
+  // ── UI state ──────────────────────────────────────────────────────────────
   activeTerminalTab: "terminal",
   selectedActivityItem: "explorer",
   isExplorerOpen: true,
@@ -98,11 +111,15 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   cursorPosition: { line: 42, column: 12 },
   saveStatus: "saved",
 
+  // ── Backend / socket state ────────────────────────────────────────────────
+  backendStatus: "pending",
+  connectionStatus: "disconnected",
+
+  // ── File actions ──────────────────────────────────────────────────────────
+
   openFile: (fileId) => {
     const file = findFileInTree(get().files, fileId);
-    if (!file) {
-      return;
-    }
+    if (!file) return;
 
     set((state) => {
       const existingTab = state.openTabs.find((tab) => tab.fileId === fileId);
@@ -110,14 +127,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
         ? state.openTabs
         : [
             ...state.openTabs,
-            {
-              fileId: file.id,
-              name: file.name,
-              language: file.language,
-              dirty: false,
-            },
+            { fileId: file.id, name: file.name, language: file.language, dirty: false },
           ];
-
       return { openTabs, activeFileId: fileId };
     });
   },
@@ -148,10 +159,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   updateFileContent: (fileId, content) => {
     set((state) => ({
-      editorContentByFileId: {
-        ...state.editorContentByFileId,
-        [fileId]: content,
-      },
+      editorContentByFileId: { ...state.editorContentByFileId, [fileId]: content },
       openTabs: state.openTabs.map((tab) =>
         tab.fileId === fileId ? { ...tab, dirty: true } : tab,
       ),
@@ -159,19 +167,22 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     }));
   },
 
-  toggleFolder: (folderId) => {
+  clearTabDirty: (fileId) => {
     set((state) => ({
-      files: toggleFolderInTree(state.files, folderId),
+      openTabs: state.openTabs.map((tab) =>
+        tab.fileId === fileId ? { ...tab, dirty: false } : tab,
+      ),
     }));
   },
 
-  setActiveTerminalTab: (tab) => {
-    set({ activeTerminalTab: tab });
+  toggleFolder: (folderId) => {
+    set((state) => ({ files: toggleFolderInTree(state.files, folderId) }));
   },
 
-  setSelectedActivityItem: (item) => {
-    set({ selectedActivityItem: item });
-  },
+  // ── UI actions ────────────────────────────────────────────────────────────
+
+  setActiveTerminalTab: (tab) => set({ activeTerminalTab: tab }),
+  setSelectedActivityItem: (item) => set({ selectedActivityItem: item }),
 
   togglePanel: (panel) => {
     set((state) => {
@@ -187,11 +198,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   closeAllOverlays: () => {
-    set({
-      isExplorerOpen: false,
-      isCollaborationPanelOpen: false,
-      isBottomPanelOpen: false,
-    });
+    set({ isExplorerOpen: false, isCollaborationPanelOpen: false, isBottomPanelOpen: false });
   },
 
   setTheme: (theme) => {
@@ -205,14 +212,35 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     set({ theme });
   },
 
-  setCursorPosition: (pos) => {
-    set({ cursorPosition: pos });
-  },
+  setCursorPosition: (pos) => set({ cursorPosition: pos }),
 
   addChatMessage: (msg) => {
-    set((state) => ({
-      chatMessages: [...state.chatMessages, msg],
-    }));
+    set((state) => ({ chatMessages: [...state.chatMessages, msg] }));
+  },
+
+  // ── Save / backend / socket actions ───────────────────────────────────────
+
+  setSaveStatus: (status) => set({ saveStatus: status }),
+
+  setBackendStatus: (status) => set({ backendStatus: status }),
+
+  setConnectionStatus: (status) => set({ connectionStatus: status }),
+
+  batchLoadBackend: ({ files, editorContent, defaultFileId }) => {
+    set((state) => {
+      let openTabs = state.openTabs;
+      let activeFileId = state.activeFileId;
+
+      if (defaultFileId !== null) {
+        const file = findFileInTree(files, defaultFileId);
+        if (file !== null) {
+          openTabs = [{ fileId: file.id, name: file.name, language: file.language, dirty: false }];
+          activeFileId = defaultFileId;
+        }
+      }
+
+      return { files, editorContentByFileId: editorContent, openTabs, activeFileId };
+    });
   },
 }));
 

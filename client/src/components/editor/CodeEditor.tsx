@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { EmptyState } from "../ui/EmptyState";
 import { EditorSkeleton } from "../ui/Skeleton";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
+import { useYjsMonaco } from "../../hooks/useYjsMonaco";
 import type { LanguageMode, WorkspaceTheme } from "../../types";
 import {
   attachRemoteCollaboratorCursors,
@@ -72,6 +73,9 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   const collaborators = useWorkspaceStore((state) => state.collaborators);
   const updateFileContent = useWorkspaceStore((state) => state.updateFileContent);
   const setCursorPosition = useWorkspaceStore((state) => state.setCursorPosition);
+  const backendStatus = useWorkspaceStore((state) => state.backendStatus);
+
+  useYjsMonaco(mountedEditor, activeFileId, backendStatus === "available");
 
   const syncCursorPosition = (monacoEditor: editor.IStandaloneCodeEditor): void => {
     const position = monacoEditor.getPosition();

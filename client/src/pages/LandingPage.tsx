@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
+import { ApiError, login, register } from "../lib/api";
 
 type AuthMode = "signup" | "signin";
 
@@ -157,16 +158,29 @@ function AuthCard({
   mode: AuthMode;
   onModeChange: (mode: AuthMode) => void;
 }) {
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     setLoading(true);
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    setLoading(false);
+    setError(null);
+    try {
+      if (mode === "signup") {
+        await register({ email, password, displayName: name });
+      } else {
+        await login({ email, password });
+      }
+      navigate("/workspace");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const isSignUp = mode === "signup";
@@ -233,6 +247,12 @@ function AuthCard({
           </div>
           {isSignUp ? <PasswordStrength password={password} /> : null}
         </div>
+
+        {error !== null ? (
+          <p role="alert" className="rounded-lg bg-error/10 px-3 py-2 text-[12px] text-error">
+            {error}
+          </p>
+        ) : null}
 
         <button
           type="submit"

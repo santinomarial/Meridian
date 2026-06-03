@@ -10,9 +10,12 @@ import { FileExplorer } from "../components/layout/FileExplorer";
 import { Header } from "../components/layout/Header";
 import { PanelOverlay } from "../components/layout/PanelOverlay";
 import { StatusBar } from "../components/layout/StatusBar";
+import { useBackendWorkspace } from "../hooks/useBackendWorkspace";
 import { useBreakpoint } from "../hooks/useBreakpoint";
 import { useEscapeClose } from "../hooks/useEscapeClose";
+import { useSessionSocket } from "../hooks/useSessionSocket";
 import { useWorkspaceReady } from "../hooks/useWorkspaceReady";
+import { updateDocument } from "../lib/api";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import type { PanelKey } from "../types";
 
@@ -29,9 +32,21 @@ export function WorkspacePage() {
   const isBottomPanelOpen = useWorkspaceStore((state) => state.isBottomPanelOpen);
   const togglePanel = useWorkspaceStore((state) => state.togglePanel);
   const closeAllOverlays = useWorkspaceStore((state) => state.closeAllOverlays);
+  const backendStatus = useWorkspaceStore((state) => state.backendStatus);
+  const activeFileId = useWorkspaceStore((state) => state.activeFileId);
+  const editorContentByFileId = useWorkspaceStore((state) => state.editorContentByFileId);
+  const setSaveStatus = useWorkspaceStore((state) => state.setSaveStatus);
+  const clearTabDirty = useWorkspaceStore((state) => state.clearTabDirty);
 
   const isWorkspaceReady = useWorkspaceReady();
 
+  // Load workspace from backend (mock fallback on failure)
+  useBackendWorkspace();
+
+  // Manage Socket.IO connection lifecycle
+  useSessionSocket();
+
+  // Close panels on small screens on first mount
   useEffect(() => {
     if (window.matchMedia("(max-width: 640px)").matches) {
       useWorkspaceStore.setState({
@@ -40,6 +55,31 @@ export function WorkspacePage() {
       });
     }
   }, []);
+
+  // Cmd+S / Ctrl+S — save active document to backend when available
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== "s") return;
+      e.preventDefault();
+
+      if (backendStatus !== "available" || activeFileId === null) return;
+
+      const content = editorContentByFileId[activeFileId] ?? "";
+      setSaveStatus("saving");
+
+      updateDocument(activeFileId, { content })
+        .then(() => {
+          setSaveStatus("saved");
+          clearTabDirty(activeFileId);
+        })
+        .catch(() => {
+          setSaveStatus("error");
+        });
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [backendStatus, activeFileId, editorContentByFileId, setSaveStatus, clearTabDirty]);
 
   const hasOpenOverlay =
     isCompact &&
@@ -61,6 +101,16 @@ export function WorkspacePage() {
     >
       <Header />
       <Breadcrumb />
+
+      {backendStatus === "unavailable" ? (
+        <div
+          role="status"
+          className="flex items-center gap-2 bg-surface-container-high px-4 py-1.5 text-[11px] text-on-surface-variant"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-outline" aria-hidden />
+          Backend unavailable — using local mock workspace.
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <ActivityBar />
@@ -119,10 +169,7 @@ export function WorkspacePage() {
           label="Bottom panel"
           onClose={() => closePanel("bottom")}
         >
-          <BottomPanel
-            mode="overlay"
-            onClose={() => closePanel("bottom")}
-          />
+          <BottomPanel mode="overlay" onClose={() => closePanel("bottom")} />
         </PanelOverlay>
       ) : null}
     </div>
