@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { PinoLogger } from 'nestjs-pino';
 import { appConfig, APP_CONFIG_KEY } from './config/app.config';
@@ -31,6 +32,31 @@ import { AppService } from './app.service';
         return buildLoggerParams(config);
       },
     }),
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => {
+        const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
+        return {
+          // Two named throttlers:
+          //   'default' — broad limit for all endpoints (120 req / 60s)
+          //   'auth'    — stricter limit for login/register (10 req / 60s)
+          // Non-auth controllers use @SkipThrottle({ auth: true }) to opt out
+          // of the stricter auth throttler.  Auth routes get both by default.
+          throttlers: [
+            {
+              name: 'default',
+              ttl: config.httpTtlSeconds * 1000,
+              limit: config.httpLimit,
+            },
+            {
+              name: 'auth',
+              ttl: config.authTtlSeconds * 1000,
+              limit: config.authLimit,
+            },
+          ],
+        };
+      },
+    }),
     PrismaModule,
     RedisModule,
     AuthModule,
@@ -42,6 +68,7 @@ import { AppService } from './app.service';
   controllers: [AppController],
   providers: [
     AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     {
       provide: APP_FILTER,
       useFactory: (logger: PinoLogger) => new HttpExceptionFilter(logger),

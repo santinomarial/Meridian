@@ -10,6 +10,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { Server, Socket } from 'socket.io';
 import * as encoding from 'lib0/encoding';
@@ -24,6 +25,7 @@ import { ORIGIN_ID } from './origin';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
+import { WsRateLimiter } from './ws-rate-limiter.service';
 import { JoinDocumentDto } from './dto/join-document.dto';
 import { LeaveDocumentDto } from './dto/leave-document.dto';
 import { YjsUpdateDto } from './dto/yjs-update.dto';
@@ -31,6 +33,8 @@ import { YjsSyncDto } from './dto/yjs-sync.dto';
 import { AwarenessUpdateDto } from './dto/awareness-update.dto';
 import { WsValidationFilter } from './filters/ws-exception.filter';
 import type { AuthUser, JwtPayload } from '../auth/types/auth-user.type';
+import type { AppConfig } from '../../config/configuration.type';
+import { APP_CONFIG_KEY } from '../../config/app.config';
 
 // ---------------------------------------------------------------------------
 // Cross-instance Redis message shapes
@@ -62,6 +66,10 @@ export class EditorGateway
   // Maps socketId → documentId → Set of Yjs awareness clientIds.
   private readonly socketAwarenessIds = new Map<string, Map<string, Set<number>>>();
 
+  // Cached at construction time to avoid per-message config lookups.
+  private readonly wsMessageLimit: number;
+  private readonly wsMaxUpdateBytes: number;
+
   constructor(
     private readonly registry: ConnectionRegistryService,
     private readonly documentManager: DocumentManagerService,
@@ -70,9 +78,15 @@ export class EditorGateway
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
     private readonly workspaces: WorkspacesService,
+    private readonly rateLimiter: WsRateLimiter,
+    configService: ConfigService,
     @InjectPinoLogger(EditorGateway.name)
     private readonly logger: PinoLogger,
-  ) {}
+  ) {
+    const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
+    this.wsMessageLimit = config.wsMessageLimitPerSecond;
+    this.wsMaxUpdateBytes = config.wsMaxYjsUpdateBytes;
+  }
 
   // ---------------------------------------------------------------------------
   // Gateway init — auth middleware + Redis subscriptions
@@ -144,6 +158,8 @@ export class EditorGateway
 
     this.socketAwarenessIds.delete(client.id);
     this.registry.disconnect(client.id);
+    // Release the per-socket rate-limit window to avoid memory leaks.
+    this.rateLimiter.clear(client.id);
 
     this.logger.info({ socketId: client.id }, 'Socket disconnected');
   }
@@ -157,6 +173,8 @@ export class EditorGateway
     @MessageBody() dto: JoinDocumentDto,
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
+    if (!this.checkRateLimit(client, 'joinDocument')) return;
+
     const user = client.data['user'] as AuthUser;
 
     // Authorization: the socket user must be a member of the document's workspace.
@@ -253,6 +271,8 @@ export class EditorGateway
     @MessageBody() dto: YjsSyncDto,
     @ConnectedSocket() client: Socket,
   ): void {
+    if (!this.checkRateLimit(client, 'yjs:sync')) return;
+
     const message = toUint8Array(dto.message);
     if (message === null) {
       client.emit('error', { message: 'yjs:sync — message must be binary data' });
@@ -289,10 +309,29 @@ export class EditorGateway
     @MessageBody() dto: YjsUpdateDto,
     @ConnectedSocket() client: Socket,
   ): void {
+    if (!this.checkRateLimit(client, 'yjs:update')) return;
+
     const update = toUint8Array(dto.update);
 
     if (update === null) {
       client.emit('error', { message: 'yjs:update — update must be binary data' });
+      return;
+    }
+
+    // Payload cap — reject oversized updates before any processing.
+    if (update.byteLength > this.wsMaxUpdateBytes) {
+      this.logger.warn(
+        {
+          socketId: client.id,
+          documentId: dto.documentId,
+          bytes: update.byteLength,
+          limit: this.wsMaxUpdateBytes,
+        },
+        'Oversized Yjs update rejected',
+      );
+      client.emit('error', {
+        message: `Payload too large: ${update.byteLength} bytes (limit ${this.wsMaxUpdateBytes})`,
+      });
       return;
     }
 
@@ -322,6 +361,8 @@ export class EditorGateway
     @MessageBody() dto: AwarenessUpdateDto,
     @ConnectedSocket() client: Socket,
   ): void {
+    if (!this.checkRateLimit(client, 'awareness:update')) return;
+
     const update = toUint8Array(dto.update);
     if (update === null) {
       client.emit('error', { message: 'awareness:update — update must be binary data' });
@@ -486,6 +527,28 @@ export class EditorGateway
     }
 
     socket.data['user'] = toAuthUser(session.user);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rate limiting
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Checks the per-socket message rate limit.
+   * Emits an error to the socket and returns false when the limit is exceeded
+   * so callers can immediately return without processing the message.
+   */
+  private checkRateLimit(client: Socket, event: string): boolean {
+    if (this.rateLimiter.check(client.id, this.wsMessageLimit)) return true;
+
+    this.logger.warn(
+      { socketId: client.id, event, limit: this.wsMessageLimit },
+      'WebSocket rate limit exceeded — message dropped',
+    );
+    client.emit('error', {
+      message: `Rate limit exceeded: max ${this.wsMessageLimit} messages/s`,
+    });
+    return false;
   }
 
   // ---------------------------------------------------------------------------

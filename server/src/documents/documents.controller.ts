@@ -19,11 +19,13 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { DocumentsService } from './documents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
 
+@SkipThrottle({ auth: true })
 @ApiTags('documents')
 @Controller()
 export class DocumentsController {

@@ -15,6 +15,12 @@ const envSchema = z.object({
   LOG_LEVEL: z.string().default('info'),
   DOC_TEARDOWN_GRACE_MS: z.coerce.number().int().positive().default(30000),
   SNAPSHOT_EVERY_N_UPDATES: z.coerce.number().int().positive().default(100),
+  HTTP_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+  HTTP_LIMIT: z.coerce.number().int().positive().default(120),
+  AUTH_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+  AUTH_LIMIT: z.coerce.number().int().positive().default(10),
+  WS_MESSAGE_LIMIT_PER_SECOND: z.coerce.number().int().positive().default(50),
+  WS_MAX_YJS_UPDATE_BYTES: z.coerce.number().int().positive().default(1_048_576),
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;

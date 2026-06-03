@@ -19,12 +19,14 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { WorkspacesService } from './workspaces.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { AddMemberDto } from './dto/add-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 
+@SkipThrottle({ auth: true })
 @ApiTags('workspaces')
 @Controller('workspaces')
 export class WorkspacesController {

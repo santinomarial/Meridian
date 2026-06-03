@@ -1,4 +1,5 @@
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
 import type { Server, Socket } from 'socket.io';
 import type { User, Session } from '@prisma/client';
@@ -6,6 +7,7 @@ import { EditorGateway, extractSocketToken } from './editor.gateway';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
+import { WsRateLimiter } from './ws-rate-limiter.service';
 import { RedisService } from '../../redis/redis.service';
 import { WorkspacesService } from '../../workspaces/workspaces.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -54,7 +56,10 @@ const AUTH_USER = {
 // Gateway factory
 // ---------------------------------------------------------------------------
 
-function makeGateway() {
+const DEFAULT_WS_LIMIT = 50;
+const DEFAULT_MAX_BYTES = 1_048_576;
+
+function makeGateway(opts?: { wsLimit?: number; maxBytes?: number }) {
   const registry = new ConnectionRegistryService();
   const prisma = mockDeep<PrismaService>();
   const jwtService = mockDeep<JwtService>();
@@ -62,6 +67,8 @@ function makeGateway() {
   const redis = mockDeep<RedisService>();
   const documentManager = mockDeep<DocumentManagerService>();
   const persistence = mockDeep<DocumentPersistenceService>();
+  const rateLimiter = new WsRateLimiter();
+  const configService = mockDeep<ConfigService>();
   const logger = {
     info: jest.fn(),
     warn: jest.fn(),
@@ -73,6 +80,11 @@ function makeGateway() {
   Object.defineProperty(redis, 'isAvailable', { get: () => false, configurable: true });
   redis.subscribe.mockResolvedValue(undefined);
 
+  configService.getOrThrow.mockReturnValue({
+    wsMessageLimitPerSecond: opts?.wsLimit ?? DEFAULT_WS_LIMIT,
+    wsMaxYjsUpdateBytes: opts?.maxBytes ?? DEFAULT_MAX_BYTES,
+  } as never);
+
   const gateway = new EditorGateway(
     registry,
     documentManager,
@@ -81,13 +93,15 @@ function makeGateway() {
     jwtService,
     prisma,
     workspaces,
+    rateLimiter,
+    configService,
     logger as never,
   );
 
   const server = mockDeep<Server>();
   gateway.server = server;
 
-  return { gateway, registry, prisma, jwtService, workspaces, documentManager, server };
+  return { gateway, registry, prisma, jwtService, workspaces, documentManager, server, rateLimiter };
 }
 
 function makeSocket(overrides?: {
@@ -98,7 +112,6 @@ function makeSocket(overrides?: {
 }): DeepMockProxy<Socket> {
   const socket = mockDeep<Socket>();
   const id = overrides?.id ?? 'sock-1';
-  // jest-mock-extended doesn't set properties on the mock automatically
   Object.defineProperty(socket, 'id', { value: id, configurable: true });
   Object.defineProperty(socket, 'data', {
     value: overrides?.data ?? {},
@@ -145,7 +158,7 @@ describe('extractSocketToken', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Part 3 — Socket authentication
+// Socket authentication
 // ---------------------------------------------------------------------------
 
 describe('EditorGateway.authenticateSocket', () => {
@@ -223,7 +236,7 @@ describe('EditorGateway.authenticateSocket', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Part 4 — Document authorization (handleJoinDocument)
+// Document authorization (handleJoinDocument)
 // ---------------------------------------------------------------------------
 
 describe('EditorGateway.handleJoinDocument', () => {
@@ -235,7 +248,6 @@ describe('EditorGateway.handleJoinDocument', () => {
   }
 
   beforeEach(() => {
-    // Silence env check in afterInit for these tests
     jest.clearAllMocks();
   });
 
@@ -278,8 +290,6 @@ describe('EditorGateway.handleJoinDocument', () => {
   });
 
   it('owner (member with OWNER role) has access', async () => {
-    // canUserAccessDocument already abstracts this — just verify the gateway
-    // delegates to workspaces service and grants access when it returns true.
     const { gateway, workspaces, documentManager } = makeGateway();
     const socket = makeAuthenticatedSocket();
 
@@ -326,14 +336,94 @@ describe('EditorGateway.handleJoinDocument', () => {
     const { Awareness } = await import('y-protocols/awareness');
     documentManager.getAwareness.mockReturnValue(new Awareness(doc));
 
-    // Pass a different userId in the DTO — the gateway must ignore it
     await gateway.handleJoinDocument(
       { documentId: 'doc-1', userId: 'evil-override', displayName: 'Hacker' },
       socket,
     );
 
-    // Authorization check used the real userId from socket.data
     expect(workspaces.canUserAccessDocument).toHaveBeenCalledWith('user-1', 'doc-1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Part 3 (new) — Payload cap on yjs:update
+// ---------------------------------------------------------------------------
+
+describe('EditorGateway.handleYjsUpdate — payload cap', () => {
+  function makeAuthenticatedSocket(): DeepMockProxy<Socket> {
+    const socket = makeSocket({ data: { user: AUTH_USER } });
+    socket.to.mockReturnValue({ emit: jest.fn() } as never);
+    return socket;
+  }
+
+  it('rejects an oversized Yjs update and emits error', () => {
+    const maxBytes = 100;
+    const { gateway, documentManager } = makeGateway({ maxBytes });
+    const socket = makeAuthenticatedSocket();
+
+    const oversized = new Uint8Array(maxBytes + 1);
+    gateway.handleYjsUpdate({ documentId: 'doc-1', update: oversized }, socket);
+
+    expect(socket.emit).toHaveBeenCalledWith(
+      'error',
+      expect.objectContaining({ message: expect.stringContaining('Payload too large') as string }),
+    );
+    expect(documentManager.applyUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not persist or relay an oversized update', () => {
+    const maxBytes = 100;
+    const { gateway, documentManager } = makeGateway({ maxBytes });
+    const socket = makeAuthenticatedSocket();
+
+    const oversized = new Uint8Array(maxBytes + 1);
+    gateway.handleYjsUpdate({ documentId: 'doc-1', update: oversized }, socket);
+
+    expect(documentManager.applyUpdate).not.toHaveBeenCalled();
+  });
+
+  it('accepts an update at exactly the byte limit', () => {
+    const maxBytes = 100;
+    const { gateway, documentManager } = makeGateway({ maxBytes });
+    const socket = makeAuthenticatedSocket();
+
+    documentManager.applyUpdate.mockImplementation(() => undefined);
+
+    const exactly = new Uint8Array(maxBytes);
+    gateway.handleYjsUpdate({ documentId: 'doc-1', update: exactly }, socket);
+
+    expect(documentManager.applyUpdate).toHaveBeenCalledWith('doc-1', exactly);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Part 2 (new) — WebSocket rate limiting
+// ---------------------------------------------------------------------------
+
+describe('EditorGateway — WebSocket rate limiting', () => {
+  it('drops a yjs:update that exceeds the per-second limit', () => {
+    const wsLimit = 3;
+    const { gateway, documentManager } = makeGateway({ wsLimit });
+    const socket = makeSocket({ data: { user: AUTH_USER } });
+    socket.to.mockReturnValue({ emit: jest.fn() } as never);
+
+    const smallUpdate = new Uint8Array(10);
+    documentManager.applyUpdate.mockImplementation(() => undefined);
+
+    // First 3 calls should pass
+    for (let i = 0; i < wsLimit; i++) {
+      gateway.handleYjsUpdate({ documentId: 'doc-1', update: smallUpdate }, socket);
+    }
+
+    // The 4th call exceeds the limit
+    gateway.handleYjsUpdate({ documentId: 'doc-1', update: smallUpdate }, socket);
+
+    // applyUpdate called exactly wsLimit times (not on the rate-limited 4th)
+    expect(documentManager.applyUpdate).toHaveBeenCalledTimes(wsLimit);
+    expect(socket.emit).toHaveBeenCalledWith(
+      'error',
+      expect.objectContaining({ message: expect.stringContaining('Rate limit') as string }),
+    );
   });
 });
 
@@ -343,8 +433,6 @@ describe('EditorGateway.handleJoinDocument', () => {
 
 describe('WorkspacesService.createWorkspace (owner membership)', () => {
   it('tests delegated to workspaces.service.spec.ts', () => {
-    // The createWorkspace transaction is tested in workspaces.service.spec.ts.
-    // This placeholder keeps the describe block structurally present.
     expect(true).toBe(true);
   });
 });

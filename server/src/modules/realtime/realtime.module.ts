@@ -4,6 +4,7 @@ import { EditorGateway } from './editor.gateway';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
+import { WsRateLimiter } from './ws-rate-limiter.service';
 
 @Module({
   imports: [WorkspacesModule],
@@ -12,6 +13,7 @@ import { DocumentPersistenceService } from './document-persistence.service';
     ConnectionRegistryService,
     DocumentManagerService,
     DocumentPersistenceService,
+    WsRateLimiter,
   ],
   exports: [ConnectionRegistryService, DocumentManagerService, DocumentPersistenceService],
 })

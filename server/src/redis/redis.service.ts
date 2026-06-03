@@ -101,6 +101,20 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Pings the Redis server. Returns false if unavailable or the ping fails.
+   * Used by the readiness probe to verify the connection is healthy.
+   */
+  async ping(): Promise<boolean> {
+    if (!this._available) return false;
+    try {
+      const result = await this.publisher.ping();
+      return result === 'PONG';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Publishes a message to a Redis channel.
    * No-ops silently when Redis is unavailable.
    */

@@ -9,4 +9,10 @@ export interface AppConfig {
   logLevel: string;
   docTeardownGraceMs: number;
   snapshotEveryNUpdates: number;
+  httpTtlSeconds: number;
+  httpLimit: number;
+  authTtlSeconds: number;
+  authLimit: number;
+  wsMessageLimitPerSecond: number;
+  wsMaxYjsUpdateBytes: number;
 }

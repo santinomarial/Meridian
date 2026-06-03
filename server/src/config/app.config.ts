@@ -18,5 +18,11 @@ export const appConfig = registerAs(APP_CONFIG_KEY, (): AppConfig => {
     logLevel: env.LOG_LEVEL,
     docTeardownGraceMs: env.DOC_TEARDOWN_GRACE_MS,
     snapshotEveryNUpdates: env.SNAPSHOT_EVERY_N_UPDATES,
+    httpTtlSeconds: env.HTTP_TTL_SECONDS,
+    httpLimit: env.HTTP_LIMIT,
+    authTtlSeconds: env.AUTH_TTL_SECONDS,
+    authLimit: env.AUTH_LIMIT,
+    wsMessageLimitPerSecond: env.WS_MESSAGE_LIMIT_PER_SECOND,
+    wsMaxYjsUpdateBytes: env.WS_MAX_YJS_UPDATE_BYTES,
   };
 });
