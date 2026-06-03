@@ -14,6 +14,7 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('15m'),
   LOG_LEVEL: z.string().default('info'),
   DOC_TEARDOWN_GRACE_MS: z.coerce.number().int().positive().default(30000),
+  SNAPSHOT_EVERY_N_UPDATES: z.coerce.number().int().positive().default(100),
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;

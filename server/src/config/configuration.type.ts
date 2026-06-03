@@ -8,4 +8,5 @@ export interface AppConfig {
   jwtExpiresIn: string;
   logLevel: string;
   docTeardownGraceMs: number;
+  snapshotEveryNUpdates: number;
 }

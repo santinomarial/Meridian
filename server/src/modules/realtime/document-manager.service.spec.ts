@@ -410,6 +410,35 @@ describe('DocumentManagerService', () => {
       expect(doc.getText('content').toString()).toBe('hello world');
     });
 
+    it('cold-load after compaction: snapshot at seq N with no remaining updates', async () => {
+      // Simulates the DB state left after compaction: a snapshot at a high seq
+      // and no DocumentUpdate rows (all deleted).  The reconstruction must load
+      // content from the snapshot and query only updates with seq > snapshotSeq
+      // (which returns nothing here).
+      const compactedDoc = new Y.Doc();
+      compactedDoc.getText('content').insert(0, 'compacted content');
+      const snapshotState = Y.encodeStateAsUpdate(compactedDoc);
+
+      prisma.snapshot.findFirst.mockResolvedValue({
+        id: 'snap-1',
+        documentId: 'doc-1',
+        state: Buffer.from(snapshotState),
+        seq: 99,
+        createdAt: new Date(),
+      } as never);
+      // All updates were deleted during compaction.
+      prisma.documentUpdate.findMany.mockResolvedValue([] as never);
+
+      const doc = await manager.acquire('doc-1');
+
+      expect(doc.getText('content').toString()).toBe('compacted content');
+      // Must query only updates AFTER the snapshot seq, not all updates.
+      expect(prisma.documentUpdate.findMany).toHaveBeenCalledWith({
+        where: { documentId: 'doc-1', seq: { gt: 99 } },
+        orderBy: { seq: 'asc' },
+      });
+    });
+
     it('reconstructed doc has the same content as the original', async () => {
       // Simulate a write session: snapshot at seq 0, then two deltas.
       const workDoc = new Y.Doc();

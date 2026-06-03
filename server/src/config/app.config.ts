@@ -17,5 +17,6 @@ export const appConfig = registerAs(APP_CONFIG_KEY, (): AppConfig => {
     jwtExpiresIn: env.JWT_EXPIRES_IN,
     logLevel: env.LOG_LEVEL,
     docTeardownGraceMs: env.DOC_TEARDOWN_GRACE_MS,
+    snapshotEveryNUpdates: env.SNAPSHOT_EVERY_N_UPDATES,
   };
 });
