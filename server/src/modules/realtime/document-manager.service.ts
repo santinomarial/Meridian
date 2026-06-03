@@ -4,6 +4,7 @@ import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
+import { PrismaService } from '../../prisma/prisma.service';
 
 interface DocEntry {
   doc: Y.Doc;
@@ -20,12 +21,15 @@ export class DocumentManagerService {
   private readonly docs = new Map<string, DocEntry>();
   private readonly graceMs: number;
 
-  constructor(configService: ConfigService) {
+  constructor(
+    configService: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {
     const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
     this.graceMs = config.docTeardownGraceMs;
   }
 
-  acquire(documentId: string): Y.Doc {
+  async acquire(documentId: string): Promise<Y.Doc> {
     const existing = this.docs.get(documentId);
 
     if (existing !== undefined) {
@@ -40,7 +44,10 @@ export class DocumentManagerService {
 
     const doc = new Y.Doc();
     const awareness = new awarenessProtocol.Awareness(doc);
+    // Register the entry before the async load so that concurrent acquires
+    // for the same documentId get the same Y.Doc instance.
     this.docs.set(documentId, { doc, awareness, refCount: 1 });
+    await this.loadFromDb(documentId, doc);
     return doc;
   }
 
@@ -116,5 +123,35 @@ export class DocumentManagerService {
     entry.awareness.destroy();
     entry.doc.destroy();
     this.docs.delete(documentId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // DB reconstruction
+  // ---------------------------------------------------------------------------
+
+  private async loadFromDb(documentId: string, doc: Y.Doc): Promise<void> {
+    // Load the most recent snapshot, if any, as the base state.
+    const snapshot = await this.prisma.snapshot.findFirst({
+      where: { documentId },
+      orderBy: { seq: 'desc' },
+    });
+
+    if (snapshot !== null) {
+      Y.applyUpdate(doc, snapshot.state);
+    }
+
+    // Load only the delta updates that came after the snapshot (or all updates
+    // when there is no snapshot, using seq > -1 to match every row).
+    const updates = await this.prisma.documentUpdate.findMany({
+      where: {
+        documentId,
+        seq: { gt: snapshot?.seq ?? -1 },
+      },
+      orderBy: { seq: 'asc' },
+    });
+
+    for (const row of updates) {
+      Y.applyUpdate(doc, row.update);
+    }
   }
 }

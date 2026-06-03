@@ -97,8 +97,10 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await client.join(room);
     this.registry.join(client.id, dto.documentId);
 
-    // Acquire the authoritative Y.Doc (creates it on first join).
-    this.documentManager.acquire(dto.documentId);
+    // Acquire the authoritative Y.Doc.  On first join, this loads the latest
+    // snapshot and any subsequent delta updates from the database so the
+    // server's in-memory doc is authoritative before the sync handshake begins.
+    const doc = await this.documentManager.acquire(dto.documentId);
 
     // Sync step 1: send the server's state vector to the joining client.
     //
@@ -108,7 +110,6 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // This avoids resending the whole document to late joiners — only the
     // delta (what the client has that the server doesn't) travels over the
     // wire, and the server sends its own delta back.
-    const doc = this.documentManager.getDoc(dto.documentId)!;
     const step1Encoder = encoding.createEncoder();
     syncProtocol.writeSyncStep1(step1Encoder, doc);
     client.emit('yjs:sync', {
