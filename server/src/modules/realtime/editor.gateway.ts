@@ -4,6 +4,7 @@ import {
   MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -14,6 +15,8 @@ import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
+import { RedisService } from '../../redis/redis.service';
+import { ORIGIN_ID } from './origin';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
@@ -24,12 +27,32 @@ import { YjsSyncDto } from './dto/yjs-sync.dto';
 import { AwarenessUpdateDto } from './dto/awareness-update.dto';
 import { WsValidationFilter } from './filters/ws-exception.filter';
 
+// ---------------------------------------------------------------------------
+// Cross-instance Redis message shapes
+// ---------------------------------------------------------------------------
+
+// Payload published to document:{documentId}:updates
+interface CrossInstanceUpdate {
+  originId: string;
+  documentId: string;
+  update: string; // base64-encoded Yjs update bytes
+}
+
+// Payload published to document:{documentId}:awareness
+interface CrossInstanceAwareness {
+  originId: string;
+  documentId: string;
+  update: string; // base64-encoded awareness update bytes
+}
+
 // CORS is configured on the IoAdapter in main.ts so it reads from typed config.
 @WebSocketGateway()
 @Injectable()
 @UseFilters(new WsValidationFilter())
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
-export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class EditorGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit
+{
   @WebSocketServer()
   server!: Server;
 
@@ -41,12 +64,43 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly registry: ConnectionRegistryService,
     private readonly documentManager: DocumentManagerService,
     private readonly persistence: DocumentPersistenceService,
+    private readonly redis: RedisService,
     @InjectPinoLogger(EditorGateway.name)
     private readonly logger: PinoLogger,
   ) {}
 
   // ---------------------------------------------------------------------------
-  // Lifecycle
+  // Gateway init — Redis subscriptions
+  // ---------------------------------------------------------------------------
+
+  async afterInit(): Promise<void> {
+    // Subscribe once to all document update and awareness channels using Redis
+    // pattern subscriptions (PSUBSCRIBE).  A single pattern covers all
+    // documents so there is no per-document subscribe/unsubscribe lifecycle.
+    //
+    // Local Socket.IO rooms only reach clients connected to this process.
+    // Redis carries updates across backend instances so all instances converge
+    // to the same Yjs document state and presence information regardless of
+    // which instance a client is connected to.
+    await Promise.all([
+      this.redis.subscribe('document:*:updates', (channel, msg) =>
+        this.onRedisUpdate(channel, msg as string),
+      ),
+      this.redis.subscribe('document:*:awareness', (channel, msg) =>
+        this.onRedisAwareness(channel, msg as string),
+      ),
+    ]);
+
+    if (this.redis.isAvailable) {
+      this.logger.info(
+        { originId: ORIGIN_ID },
+        'EditorGateway subscribed to Redis cross-instance channels',
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Socket lifecycle
   // ---------------------------------------------------------------------------
 
   handleConnection(client: Socket): void {
@@ -68,6 +122,9 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Remove and broadcast cursor/selection disappearance before the socket
       // leaves the room.  Cursors should disappear on disconnect immediately
       // so other clients do not see ghost cursors from absent users.
+      //
+      // removeAwarenessForSocket also publishes the removal to Redis so
+      // cursors disappear on all backend instances, not just this one.
       this.removeAwarenessForSocket(client, documentId);
 
       client.to(`document:${documentId}`).emit('userLeft', {
@@ -161,6 +218,7 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Remove and broadcast cursor disappearance before leaving the room so
     // remaining clients receive the removal while the socket is still in-room.
+    // Also publishes the removal to Redis for cross-instance cleanup.
     this.removeAwarenessForSocket(client, dto.documentId);
 
     await client.leave(room);
@@ -239,21 +297,30 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // Apply the update to the server-authoritative Y.Doc.
     this.documentManager.applyUpdate(dto.documentId, update);
 
-    // Relay the raw update to every OTHER socket in the document room.
+    // Relay the raw update to every OTHER socket in the local document room.
     //
     // Echo suppression: the sending client has already applied this update
     // to its own local Y.Doc. Re-sending it back would cause the client to
     // apply the same update twice, leading to duplicated content or spurious
     // state-vector growth. Other clients still receive the update and merge
     // it into their own docs via Y.applyUpdate.
+    //
+    // Local Socket.IO rooms only reach clients connected to this process.
+    // Redis (below) carries the update to sibling backend instances.
     client.to(`document:${dto.documentId}`).emit('yjs:update', {
       documentId: dto.documentId,
       update,
     });
 
     // Persist asynchronously — relay already happened above so peers are not
-    // blocked by the database write.
+    // blocked by the database write.  Postgres remains the durable source of
+    // truth; Redis is ephemeral and carries only the live-editing stream.
     this.persistence.persistUpdate(dto.documentId, update);
+
+    // Publish to Redis so every sibling instance applies the update to its
+    // in-memory Y.Doc and relays it to its local sockets.  Fire-and-forget:
+    // if Redis is unavailable the void discards the no-op Promise silently.
+    void this.publishYjsUpdate(dto.documentId, update);
 
     this.logger.debug(
       { socketId: client.id, documentId: dto.documentId, bytes: update.byteLength },
@@ -300,12 +367,132 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // to the database.  Only document text (via Yjs updates) is persisted.
     awarenessProtocol.applyAwarenessUpdate(awareness, update, client.id);
 
-    // Relay to all other sockets in the room.
+    // Relay to all other LOCAL sockets in the room.
     // Echo suppression: the sender already applied the update locally.
+    // Redis (below) carries the update to sibling backend instances.
     client.to(`document:${dto.documentId}`).emit('awareness:update', {
       documentId: dto.documentId,
       update,
     });
+
+    // Cross-instance awareness propagation.  Awareness is eventually consistent
+    // across the cluster: each instance maintains its own Awareness object and
+    // receives remote states via Redis.  Exact cluster-wide presence converges
+    // within one round-trip once all sockets have advertised their state.
+    void this.publishAwareness(dto.documentId, update);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Redis — inbound handlers
+  // ---------------------------------------------------------------------------
+
+  private onRedisUpdate(channel: string, message: string): void {
+    let payload: CrossInstanceUpdate;
+    try {
+      payload = JSON.parse(message) as CrossInstanceUpdate;
+    } catch {
+      this.logger.warn({ channel }, 'Received malformed Redis update message');
+      return;
+    }
+
+    // originId prevents double-apply and self-echo: the originating instance
+    // already applied the update locally and relayed it to its own sockets.
+    if (payload.originId === ORIGIN_ID) return;
+
+    // Only apply if the document is active on this instance.  Documents not in
+    // memory will be rebuilt from Postgres on next cold start — including all
+    // updates persisted by the originating instance.  Applying an update to a
+    // document that isn't loaded would create a dangling in-memory state.
+    if (!this.documentManager.hasDocument(payload.documentId)) return;
+
+    try {
+      const update = Buffer.from(payload.update, 'base64');
+      this.documentManager.applyUpdate(payload.documentId, update);
+
+      // Relay to all local sockets in this document's room.
+      this.server.to(`document:${payload.documentId}`).emit('yjs:update', {
+        documentId: payload.documentId,
+        update,
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, documentId: payload.documentId },
+        'Failed to apply cross-instance Yjs update',
+      );
+    }
+  }
+
+  private onRedisAwareness(channel: string, message: string): void {
+    let payload: CrossInstanceAwareness;
+    try {
+      payload = JSON.parse(message) as CrossInstanceAwareness;
+    } catch {
+      this.logger.warn({ channel }, 'Received malformed Redis awareness message');
+      return;
+    }
+
+    // Ignore own messages — this instance already applied the update locally.
+    if (payload.originId === ORIGIN_ID) return;
+
+    // Local socket registry is per-instance.  If this instance has no sockets
+    // for this document, there is nothing to relay.  Awareness is ephemeral —
+    // it is not persisted and will re-converge when clients reconnect.
+    if (!this.documentManager.hasDocument(payload.documentId)) return;
+
+    const awareness = this.documentManager.getAwareness(payload.documentId);
+    if (awareness === undefined) return;
+
+    try {
+      const update = Buffer.from(payload.update, 'base64');
+
+      // 'redis-remote' is the origin tag — distinct from any socket.id so
+      // awareness state tracking does not confuse remote clients with local ones.
+      awarenessProtocol.applyAwarenessUpdate(awareness, update, 'redis-remote');
+
+      this.server.to(`document:${payload.documentId}`).emit('awareness:update', {
+        documentId: payload.documentId,
+        update,
+      });
+    } catch (err) {
+      this.logger.error(
+        { err, documentId: payload.documentId },
+        'Failed to apply cross-instance awareness update',
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Redis — outbound helpers
+  // ---------------------------------------------------------------------------
+
+  private async publishYjsUpdate(
+    documentId: string,
+    update: Uint8Array,
+  ): Promise<void> {
+    const payload: CrossInstanceUpdate = {
+      originId: ORIGIN_ID,
+      documentId,
+      update: Buffer.from(update).toString('base64'),
+    };
+    await this.redis.publish(
+      `document:${documentId}:updates`,
+      JSON.stringify(payload),
+    );
+  }
+
+  private async publishAwareness(
+    documentId: string,
+    update: Uint8Array,
+  ): Promise<void> {
+    const payload: CrossInstanceAwareness = {
+      originId: ORIGIN_ID,
+      documentId,
+      update: Buffer.from(update).toString('base64'),
+    };
+    await this.redis.publish(
+      `document:${documentId}:awareness`,
+      JSON.stringify(payload),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -314,8 +501,11 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   /**
    * Removes the socket's awareness state for one document and broadcasts the
-   * removal.  Cursors should disappear on disconnect/leave so other clients do
-   * not see ghost cursors from users who are no longer present.
+   * removal both to local sockets and to Redis.
+   *
+   * Cursors should disappear on disconnect/leave so other clients — on this
+   * instance and on sibling instances — do not see ghost cursors from users
+   * who are no longer present.
    */
   private removeAwarenessForSocket(client: Socket, documentId: string): void {
     const docMap = this.socketAwarenessIds.get(client.id);
@@ -342,10 +532,15 @@ export class EditorGateway implements OnGatewayConnection, OnGatewayDisconnect {
       new Map<number, { [x: string]: unknown }>(),
     );
 
+    // Relay to local sockets still in the room.
     client.to(`document:${documentId}`).emit('awareness:update', {
       documentId,
       update: removalUpdate,
     });
+
+    // Publish removal to Redis so ghost cursors disappear on sibling instances.
+    // Awareness is ephemeral — this removal is NOT persisted to Postgres.
+    void this.publishAwareness(documentId, removalUpdate);
   }
 }
 
