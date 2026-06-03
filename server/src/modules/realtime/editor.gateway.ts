@@ -9,13 +9,17 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
+import { JwtService } from '@nestjs/jwt';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { Server, Socket } from 'socket.io';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
+import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { WorkspacesService } from '../../workspaces/workspaces.service';
+import { toAuthUser } from '../auth/auth.service';
 import { ORIGIN_ID } from './origin';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
@@ -26,19 +30,18 @@ import { YjsUpdateDto } from './dto/yjs-update.dto';
 import { YjsSyncDto } from './dto/yjs-sync.dto';
 import { AwarenessUpdateDto } from './dto/awareness-update.dto';
 import { WsValidationFilter } from './filters/ws-exception.filter';
+import type { AuthUser, JwtPayload } from '../auth/types/auth-user.type';
 
 // ---------------------------------------------------------------------------
 // Cross-instance Redis message shapes
 // ---------------------------------------------------------------------------
 
-// Payload published to document:{documentId}:updates
 interface CrossInstanceUpdate {
   originId: string;
   documentId: string;
   update: string; // base64-encoded Yjs update bytes
 }
 
-// Payload published to document:{documentId}:awareness
 interface CrossInstanceAwareness {
   originId: string;
   documentId: string;
@@ -57,7 +60,6 @@ export class EditorGateway
   server!: Server;
 
   // Maps socketId → documentId → Set of Yjs awareness clientIds.
-  // Used to identify which awareness states to remove on leave/disconnect.
   private readonly socketAwarenessIds = new Map<string, Map<string, Set<number>>>();
 
   constructor(
@@ -65,23 +67,32 @@ export class EditorGateway
     private readonly documentManager: DocumentManagerService,
     private readonly persistence: DocumentPersistenceService,
     private readonly redis: RedisService,
+    private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
+    private readonly workspaces: WorkspacesService,
     @InjectPinoLogger(EditorGateway.name)
     private readonly logger: PinoLogger,
   ) {}
 
   // ---------------------------------------------------------------------------
-  // Gateway init — Redis subscriptions
+  // Gateway init — auth middleware + Redis subscriptions
   // ---------------------------------------------------------------------------
 
   async afterInit(): Promise<void> {
-    // Subscribe once to all document update and awareness channels using Redis
-    // pattern subscriptions (PSUBSCRIBE).  A single pattern covers all
-    // documents so there is no per-document subscribe/unsubscribe lifecycle.
-    //
-    // Local Socket.IO rooms only reach clients connected to this process.
-    // Redis carries updates across backend instances so all instances converge
-    // to the same Yjs document state and presence information regardless of
-    // which instance a client is connected to.
+    // Authenticate every socket before it connects.  The middleware runs
+    // synchronously as part of the Socket.IO handshake; calling next(error)
+    // rejects the connection before handleConnection is ever invoked.
+    this.server.use(async (socket, next) => {
+      try {
+        await this.authenticateSocket(socket);
+        next();
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Authentication failed';
+        next(new Error(message));
+      }
+    });
+
     await Promise.all([
       this.redis.subscribe('document:*:updates', (channel, msg) =>
         this.onRedisUpdate(channel, msg as string),
@@ -107,10 +118,13 @@ export class EditorGateway
     const requestId = client.handshake.headers['x-request-id'];
     const requestIdStr = Array.isArray(requestId) ? requestId[0] : requestId;
 
-    this.registry.register(client.id);
+    // socket.data.user is guaranteed here — the middleware in afterInit()
+    // rejects unauthenticated sockets before handleConnection fires.
+    const user = client.data['user'] as AuthUser;
+    this.registry.register(client.id, user.id);
 
     this.logger.info(
-      { socketId: client.id, requestId: requestIdStr },
+      { socketId: client.id, requestId: requestIdStr, userId: user.id },
       'Socket connected',
     );
   }
@@ -119,12 +133,6 @@ export class EditorGateway
     const documentIds = this.registry.getDocumentsForSocket(client.id);
 
     for (const documentId of documentIds) {
-      // Remove and broadcast cursor/selection disappearance before the socket
-      // leaves the room.  Cursors should disappear on disconnect immediately
-      // so other clients do not see ghost cursors from absent users.
-      //
-      // removeAwarenessForSocket also publishes the removal to Redis so
-      // cursors disappear on all backend instances, not just this one.
       this.removeAwarenessForSocket(client, documentId);
 
       client.to(`document:${documentId}`).emit('userLeft', {
@@ -149,24 +157,31 @@ export class EditorGateway
     @MessageBody() dto: JoinDocumentDto,
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
+    const user = client.data['user'] as AuthUser;
+
+    // Authorization: the socket user must be a member of the document's workspace.
+    const authorized = await this.workspaces.canUserAccessDocument(
+      user.id,
+      dto.documentId,
+    );
+    if (!authorized) {
+      client.emit('error', {
+        message: `Access denied to document ${dto.documentId}`,
+      });
+      this.logger.warn(
+        { socketId: client.id, userId: user.id, documentId: dto.documentId },
+        'Unauthorized joinDocument attempt',
+      );
+      return;
+    }
+
     const room = `document:${dto.documentId}`;
 
     await client.join(room);
     this.registry.join(client.id, dto.documentId);
 
-    // Acquire the authoritative Y.Doc.  On first join, this loads the latest
-    // snapshot and any subsequent delta updates from the database so the
-    // server's in-memory doc is authoritative before the sync handshake begins.
     const doc = await this.documentManager.acquire(dto.documentId);
 
-    // Sync step 1: send the server's state vector to the joining client.
-    //
-    // A state vector is a compact summary of which updates a replica already
-    // has (clock per client-id). The client uses it to compute only the
-    // updates the server is missing and sends them back as sync step 2.
-    // This avoids resending the whole document to late joiners — only the
-    // delta (what the client has that the server doesn't) travels over the
-    // wire, and the server sends its own delta back.
     const step1Encoder = encoding.createEncoder();
     syncProtocol.writeSyncStep1(step1Encoder, doc);
     client.emit('yjs:sync', {
@@ -174,8 +189,6 @@ export class EditorGateway
       message: encoding.toUint8Array(step1Encoder),
     });
 
-    // Send current awareness states so the joining client immediately sees
-    // where all other users' cursors and selections are.
     const awareness = this.documentManager.getAwareness(dto.documentId)!;
     const currentStates = awareness.getStates();
     if (currentStates.size > 0) {
@@ -189,22 +202,20 @@ export class EditorGateway
       });
     }
 
-    // Notify peers already in the room.
     client.to(room).emit('userJoined', {
       documentId: dto.documentId,
       socketId: client.id,
-      userId: dto.userId,
-      displayName: dto.displayName,
+      userId: user.id,
+      displayName: user.displayName,
     });
 
-    // Acknowledge to the joining socket.
     client.emit('joinedDocument', {
       documentId: dto.documentId,
       socketId: client.id,
     });
 
     this.logger.info(
-      { socketId: client.id, documentId: dto.documentId, userId: dto.userId },
+      { socketId: client.id, documentId: dto.documentId, userId: user.id },
       'Socket joined document',
     );
   }
@@ -216,9 +227,6 @@ export class EditorGateway
   ): Promise<void> {
     const room = `document:${dto.documentId}`;
 
-    // Remove and broadcast cursor disappearance before leaving the room so
-    // remaining clients receive the removal while the socket is still in-room.
-    // Also publishes the removal to Redis for cross-instance cleanup.
     this.removeAwarenessForSocket(client, dto.documentId);
 
     await client.leave(room);
@@ -262,12 +270,6 @@ export class EditorGateway
     const decoder = decoding.createDecoder(message);
     const responseEncoder = encoding.createEncoder();
 
-    // readSyncMessage dispatches on the message type:
-    //   Step 1 (state vector): writes a step 2 response containing all updates
-    //     the server has that the client's state vector does not reference.
-    //     Only the missing delta is sent — not the whole document.
-    //   Step 2 (update): applies the update to the authoritative Y.Doc so the
-    //     server stays current and future joiners receive an up-to-date state.
     syncProtocol.readSyncMessage(decoder, responseEncoder, doc, null);
 
     if (encoding.length(responseEncoder) > 0) {
@@ -279,7 +281,7 @@ export class EditorGateway
   }
 
   // ---------------------------------------------------------------------------
-  // Live update relay (runs alongside the sync handshake)
+  // Live update relay
   // ---------------------------------------------------------------------------
 
   @SubscribeMessage('yjs:update')
@@ -294,32 +296,15 @@ export class EditorGateway
       return;
     }
 
-    // Apply the update to the server-authoritative Y.Doc.
     this.documentManager.applyUpdate(dto.documentId, update);
 
-    // Relay the raw update to every OTHER socket in the local document room.
-    //
-    // Echo suppression: the sending client has already applied this update
-    // to its own local Y.Doc. Re-sending it back would cause the client to
-    // apply the same update twice, leading to duplicated content or spurious
-    // state-vector growth. Other clients still receive the update and merge
-    // it into their own docs via Y.applyUpdate.
-    //
-    // Local Socket.IO rooms only reach clients connected to this process.
-    // Redis (below) carries the update to sibling backend instances.
     client.to(`document:${dto.documentId}`).emit('yjs:update', {
       documentId: dto.documentId,
       update,
     });
 
-    // Persist asynchronously — relay already happened above so peers are not
-    // blocked by the database write.  Postgres remains the durable source of
-    // truth; Redis is ephemeral and carries only the live-editing stream.
     this.persistence.persistUpdate(dto.documentId, update);
 
-    // Publish to Redis so every sibling instance applies the update to its
-    // in-memory Y.Doc and relays it to its local sockets.  Fire-and-forget:
-    // if Redis is unavailable the void discards the no-op Promise silently.
     void this.publishYjsUpdate(dto.documentId, update);
 
     this.logger.debug(
@@ -329,7 +314,7 @@ export class EditorGateway
   }
 
   // ---------------------------------------------------------------------------
-  // Awareness — ephemeral presence (cursors / selections)
+  // Awareness
   // ---------------------------------------------------------------------------
 
   @SubscribeMessage('awareness:update')
@@ -351,7 +336,6 @@ export class EditorGateway
       return;
     }
 
-    // Track which Yjs clientIds this socket is advertising for cleanup later.
     const clientIds = extractAwarenessClientIds(update);
     let docMap = this.socketAwarenessIds.get(client.id);
     if (docMap === undefined) {
@@ -362,23 +346,13 @@ export class EditorGateway
     for (const id of clientIds) tracked.add(id);
     docMap.set(dto.documentId, tracked);
 
-    // Apply to the server's Awareness instance.
-    // Awareness is ephemeral: cursor positions and selections are NOT persisted
-    // to the database.  Only document text (via Yjs updates) is persisted.
     awarenessProtocol.applyAwarenessUpdate(awareness, update, client.id);
 
-    // Relay to all other LOCAL sockets in the room.
-    // Echo suppression: the sender already applied the update locally.
-    // Redis (below) carries the update to sibling backend instances.
     client.to(`document:${dto.documentId}`).emit('awareness:update', {
       documentId: dto.documentId,
       update,
     });
 
-    // Cross-instance awareness propagation.  Awareness is eventually consistent
-    // across the cluster: each instance maintains its own Awareness object and
-    // receives remote states via Redis.  Exact cluster-wide presence converges
-    // within one round-trip once all sockets have advertised their state.
     void this.publishAwareness(dto.documentId, update);
   }
 
@@ -395,21 +369,13 @@ export class EditorGateway
       return;
     }
 
-    // originId prevents double-apply and self-echo: the originating instance
-    // already applied the update locally and relayed it to its own sockets.
     if (payload.originId === ORIGIN_ID) return;
-
-    // Only apply if the document is active on this instance.  Documents not in
-    // memory will be rebuilt from Postgres on next cold start — including all
-    // updates persisted by the originating instance.  Applying an update to a
-    // document that isn't loaded would create a dangling in-memory state.
     if (!this.documentManager.hasDocument(payload.documentId)) return;
 
     try {
       const update = Buffer.from(payload.update, 'base64');
       this.documentManager.applyUpdate(payload.documentId, update);
 
-      // Relay to all local sockets in this document's room.
       this.server.to(`document:${payload.documentId}`).emit('yjs:update', {
         documentId: payload.documentId,
         update,
@@ -431,12 +397,7 @@ export class EditorGateway
       return;
     }
 
-    // Ignore own messages — this instance already applied the update locally.
     if (payload.originId === ORIGIN_ID) return;
-
-    // Local socket registry is per-instance.  If this instance has no sockets
-    // for this document, there is nothing to relay.  Awareness is ephemeral —
-    // it is not persisted and will re-converge when clients reconnect.
     if (!this.documentManager.hasDocument(payload.documentId)) return;
 
     const awareness = this.documentManager.getAwareness(payload.documentId);
@@ -444,9 +405,6 @@ export class EditorGateway
 
     try {
       const update = Buffer.from(payload.update, 'base64');
-
-      // 'redis-remote' is the origin tag — distinct from any socket.id so
-      // awareness state tracking does not confuse remote clients with local ones.
       awarenessProtocol.applyAwarenessUpdate(awareness, update, 'redis-remote');
 
       this.server.to(`document:${payload.documentId}`).emit('awareness:update', {
@@ -496,17 +454,44 @@ export class EditorGateway
   }
 
   // ---------------------------------------------------------------------------
+  // Socket authentication
+  // ---------------------------------------------------------------------------
+
+  async authenticateSocket(socket: Socket): Promise<void> {
+    const token = extractSocketToken(socket);
+    if (token === null) {
+      throw new Error('No authentication token');
+    }
+
+    let payload: JwtPayload;
+    try {
+      payload = this.jwtService.verify<JwtPayload>(token);
+    } catch {
+      throw new Error('Invalid or expired token');
+    }
+
+    const session = await this.prisma.session.findUnique({
+      where: { jti: payload.jti },
+      include: { user: true },
+    });
+
+    if (session === null) {
+      throw new Error('Session not found');
+    }
+    if (session.expiresAt < new Date()) {
+      throw new Error('Session expired');
+    }
+    if (session.revokedAt !== null) {
+      throw new Error('Session revoked');
+    }
+
+    socket.data['user'] = toAuthUser(session.user);
+  }
+
+  // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  /**
-   * Removes the socket's awareness state for one document and broadcasts the
-   * removal both to local sockets and to Redis.
-   *
-   * Cursors should disappear on disconnect/leave so other clients — on this
-   * instance and on sibling instances — do not see ghost cursors from users
-   * who are no longer present.
-   */
   private removeAwarenessForSocket(client: Socket, documentId: string): void {
     const docMap = this.socketAwarenessIds.get(client.id);
     if (docMap === undefined) return;
@@ -519,27 +504,19 @@ export class EditorGateway
     const awareness = this.documentManager.getAwareness(documentId);
     if (awareness === undefined) return;
 
-    // Remove the states from the awareness instance (updates meta clocks).
     awarenessProtocol.removeAwarenessStates(awareness, clientIds, 'server-disconnect');
 
-    // Encode a null-state update for the removed clientIds.  Passing an empty
-    // Map causes encodeAwarenessUpdate to write null for each state entry
-    // (Map.get returns undefined → undefined || null = null), which signals
-    // to receiving clients that these cursors should be removed.
     const removalUpdate = awarenessProtocol.encodeAwarenessUpdate(
       awareness,
       clientIds,
       new Map<number, { [x: string]: unknown }>(),
     );
 
-    // Relay to local sockets still in the room.
     client.to(`document:${documentId}`).emit('awareness:update', {
       documentId,
       update: removalUpdate,
     });
 
-    // Publish removal to Redis so ghost cursors disappear on sibling instances.
-    // Awareness is ephemeral — this removal is NOT persisted to Postgres.
     void this.publishAwareness(documentId, removalUpdate);
   }
 }
@@ -549,28 +526,37 @@ export class EditorGateway
 // ---------------------------------------------------------------------------
 
 function toUint8Array(value: unknown): Uint8Array | null {
-  if (value instanceof Uint8Array) return value; // covers Buffer (Node.js subclass)
+  if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   return null;
 }
 
-/**
- * Decodes the leading clientId entries from a y-protocols awareness update
- * without constructing a full Awareness object.  Used to track which Yjs
- * clientIds a socket is responsible for so they can be removed on disconnect.
- */
 function extractAwarenessClientIds(update: Uint8Array): number[] {
   try {
     const decoder = decoding.createDecoder(update);
     const len = decoding.readVarUint(decoder);
     const ids: number[] = [];
     for (let i = 0; i < len; i++) {
-      ids.push(decoding.readVarUint(decoder)); // clientId
-      decoding.readVarUint(decoder);           // clock  (skip)
-      decoding.readVarString(decoder);          // state  (skip)
+      ids.push(decoding.readVarUint(decoder));
+      decoding.readVarUint(decoder);
+      decoding.readVarString(decoder);
     }
     return ids;
   } catch {
     return [];
   }
+}
+
+export function extractSocketToken(socket: Socket): string | null {
+  const auth = socket.handshake.auth as Record<string, unknown>;
+  const authToken = auth['token'];
+  if (typeof authToken === 'string' && authToken.length > 0) return authToken;
+
+  const cookieHeader = socket.handshake.headers['cookie'];
+  if (typeof cookieHeader === 'string') {
+    const match = /auth_token=([^;]+)/.exec(cookieHeader);
+    if (match?.[1] !== undefined) return decodeURIComponent(match[1]);
+  }
+
+  return null;
 }

@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import cookieParser from 'cookie-parser';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
@@ -30,6 +31,8 @@ class SocketIoAdapter extends IoAdapter {
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
+
+  app.use(cookieParser());
 
   app.useGlobalPipes(
     new ValidationPipe({

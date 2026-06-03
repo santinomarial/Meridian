@@ -10,6 +10,7 @@ import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
+import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { DocumentsModule } from './documents/documents.module';
@@ -32,6 +33,7 @@ import { AppService } from './app.service';
     }),
     PrismaModule,
     RedisModule,
+    AuthModule,
     UsersModule,
     WorkspacesModule,
     DocumentsModule,

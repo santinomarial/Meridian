@@ -30,14 +30,41 @@ describe('WorkspacesService', () => {
   });
 
   describe('createWorkspace', () => {
-    it('creates and returns the workspace', async () => {
+    beforeEach(() => {
+      // createWorkspace runs inside a $transaction callback. This mock executes
+      // the callback immediately with `prisma` as the transaction client so
+      // inner calls can be asserted via the same mock object.
+      prisma.$transaction.mockImplementation(
+        ((fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)) as never,
+      );
+    });
+
+    it('creates the workspace and adds owner as OWNER member in a transaction', async () => {
       const data: CreateWorkspaceData = { name: 'Meridian', ownerId: 'user-1' };
       prisma.workspace.create.mockResolvedValue(BASE_WORKSPACE);
+      prisma.workspaceMember.create.mockResolvedValue(BASE_MEMBER);
 
       const result = await service.createWorkspace(data);
 
       expect(prisma.workspace.create).toHaveBeenCalledWith({ data });
+      expect(prisma.workspaceMember.create).toHaveBeenCalledWith({
+        data: {
+          workspaceId: 'ws-1',
+          userId: 'user-1',
+          role: WorkspaceRole.OWNER,
+        },
+      });
       expect(result).toEqual(BASE_WORKSPACE);
+    });
+
+    it('executes workspace and member creation in a single transaction', async () => {
+      const data: CreateWorkspaceData = { name: 'Meridian', ownerId: 'user-1' };
+      prisma.workspace.create.mockResolvedValue(BASE_WORKSPACE);
+      prisma.workspaceMember.create.mockResolvedValue(BASE_MEMBER);
+
+      await service.createWorkspace(data);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
   });
 

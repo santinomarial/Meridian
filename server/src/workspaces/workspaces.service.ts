@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Workspace, WorkspaceMember } from '@prisma/client';
-import { WorkspaceRole } from '@prisma/client';
+import { Prisma, WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CreateWorkspaceData {
@@ -17,7 +17,13 @@ export class WorkspacesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createWorkspace(data: CreateWorkspaceData): Promise<Workspace> {
-    return this.prisma.workspace.create({ data });
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const workspace = await tx.workspace.create({ data });
+      await tx.workspaceMember.create({
+        data: { workspaceId: workspace.id, userId: data.ownerId, role: WorkspaceRole.OWNER },
+      });
+      return workspace;
+    });
   }
 
   async findById(workspaceId: string): Promise<Workspace | null> {
