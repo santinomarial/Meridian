@@ -165,6 +165,15 @@ function AuthCard({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Reset fields and error when the user switches between sign-up and sign-in
+  // so stale values from one mode do not bleed into the other.
+  useEffect(() => {
+    setName("");
+    setEmail("");
+    setPassword("");
+    setError(null);
+  }, [mode]);
+
   const handleSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     setLoading(true);
@@ -209,7 +218,7 @@ function AuthCard({
             icon="person"
             placeholder="John Doe"
             value={name}
-            onChange={setName}
+            onChange={(v) => setName(v)}
             autoComplete="name"
           />
         ) : null}
@@ -221,7 +230,7 @@ function AuthCard({
           type="email"
           placeholder="name@company.com"
           value={email}
-          onChange={setEmail}
+          onChange={(v) => setEmail(v)}
           autoComplete="email"
         />
 

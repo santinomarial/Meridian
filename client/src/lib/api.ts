@@ -49,8 +49,12 @@ async function request<T>(
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
     try {
-      const json = (await res.json()) as { message?: string };
-      if (typeof json.message === 'string') message = json.message;
+      const json = (await res.json()) as { message?: string | string[] };
+      if (typeof json.message === 'string' && json.message.length > 0) {
+        message = json.message;
+      } else if (Array.isArray(json.message) && json.message.length > 0) {
+        message = (json.message as string[]).join('. ');
+      }
     } catch {
       // keep default message
     }
