@@ -6,6 +6,7 @@ import {
   mockFiles,
   mockReviewNotes,
 } from "../data/mock";
+import { getLanguageFromFilename, toLanguageMode } from "../lib/language";
 import type {
   ActivityItem,
   BackendStatus,
@@ -48,10 +49,58 @@ type WorkspaceActions = {
   batchLoadBackend: (data: BackendLoadData) => void;
   clearTabDirty: (fileId: string) => void;
   addFileNode: (file: Extract<FileNode, { kind: "file" }>, content: string) => void;
+  addFolderNode: (folder: Extract<FileNode, { kind: "folder" }>) => void;
   importFiles: (nodes: FileNode[], contentMap: Record<string, string>, firstFileId: string | null) => void;
+  deleteNode: (nodeId: string) => void;
+  renameNode: (nodeId: string, newName: string) => void;
 };
 
 export type WorkspaceState = WorkspaceData & WorkspaceActions;
+
+function collectAllFileIds(nodes: FileNode[], acc: string[]): void {
+  for (const node of nodes) {
+    if (node.kind === "file") acc.push(node.id);
+    else collectAllFileIds(node.children, acc);
+  }
+}
+
+function removeNodeFromTree(
+  nodes: FileNode[],
+  nodeId: string,
+): { tree: FileNode[]; removedFileIds: string[] } {
+  const removedFileIds: string[] = [];
+
+  function remove(items: FileNode[]): FileNode[] {
+    const result: FileNode[] = [];
+    for (const item of items) {
+      if (item.id === nodeId) {
+        if (item.kind === "file") removedFileIds.push(item.id);
+        else collectAllFileIds(item.children, removedFileIds);
+        // skip (removed)
+      } else if (item.kind === "folder") {
+        result.push({ ...item, children: remove(item.children) });
+      } else {
+        result.push(item);
+      }
+    }
+    return result;
+  }
+
+  return { tree: remove(nodes), removedFileIds };
+}
+
+function renameInTree(nodes: FileNode[], nodeId: string, newName: string): FileNode[] {
+  return nodes.map((node) => {
+    if (node.id === nodeId) {
+      if (node.kind === "file") return { ...node, name: newName };
+      return { ...node, name: newName };
+    }
+    if (node.kind === "folder") {
+      return { ...node, children: renameInTree(node.children, nodeId, newName) };
+    }
+    return node;
+  });
+}
 
 function findFileInTree(nodes: FileNode[], fileId: string): Extract<FileNode, { kind: "file" }> | null {
   for (const node of nodes) {
@@ -244,6 +293,42 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
           ],
       activeFileId: file.id,
       saveStatus: content.length > 0 ? ("unsaved" as const) : ("saved" as const),
+    }));
+  },
+
+  addFolderNode: (folder) => {
+    set((state) => ({ files: [...state.files, folder] }));
+  },
+
+  deleteNode: (nodeId) => {
+    set((state) => {
+      const { tree, removedFileIds } = removeNodeFromTree(state.files, nodeId);
+      const removedSet = new Set(removedFileIds);
+      const newEditorContent = Object.fromEntries(
+        Object.entries(state.editorContentByFileId).filter(([id]) => !removedSet.has(id)),
+      );
+      const newOpenTabs = state.openTabs.filter((t) => !removedSet.has(t.fileId));
+      let newActiveFileId = state.activeFileId;
+      if (state.activeFileId !== null && removedSet.has(state.activeFileId)) {
+        const idx = state.openTabs.findIndex((t) => t.fileId === state.activeFileId);
+        newActiveFileId = (newOpenTabs[idx] ?? newOpenTabs[idx - 1] ?? newOpenTabs[0])?.fileId ?? null;
+      }
+      return {
+        files: tree,
+        editorContentByFileId: newEditorContent,
+        openTabs: newOpenTabs,
+        activeFileId: newActiveFileId,
+      };
+    });
+  },
+
+  renameNode: (nodeId, newName) => {
+    set((state) => ({
+      files: renameInTree(state.files, nodeId, newName),
+      openTabs: state.openTabs.map((t) => {
+        if (t.fileId !== nodeId) return t;
+        return { ...t, name: newName, language: toLanguageMode(getLanguageFromFilename(newName)) };
+      }),
     }));
   },
 

@@ -1,25 +1,32 @@
 import type {
+  ApiAuthResponse,
   ApiDocument,
   ApiUser,
   ApiWorkspace,
   CreateDocumentPayload,
+  CreateWorkspacePayload,
   LoginPayload,
   RegisterPayload,
   UpdateDocumentPayload,
 } from './apiTypes';
 
 export type {
+  ApiAuthResponse,
   ApiDocument,
   ApiUser,
   ApiWorkspace,
   CreateDocumentPayload,
+  CreateWorkspacePayload,
   LoginPayload,
   RegisterPayload,
   UpdateDocumentPayload,
 };
 
-const API_URL: string =
-  (import.meta.env['VITE_API_URL'] as string | undefined) ?? 'http://localhost:3000';
+const _rawApiUrl = import.meta.env['VITE_API_URL'] as string | undefined;
+if (!_rawApiUrl && import.meta.env.DEV) {
+  console.warn('[Meridian] VITE_API_URL not set — defaulting to http://localhost:3000');
+}
+const API_URL: string = _rawApiUrl ?? 'http://localhost:3000';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -73,11 +80,11 @@ async function request<T>(
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
-export const login = (payload: LoginPayload): Promise<ApiUser> =>
-  request<ApiUser>('POST', '/auth/login', payload);
+export const login = (payload: LoginPayload): Promise<ApiAuthResponse> =>
+  request<ApiAuthResponse>('POST', '/auth/login', payload);
 
-export const register = (payload: RegisterPayload): Promise<ApiUser> =>
-  request<ApiUser>('POST', '/auth/register', payload);
+export const register = (payload: RegisterPayload): Promise<ApiAuthResponse> =>
+  request<ApiAuthResponse>('POST', '/auth/register', payload);
 
 export const getCurrentUser = (): Promise<ApiUser> =>
   request<ApiUser>('GET', '/auth/me');
@@ -91,6 +98,9 @@ export const getWorkspaces = (): Promise<ApiWorkspace[]> =>
 
 export const getWorkspace = (workspaceId: string): Promise<ApiWorkspace> =>
   request<ApiWorkspace>('GET', `/workspaces/${workspaceId}`);
+
+export const createWorkspace = (payload: CreateWorkspacePayload): Promise<ApiWorkspace> =>
+  request<ApiWorkspace>('POST', '/workspaces', payload);
 
 // ── Documents ─────────────────────────────────────────────────────────────────
 
@@ -114,3 +124,6 @@ export const updateDocument = (
   payload: UpdateDocumentPayload,
 ): Promise<ApiDocument> =>
   request<ApiDocument>('PATCH', `/documents/${documentId}`, payload);
+
+export const deleteDocument = (documentId: string): Promise<void> =>
+  request<void>('DELETE', `/documents/${documentId}`);

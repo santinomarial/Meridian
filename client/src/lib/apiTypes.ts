@@ -31,6 +31,16 @@ export interface ApiDocument {
   children?: ApiDocument[];
 }
 
+export interface ApiAuthResponse {
+  user: ApiUser;
+  token: string;
+}
+
+export interface CreateWorkspacePayload {
+  name: string;
+  ownerId: string;
+}
+
 export interface LoginPayload {
   email: string;
   password: string;

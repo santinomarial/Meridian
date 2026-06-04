@@ -1,39 +1,10 @@
 import { useEffect } from "react";
-import { getCurrentUser, getDocumentTree, getWorkspaces } from "../lib/api";
+import { createWorkspace, getCurrentUser, getDocumentTree, getWorkspaces } from "../lib/api";
+import { getLanguageFromFilename, toLanguageMode } from "../lib/language";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import type { ApiDocument } from "../lib/api";
-import type { FileNode, LanguageMode } from "../types";
-
-const LANGUAGE_MAP: Record<string, LanguageMode> = {
-  ts: "typescript",
-  tsx: "typescript",
-  js: "javascript",
-  jsx: "javascript",
-  py: "python",
-  go: "go",
-  rs: "rust",
-  html: "html",
-  css: "css",
-  scss: "css",
-  json: "json",
-};
-
-const VALID_LANGUAGES = new Set<string>([
-  "typescript",
-  "javascript",
-  "python",
-  "go",
-  "rust",
-  "html",
-  "css",
-  "json",
-]);
-
-function toLanguage(raw: string | null, name: string): LanguageMode {
-  if (raw !== null && VALID_LANGUAGES.has(raw)) return raw as LanguageMode;
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  return LANGUAGE_MAP[ext] ?? "typescript";
-}
+import type { ApiUser } from "../lib/apiTypes";
+import type { FileNode } from "../types";
 
 function buildFileNodes(docs: ApiDocument[]): FileNode[] {
   return docs.map((doc): FileNode => {
@@ -46,11 +17,14 @@ function buildFileNodes(docs: ApiDocument[]): FileNode[] {
         expanded: true,
       };
     }
+    const lang = doc.language ?? null;
     return {
       kind: "file",
       id: doc.id,
       name: doc.name,
-      language: toLanguage(doc.language, doc.name),
+      language: toLanguageMode(
+        lang !== null ? lang : getLanguageFromFilename(doc.name),
+      ),
     };
   });
 }
@@ -64,15 +38,27 @@ function collectFileContent(docs: ApiDocument[], acc: Record<string, string>): v
   }
 }
 
-function findFirstFileId(nodes: FileNode[]): string | null {
+interface FlatFile {
+  id: string;
+  name: string;
+}
+
+function collectFlatFiles(nodes: FileNode[], acc: FlatFile[]): void {
   for (const node of nodes) {
-    if (node.kind === "file") return node.id;
-    if (node.kind === "folder") {
-      const found = findFirstFileId(node.children);
-      if (found !== null) return found;
-    }
+    if (node.kind === "file") acc.push({ id: node.id, name: node.name.toLowerCase() });
+    else collectFlatFiles(node.children, acc);
   }
-  return null;
+}
+
+function findPreferredFileId(nodes: FileNode[]): string | null {
+  const files: FlatFile[] = [];
+  collectFlatFiles(nodes, files);
+  return (
+    files.find((f) => f.name === "readme.md")?.id ??
+    files.find((f) => f.name === "package.json")?.id ??
+    files[0]?.id ??
+    null
+  );
 }
 
 export function useBackendWorkspace(): void {
@@ -81,19 +67,33 @@ export function useBackendWorkspace(): void {
 
     async function load(): Promise<void> {
       try {
-        // Best-effort auth check — failure is fine (unauthenticated users still see workspace)
+        // Best-effort auth check — captures user.id for workspace auto-create.
+        let currentUser: ApiUser | null = null;
         try {
-          await getCurrentUser();
+          currentUser = await getCurrentUser();
         } catch {
-          // not authenticated
+          // unauthenticated — workspace still loads in read-only / demo mode
         }
 
         const workspaces = await getWorkspaces();
         if (cancelled) return;
 
-        const workspace =
+        let workspace =
           workspaces.find((w) => w.name.toLowerCase().includes("meridian")) ??
           workspaces[0];
+
+        // Auto-create a default workspace when the user is authenticated
+        // but has no workspaces yet (fresh account).
+        if (workspace === undefined && currentUser !== null) {
+          try {
+            workspace = await createWorkspace({
+              name: "My Workspace",
+              ownerId: currentUser.id,
+            });
+          } catch {
+            // backend refused — fall through to unavailable
+          }
+        }
 
         if (workspace === undefined) {
           useWorkspaceStore.getState().setBackendStatus("unavailable");
@@ -108,7 +108,7 @@ export function useBackendWorkspace(): void {
         const files = buildFileNodes(tree);
         const editorContent: Record<string, string> = {};
         collectFileContent(tree, editorContent);
-        const defaultFileId = findFirstFileId(files);
+        const defaultFileId = findPreferredFileId(files);
 
         useWorkspaceStore.getState().batchLoadBackend({ files, editorContent, defaultFileId });
         useWorkspaceStore.getState().setBackendStatus("available");

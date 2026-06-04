@@ -1,5 +1,5 @@
 import { Global, Module } from '@nestjs/common';
-import { JwtModule, JwtService } from '@nestjs/jwt';
+import { JwtModule } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -13,6 +13,11 @@ import { APP_CONFIG_KEY } from '../../config/app.config';
 @Module({
   imports: [
     JwtModule.registerAsync({
+      // global: true makes JwtService available in every module without
+      // needing to re-export JwtModule from AuthModule.  This avoids the
+      // UnknownExportException that NestJS throws when a @Global() module
+      // tries to re-export a dynamic module token via exports: [JwtModule].
+      global: true,
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
         const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
@@ -27,7 +32,7 @@ import { APP_CONFIG_KEY } from '../../config/app.config';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtAuthGuard],
-  exports: [AuthService, JwtService, JwtAuthGuard],
+  exports: [AuthService, JwtAuthGuard],
 })
 export class AuthModule {}
 
