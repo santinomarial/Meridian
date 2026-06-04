@@ -48,3 +48,12 @@ export interface UpdateDocumentPayload {
   path?: string;
   language?: string | null;
 }
+
+export interface CreateDocumentPayload {
+  type: 'FILE' | 'FOLDER';
+  name: string;
+  path: string;
+  parentId?: string;
+  language?: string;
+  content?: string;
+}

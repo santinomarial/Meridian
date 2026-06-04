@@ -2,6 +2,7 @@ import type {
   ApiDocument,
   ApiUser,
   ApiWorkspace,
+  CreateDocumentPayload,
   LoginPayload,
   RegisterPayload,
   UpdateDocumentPayload,
@@ -11,6 +12,7 @@ export type {
   ApiDocument,
   ApiUser,
   ApiWorkspace,
+  CreateDocumentPayload,
   LoginPayload,
   RegisterPayload,
   UpdateDocumentPayload,
@@ -100,6 +102,12 @@ export const getDocumentTree = (workspaceId: string): Promise<ApiDocument[]> =>
 
 export const getDocument = (documentId: string): Promise<ApiDocument> =>
   request<ApiDocument>('GET', `/documents/${documentId}`);
+
+export const createDocument = (
+  workspaceId: string,
+  payload: CreateDocumentPayload,
+): Promise<ApiDocument> =>
+  request<ApiDocument>('POST', `/workspaces/${workspaceId}/documents`, payload);
 
 export const updateDocument = (
   documentId: string,

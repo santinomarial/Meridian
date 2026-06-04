@@ -100,6 +100,8 @@ export function useBackendWorkspace(): void {
           return;
         }
 
+        useWorkspaceStore.getState().setWorkspaceId(workspace.id);
+
         const tree = await getDocumentTree(workspace.id);
         if (cancelled) return;
 

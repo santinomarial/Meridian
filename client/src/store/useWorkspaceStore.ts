@@ -44,8 +44,11 @@ type WorkspaceActions = {
   setSaveStatus: (status: SaveStatus) => void;
   setBackendStatus: (status: BackendStatus) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
+  setWorkspaceId: (id: string) => void;
   batchLoadBackend: (data: BackendLoadData) => void;
   clearTabDirty: (fileId: string) => void;
+  addFileNode: (file: Extract<FileNode, { kind: "file" }>, content: string) => void;
+  importFiles: (nodes: FileNode[], contentMap: Record<string, string>, firstFileId: string | null) => void;
 };
 
 export type WorkspaceState = WorkspaceData & WorkspaceActions;
@@ -92,6 +95,7 @@ applyThemeToDocument("dark");
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // ── Data state ────────────────────────────────────────────────────────────
+  workspaceId: null,
   files: mockFiles,
   activeFileId: "file-auth",
   openTabs: INITIAL_OPEN_TABS,
@@ -225,6 +229,51 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   setBackendStatus: (status) => set({ backendStatus: status }),
 
   setConnectionStatus: (status) => set({ connectionStatus: status }),
+
+  setWorkspaceId: (id) => set({ workspaceId: id }),
+
+  addFileNode: (file, content) => {
+    set((state) => ({
+      files: [...state.files, file],
+      editorContentByFileId: { ...state.editorContentByFileId, [file.id]: content },
+      openTabs: state.openTabs.some((t) => t.fileId === file.id)
+        ? state.openTabs
+        : [
+            ...state.openTabs,
+            { fileId: file.id, name: file.name, language: file.language, dirty: content.length > 0 },
+          ],
+      activeFileId: file.id,
+      saveStatus: content.length > 0 ? ("unsaved" as const) : ("saved" as const),
+    }));
+  },
+
+  importFiles: (nodes, contentMap, firstFileId) => {
+    set((state) => {
+      const firstFile =
+        firstFileId !== null ? findFileInTree(nodes, firstFileId) : null;
+      const alreadyOpen =
+        firstFile !== null &&
+        state.openTabs.some((t) => t.fileId === firstFile.id);
+      const newTabs =
+        firstFile !== null && !alreadyOpen
+          ? [
+              ...state.openTabs,
+              {
+                fileId: firstFile.id,
+                name: firstFile.name,
+                language: firstFile.language,
+                dirty: false,
+              },
+            ]
+          : state.openTabs;
+      return {
+        files: [...state.files, ...nodes],
+        editorContentByFileId: { ...state.editorContentByFileId, ...contentMap },
+        openTabs: newTabs,
+        activeFileId: firstFileId ?? state.activeFileId,
+      };
+    });
+  },
 
   batchLoadBackend: ({ files, editorContent, defaultFileId }) => {
     set((state) => {

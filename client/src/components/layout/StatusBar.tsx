@@ -14,6 +14,14 @@ const LANGUAGE_LABELS: Record<LanguageMode, string> = {
   html: "HTML",
   css: "CSS",
   json: "JSON",
+  java: "Java",
+  cpp: "C++",
+  c: "C",
+  markdown: "Markdown",
+  yaml: "YAML",
+  sql: "SQL",
+  shell: "Shell",
+  plaintext: "Plain Text",
 };
 
 function StatusBarSegment({ children, className }: { children: ReactNode; className?: string }) {

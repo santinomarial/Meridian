@@ -6,7 +6,15 @@ export type LanguageMode =
   | "rust"
   | "html"
   | "css"
-  | "json";
+  | "json"
+  | "java"
+  | "cpp"
+  | "c"
+  | "markdown"
+  | "yaml"
+  | "sql"
+  | "shell"
+  | "plaintext";
 
 export type FileNode =
   | {
@@ -93,6 +101,7 @@ export type DiagnosticCounts = {
 };
 
 export type WorkspaceState = {
+  workspaceId: string | null;
   files: FileNode[];
   activeFileId: string | null;
   openTabs: OpenTab[];

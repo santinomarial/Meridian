@@ -25,6 +25,14 @@ const LANGUAGE_TO_MONACO: Record<LanguageMode, string> = {
   html: "html",
   css: "css",
   json: "json",
+  java: "java",
+  cpp: "cpp",
+  c: "c",
+  markdown: "markdown",
+  yaml: "yaml",
+  sql: "sql",
+  shell: "shell",
+  plaintext: "plaintext",
 };
 
 const EDITOR_OPTIONS: editor.IStandaloneEditorConstructionOptions = {
