@@ -40,6 +40,8 @@ type MenuEntry = {
   danger?: boolean;
 };
 
+type InviteRole = "EDITOR" | "VIEWER";
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const NAV_ITEMS: NavItem[] = ["File", "Edit", "Selection", "View", "Go"];
@@ -131,6 +133,7 @@ export function Header() {
 
   // ── Store ──────────────────────────────────────────────────────────────────
   const collaborators = useWorkspaceStore((s) => s.collaborators);
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const theme = useWorkspaceStore((s) => s.theme);
   const toggleTheme = useWorkspaceStore((s) => s.toggleTheme);
   const backendStatus = useWorkspaceStore((s) => s.backendStatus);
@@ -151,6 +154,11 @@ export function Header() {
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
   const [selectedBranch, setSelectedBranch] = useState("main");
   const [currentUser, setCurrentUser] = useState<ApiUser | null>(null);
+
+  // Share / invite state
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<InviteRole>("EDITOR");
+  const [inviteStatus, setInviteStatus] = useState<"idle" | "sent">("idle");
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
 
   // ── Refs ───────────────────────────────────────────────────────────────────
@@ -226,11 +234,23 @@ export function Header() {
     };
   }, []);
 
+  // Reset invite state when share panel closes
+  useEffect(() => {
+    if (openPanel !== "share") {
+      setInviteEmail("");
+      setInviteStatus("idle");
+      setCopyStatus("idle");
+    }
+  }, [openPanel]);
+
   // ── Computed ───────────────────────────────────────────────────────────────
   const visibleCollaborators = collaborators.slice(0, MAX_VISIBLE_COLLABORATORS);
   const overflowCount = Math.max(0, collaborators.length - MAX_VISIBLE_COLLABORATORS);
-  const shareLink = `${window.location.origin}/session/demo`;
   const isBackendAvailable = backendStatus === "available";
+
+  // Invite link uses workspace id when available so recipients land in the right workspace
+  const inviteToken = workspaceId ?? "demo";
+  const inviteLink = `${window.location.origin}/invite/${inviteToken}`;
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -296,15 +316,38 @@ export function Header() {
     }
   }, [activeFileId, openTabs]);
 
+  // Copies the invite link to clipboard and shows feedback
   const handleCopyLink = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(shareLink);
+      await navigator.clipboard.writeText(inviteLink);
       setCopyStatus("copied");
       window.setTimeout(() => setCopyStatus("idle"), 2000);
     } catch {
       toast("Could not copy link.", "error");
     }
-  }, [shareLink]);
+  }, [inviteLink]);
+
+  // Generates an invite link for the provided email address.
+  // TODO: call POST /workspaces/:workspaceId/invites when backend invite API is available.
+  const handleSendInvite = useCallback(async () => {
+    const email = inviteEmail.trim();
+    if (!email || !email.includes("@")) {
+      toast("Please enter a valid email address.", "error");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+    } catch {
+      // Clipboard failed — still show the success message.
+    }
+    toast(
+      `Invite link for ${email} copied. (Demo: no email sent — invite API coming soon.)`,
+      "info",
+    );
+    setInviteEmail("");
+    setInviteStatus("sent");
+    window.setTimeout(() => setInviteStatus("idle"), 3000);
+  }, [inviteEmail, inviteLink]);
 
   const handleLiveSession = useCallback(() => {
     if (!isBackendAvailable) {
@@ -355,26 +398,17 @@ export function Header() {
       {
         label: "Undo",
         icon: "undo",
-        onClick: () => {
-          toast("Use Cmd+Z in the editor.");
-          setOpenPanel(null);
-        },
+        onClick: () => { toast("Use Cmd+Z in the editor."); setOpenPanel(null); },
       },
       {
         label: "Redo",
         icon: "redo",
-        onClick: () => {
-          toast("Use Shift+Cmd+Z in the editor.");
-          setOpenPanel(null);
-        },
+        onClick: () => { toast("Use Shift+Cmd+Z in the editor."); setOpenPanel(null); },
       },
       {
         label: "Format Document",
         icon: "auto_fix_high",
-        onClick: () => {
-          toast("Use Shift+Alt+F in the editor.");
-          setOpenPanel(null);
-        },
+        onClick: () => { toast("Use Shift+Alt+F in the editor."); setOpenPanel(null); },
       },
       { label: "Copy Path", icon: "content_copy", onClick: handleCopyPath },
     ],
@@ -382,70 +416,46 @@ export function Header() {
       {
         label: "Select All",
         icon: "select_all",
-        onClick: () => {
-          toast("Use Cmd+A in the editor.");
-          setOpenPanel(null);
-        },
+        onClick: () => { toast("Use Cmd+A in the editor."); setOpenPanel(null); },
       },
       {
         label: "Copy Selection",
         icon: "content_copy",
-        onClick: () => {
-          toast("Use Cmd+C to copy selection.");
-          setOpenPanel(null);
-        },
+        onClick: () => { toast("Use Cmd+C to copy selection."); setOpenPanel(null); },
       },
     ],
     View: [
       {
         label: "Toggle Explorer",
         icon: "folder_open",
-        onClick: () => {
-          togglePanel("explorer");
-          setOpenPanel(null);
-        },
+        onClick: () => { togglePanel("explorer"); setOpenPanel(null); },
       },
       {
         label: "Toggle Collaboration",
         icon: "group",
-        onClick: () => {
-          togglePanel("collaboration");
-          setOpenPanel(null);
-        },
+        onClick: () => { togglePanel("collaboration"); setOpenPanel(null); },
       },
       {
         label: "Toggle Terminal",
         icon: "terminal",
-        onClick: () => {
-          togglePanel("bottom");
-          setOpenPanel(null);
-        },
+        onClick: () => { togglePanel("bottom"); setOpenPanel(null); },
       },
       {
         label: "Toggle Theme",
         icon: theme === "dark" ? "light_mode" : "dark_mode",
-        onClick: () => {
-          toggleTheme();
-          setOpenPanel(null);
-        },
+        onClick: () => { toggleTheme(); setOpenPanel(null); },
       },
     ],
     Go: [
       {
         label: "Go to Workspace",
         icon: "code",
-        onClick: () => {
-          navigate("/workspace");
-          setOpenPanel(null);
-        },
+        onClick: () => { navigate("/workspace"); setOpenPanel(null); },
       },
       {
         label: "Go to Home",
         icon: "home",
-        onClick: () => {
-          navigate("/");
-          setOpenPanel(null);
-        },
+        onClick: () => { navigate("/"); setOpenPanel(null); },
       },
       { label: "Go to Active File", icon: "my_location", onClick: handleGoToActiveFile },
     ],
@@ -490,7 +500,7 @@ export function Header() {
         }}
       />
 
-      {/* ── Left: wordmark + nav menus ──────────────────────────────────── */}
+      {/* ── Left: wordmark + nav ────────────────────────────────────────── */}
       <div className="flex min-h-0 min-w-0 items-center gap-4">
         <MeridianWordmark />
 
@@ -504,7 +514,10 @@ export function Header() {
                 <div key={item} className="relative">
                   <button
                     type="button"
-                    className={[navButtonClass, isOpen ? "bg-surface-container-high text-on-surface" : ""].join(" ")}
+                    className={[
+                      navButtonClass,
+                      isOpen ? "bg-surface-container-high text-on-surface" : "",
+                    ].join(" ")}
                     onClick={() => setOpenPanel(isOpen ? null : panelKey)}
                     aria-expanded={isOpen}
                     aria-haspopup="menu"
@@ -564,10 +577,7 @@ export function Header() {
                     role="option"
                     aria-selected={branch === selectedBranch}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-on-surface transition-colors hover:bg-surface-container-high focus-visible:outline-none"
-                    onClick={() => {
-                      setSelectedBranch(branch);
-                      setOpenPanel(null);
-                    }}
+                    onClick={() => { setSelectedBranch(branch); setOpenPanel(null); }}
                   >
                     <MaterialIcon
                       name={branch === selectedBranch ? "radio_button_checked" : "radio_button_unchecked"}
@@ -600,6 +610,14 @@ export function Header() {
                 <CollaboratorAvatar key={c.id} collaborator={c} />
               ))}
               {overflowCount > 0 ? <OverflowAvatar count={overflowCount} /> : null}
+              {visibleCollaborators.length === 0 ? (
+                <span
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border-2 border-dashed border-outline-variant text-[10px] text-on-surface-variant"
+                  title="No collaborators"
+                >
+                  <MaterialIcon name="person_add" className="text-[13px]" aria-hidden />
+                </span>
+              ) : null}
             </div>
           </button>
           {openPanel === "collaborators" ? (
@@ -610,7 +628,17 @@ export function Header() {
                 </span>
               </div>
               {collaborators.length === 0 ? (
-                <div className="px-3 py-3 text-xs text-on-surface-variant">No collaborators yet.</div>
+                <div className="flex flex-col items-center gap-1 px-3 py-4 text-center">
+                  <MaterialIcon
+                    name="group_add"
+                    className="text-[20px] text-on-surface-variant/40"
+                    aria-hidden
+                  />
+                  <p className="text-xs text-on-surface-variant">No collaborators yet.</p>
+                  <p className="text-[10px] text-on-surface-variant/70">
+                    Use <strong className="font-semibold">Share</strong> to invite someone.
+                  </p>
+                </div>
               ) : (
                 <div className="py-1">
                   {collaborators.map((c) => (
@@ -667,11 +695,11 @@ export function Header() {
           Live Session
         </button>
 
-        {/* Share */}
+        {/* Share / Invite */}
         <div ref={shareRef} className="relative">
           <button
             type="button"
-            aria-label="Share workspace"
+            aria-label="Share workspace — invite collaborators"
             aria-haspopup="dialog"
             aria-expanded={openPanel === "share"}
             className={headerButtonPrimary}
@@ -680,22 +708,69 @@ export function Header() {
             Share
           </button>
           {openPanel === "share" ? (
-            <DropdownPanel className="right-0 w-72" role="dialog" aria-label="Share workspace">
+            <DropdownPanel className="right-0 w-80" role="dialog" aria-label="Share workspace">
+              {/* Header */}
               <div className="border-b meridian-crisp-border px-3 py-2">
                 <span className="text-xs font-semibold text-on-surface">Share Workspace</span>
               </div>
-              <div className="px-3 py-2.5">
-                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">
-                  Session Link
+
+              {/* Invite by email */}
+              <div className="px-3 py-3">
+                <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                  Invite by Email
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void handleSendInvite();
+                    }}
+                    placeholder="colleague@example.com"
+                    className="min-w-0 flex-1 rounded-sm border meridian-crisp-border bg-surface-container-lowest px-2 py-1.5 text-xs text-on-surface outline-none placeholder:text-on-surface-variant/50 focus:border-primary/60 focus:ring-1 focus:ring-primary/20"
+                    aria-label="Invite email address"
+                  />
+                  <select
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value as InviteRole)}
+                    className="shrink-0 rounded-sm border meridian-crisp-border bg-surface-container px-1.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/20"
+                    aria-label="Invite role"
+                  >
+                    <option value="EDITOR">Editor</option>
+                    <option value="VIEWER">Viewer</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => void handleSendInvite()}
+                    disabled={inviteStatus === "sent"}
+                    aria-label="Send invite"
+                    className={[
+                      "shrink-0 rounded-sm px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
+                      inviteStatus === "sent"
+                        ? "bg-primary/20 text-primary"
+                        : "bg-primary text-on-primary hover:bg-primary/90",
+                      "disabled:cursor-default",
+                    ].join(" ")}
+                  >
+                    {inviteStatus === "sent" ? "Sent!" : "Invite"}
+                  </button>
                 </div>
+              </div>
+
+              {/* Copy invite link */}
+              <div className="border-t meridian-crisp-border px-3 pb-3 pt-2.5">
+                <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                  Or Copy Invite Link
+                </label>
                 <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1 truncate rounded border meridian-crisp-border bg-surface-container-highest px-2 py-1.5 font-mono text-[11px] text-on-surface-variant">
-                    {shareLink}
+                  <div className="min-w-0 flex-1 truncate rounded border meridian-crisp-border bg-surface-container-highest px-2 py-1.5 font-mono text-[10px] text-on-surface-variant">
+                    {inviteLink}
                   </div>
                   <button
                     type="button"
-                    onClick={handleCopyLink}
-                    aria-label="Copy session link"
+                    onClick={() => void handleCopyLink()}
+                    aria-label="Copy invite link"
                     className={[
                       "shrink-0 rounded px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
                       copyStatus === "copied"
@@ -706,21 +781,11 @@ export function Header() {
                     {copyStatus === "copied" ? "Copied!" : "Copy"}
                   </button>
                 </div>
-              </div>
-              <div className="border-t meridian-crisp-border px-3 py-2.5">
-                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">
-                  Access
-                </div>
-                <div className="flex gap-2">
-                  {(["Owner", "Editor", "Viewer"] as const).map((role) => (
-                    <span
-                      key={role}
-                      className="rounded-full border meridian-crisp-border px-2.5 py-0.5 text-[10px] text-on-surface-variant"
-                    >
-                      {role}
-                    </span>
-                  ))}
-                </div>
+                {workspaceId === null ? (
+                  <p className="mt-1.5 text-[10px] text-on-surface-variant/60">
+                    Connect backend to generate a persistent invite link.
+                  </p>
+                ) : null}
               </div>
             </DropdownPanel>
           ) : null}
@@ -815,18 +880,12 @@ export function Header() {
                   <MenuItem
                     label="Workspace"
                     icon="workspaces"
-                    onClick={() => {
-                      navigate("/workspace");
-                      setOpenPanel(null);
-                    }}
+                    onClick={() => { navigate("/workspace"); setOpenPanel(null); }}
                   />
                   <MenuItem
                     label="Settings"
                     icon="settings"
-                    onClick={() => {
-                      toast("Settings coming soon.");
-                      setOpenPanel(null);
-                    }}
+                    onClick={() => { toast("Settings coming soon."); setOpenPanel(null); }}
                   />
                 </div>
                 <MenuSeparator />

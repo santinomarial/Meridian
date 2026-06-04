@@ -1,7 +1,5 @@
 import { create } from "zustand";
 import {
-  mockChatMessages,
-  mockCollaborators,
   mockFileContents,
   mockFiles,
   mockReviewNotes,
@@ -168,8 +166,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   activeFileId: "file-auth",
   openTabs: INITIAL_OPEN_TABS,
   editorContentByFileId: { ...mockFileContents },
-  collaborators: mockCollaborators,
-  chatMessages: mockChatMessages,
+  collaborators: [],
+  chatMessages: [],
   reviewNotes: mockReviewNotes,
   diagnosticCounts: { errors: 0, warnings: 2 },
 
