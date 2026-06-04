@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { LandingPage } from "./pages/LandingPage";
 import { WorkspacePage } from "./pages/WorkspacePage";
+import { ToastContainer } from "./components/ui/Toast";
 
 function App() {
   return (
@@ -11,6 +12,7 @@ function App() {
         <Route path="/session/:id" element={<WorkspacePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <ToastContainer />
     </BrowserRouter>
   );
 }

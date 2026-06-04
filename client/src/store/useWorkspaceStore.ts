@@ -135,12 +135,31 @@ function applyThemeToDocument(theme: WorkspaceTheme): void {
   root.style.colorScheme = theme;
 }
 
+function getInitialTheme(): WorkspaceTheme {
+  try {
+    const stored = localStorage.getItem("meridian-theme");
+    if (stored === "light" || stored === "dark") return stored;
+  } catch {
+    // localStorage unavailable
+  }
+  return "dark";
+}
+
+function persistTheme(theme: WorkspaceTheme): void {
+  try {
+    localStorage.setItem("meridian-theme", theme);
+  } catch {
+    // localStorage unavailable
+  }
+}
+
+const _initialTheme = getInitialTheme();
+applyThemeToDocument(_initialTheme);
+
 const INITIAL_OPEN_TABS: OpenTab[] = [
   { fileId: "file-auth", name: "auth.ts", language: "typescript", dirty: false },
   { fileId: "file-database", name: "database.ts", language: "typescript", dirty: false },
 ];
-
-applyThemeToDocument("dark");
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // ── Data state ────────────────────────────────────────────────────────────
@@ -160,7 +179,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   isExplorerOpen: true,
   isCollaborationPanelOpen: true,
   isBottomPanelOpen: true,
-  theme: "dark",
+  theme: _initialTheme,
   cursorPosition: { line: 42, column: 12 },
   saveStatus: "saved",
 
@@ -255,12 +274,14 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   setTheme: (theme) => {
+    persistTheme(theme);
     applyThemeToDocument(theme);
     set({ theme });
   },
 
   toggleTheme: () => {
     const theme = get().theme === "dark" ? "light" : "dark";
+    persistTheme(theme);
     applyThemeToDocument(theme);
     set({ theme });
   },
@@ -377,5 +398,3 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     });
   },
 }));
-
-applyThemeToDocument("dark");
