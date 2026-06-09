@@ -198,7 +198,22 @@ export class EditorGateway
     await client.join(room);
     this.registry.join(client.id, dto.documentId);
 
-    const doc = await this.documentManager.acquire(dto.documentId);
+    let doc: import('yjs').Doc;
+    try {
+      doc = await this.documentManager.acquire(dto.documentId);
+    } catch (err) {
+      // Roll back the room join so the socket isn't left in a broken state.
+      await client.leave(room);
+      this.registry.leave(client.id, dto.documentId);
+      client.emit('error', {
+        message: `Failed to load document ${dto.documentId}`,
+      });
+      this.logger.error(
+        { err, socketId: client.id, documentId: dto.documentId },
+        'Failed to acquire document — join aborted',
+      );
+      return;
+    }
 
     const step1Encoder = encoding.createEncoder();
     syncProtocol.writeSyncStep1(step1Encoder, doc);
@@ -331,6 +346,13 @@ export class EditorGateway
       );
       client.emit('error', {
         message: `Payload too large: ${update.byteLength} bytes (limit ${this.wsMaxUpdateBytes})`,
+      });
+      return;
+    }
+
+    if (!this.documentManager.hasDocument(dto.documentId)) {
+      client.emit('error', {
+        message: `yjs:update — document ${dto.documentId} not in memory; send joinDocument first`,
       });
       return;
     }

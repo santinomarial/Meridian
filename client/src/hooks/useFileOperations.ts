@@ -113,6 +113,8 @@ export function useFileOperations() {
   const importFiles = useWorkspaceStore((s) => s.importFiles);
   const deleteNode = useWorkspaceStore((s) => s.deleteNode);
   const renameNode = useWorkspaceStore((s) => s.renameNode);
+  const clearTabDirty = useWorkspaceStore((s) => s.clearTabDirty);
+  const setSaveStatus = useWorkspaceStore((s) => s.setSaveStatus);
 
   const isBackendAvailable = backendStatus === "available" && workspaceId !== null;
 
@@ -129,6 +131,7 @@ export function useFileOperations() {
       const language = toLanguageMode(getLanguageFromFilename(trimmed));
       const content = getStarterContent(trimmed);
       let fileId = generateId();
+      let savedToBackend = false;
 
       if (isBackendAvailable) {
         try {
@@ -140,15 +143,20 @@ export function useFileOperations() {
             content,
           });
           fileId = doc.id;
+          savedToBackend = true;
         } catch {
           // Backend failed — keep local id.
         }
       }
 
       addFileNode({ kind: "file", id: fileId, name: trimmed, language }, content);
+      if (savedToBackend) {
+        clearTabDirty(fileId);
+        setSaveStatus("saved");
+      }
       return {};
     },
-    [workspaceId, isBackendAvailable, addFileNode],
+    [workspaceId, isBackendAvailable, addFileNode, clearTabDirty, setSaveStatus],
   );
 
   // ── Create new folder ──────────────────────────────────────────────────────
@@ -201,6 +209,7 @@ export function useFileOperations() {
 
       const language = toLanguageMode(getLanguageFromFilename(file.name));
       let fileId = generateId();
+      let savedToBackend = false;
 
       if (isBackendAvailable) {
         try {
@@ -212,15 +221,20 @@ export function useFileOperations() {
             content,
           });
           fileId = doc.id;
+          savedToBackend = true;
         } catch {
           // Keep local id on backend failure.
         }
       }
 
       addFileNode({ kind: "file", id: fileId, name: file.name, language }, content);
+      if (savedToBackend) {
+        clearTabDirty(fileId);
+        setSaveStatus("saved");
+      }
       return {};
     },
-    [workspaceId, isBackendAvailable, addFileNode],
+    [workspaceId, isBackendAvailable, addFileNode, clearTabDirty, setSaveStatus],
   );
 
   // ── Import ZIP ─────────────────────────────────────────────────────────────

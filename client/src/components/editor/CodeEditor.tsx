@@ -166,7 +166,7 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   return (
     <div className="meridian-editor-chrome relative flex h-full min-h-0 w-full flex-1 flex-col">
       <Editor
-        key={`${activeFileId}-${monacoTheme}`}
+        key={activeFileId}
         height="100%"
         language={LANGUAGE_TO_MONACO[language]}
         theme={monacoTheme}

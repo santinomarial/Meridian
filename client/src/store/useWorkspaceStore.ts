@@ -90,7 +90,6 @@ function removeNodeFromTree(
 function renameInTree(nodes: FileNode[], nodeId: string, newName: string): FileNode[] {
   return nodes.map((node) => {
     if (node.id === nodeId) {
-      if (node.kind === "file") return { ...node, name: newName };
       return { ...node, name: newName };
     }
     if (node.kind === "folder") {

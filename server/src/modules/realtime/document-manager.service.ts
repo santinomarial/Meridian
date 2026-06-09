@@ -14,6 +14,9 @@ interface DocEntry {
   awareness: awarenessProtocol.Awareness;
   refCount: number;
   teardownTimer?: NodeJS.Timeout;
+  // Present while the initial DB load is in progress.  Concurrent acquire()
+  // calls await this promise so they never receive a partially-loaded Y.Doc.
+  loading?: Promise<void>;
 }
 
 @Injectable()
@@ -39,15 +42,33 @@ export class DocumentManagerService {
         existing.teardownTimer = undefined;
       }
       existing.refCount += 1;
+      // Wait for the initial DB load to finish so concurrent callers never
+      // receive a partially-loaded Y.Doc.
+      if (existing.loading !== undefined) {
+        await existing.loading;
+      }
       return existing.doc;
     }
 
     const doc = new Y.Doc();
     const awareness = new awarenessProtocol.Awareness(doc);
-    // Register the entry before the async load so that concurrent acquires
-    // for the same documentId get the same Y.Doc instance.
-    this.docs.set(documentId, { doc, awareness, refCount: 1 });
-    await this.loadFromDb(documentId, doc);
+    // Register the entry before awaiting the load so concurrent acquires for
+    // the same documentId share the same Y.Doc instance.
+    const entry: DocEntry = { doc, awareness, refCount: 1 };
+    this.docs.set(documentId, entry);
+
+    // Store the loading promise so concurrent callers can await it, and
+    // remove the stale entry on failure so the next acquire() can retry.
+    entry.loading = this.loadFromDb(documentId, doc)
+      .catch((err: unknown) => {
+        this.docs.delete(documentId);
+        throw err;
+      })
+      .finally(() => {
+        entry.loading = undefined;
+      });
+
+    await entry.loading;
     return doc;
   }
 
