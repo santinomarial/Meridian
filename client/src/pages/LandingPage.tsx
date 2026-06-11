@@ -3,16 +3,23 @@ import { useNavigate } from "react-router-dom";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { ApiError, login, register } from "../lib/api";
 
-type AuthMode = "signup" | "signin";
+type AuthMode = "signup" | "signin" | "forgot";
+
+type PasswordRequirement = { label: string; met: boolean };
+
+function getPasswordRequirements(password: string): PasswordRequirement[] {
+  return [
+    { label: "At least 8 characters", met: password.length >= 8 },
+    { label: "1 uppercase letter", met: /[A-Z]/.test(password) },
+    { label: "1 lowercase letter", met: /[a-z]/.test(password) },
+    { label: "1 number", met: /\d/.test(password) },
+    { label: "1 special character", met: /[^A-Za-z0-9]/.test(password) },
+  ];
+}
 
 function getPasswordStrengthScore(password: string): number {
   if (!password) return 0;
-  let score = 0;
-  if (password.length >= 8) score += 1;
-  if (/[^A-Za-z0-9]/.test(password)) score += 1;
-  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1;
-  if (/\d/.test(password)) score += 1;
-  return score;
+  return getPasswordRequirements(password).filter((r) => r.met).length;
 }
 
 function AmbientBackground() {
@@ -129,24 +136,39 @@ function IconField({
 
 function PasswordStrength({ password }: { password: string }) {
   const score = getPasswordStrengthScore(password);
-  const filled = password ? score : 2;
+  const reqs = getPasswordRequirements(password);
 
   return (
     <>
       <div className="mt-2 flex gap-1 px-1" aria-hidden>
-        {[1, 2, 3, 4].map((segment) => (
+        {[1, 2, 3, 4, 5].map((seg) => (
           <div
-            key={segment}
+            key={seg}
             className={[
               "h-1 flex-grow rounded-full transition-all",
-              segment <= filled ? "bg-primary" : "bg-outline-variant",
+              seg <= score ? "bg-primary" : "bg-outline-variant",
             ].join(" ")}
           />
         ))}
       </div>
-      <p className="px-1 text-[10px] italic text-on-surface-variant">
-        Password must include 8+ characters and a symbol.
-      </p>
+      <ul className="mt-2 space-y-0.5 px-1" aria-label="Password requirements">
+        {reqs.map((req) => (
+          <li
+            key={req.label}
+            className={[
+              "flex items-center gap-1.5 text-[11px]",
+              req.met ? "text-primary" : "text-on-surface-variant",
+            ].join(" ")}
+          >
+            <MaterialIcon
+              name={req.met ? "check_circle" : "radio_button_unchecked"}
+              className="text-[13px]"
+              aria-hidden
+            />
+            {req.label}
+          </li>
+        ))}
+      </ul>
     </>
   );
 }
@@ -159,25 +181,61 @@ function AuthCard({
   onModeChange: (mode: AuthMode) => void;
 }) {
   const navigate = useNavigate();
+  const prevModeRef = useRef<AuthMode>(mode);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showForgotLink, setShowForgotLink] = useState(false);
+  const [forgotSuccess, setForgotSuccess] = useState(false);
 
-  // Reset fields and error when the user switches between sign-up and sign-in
-  // so stale values from one mode do not bleed into the other.
+  // Keep email when switching signin ↔ forgot so the forgot-password form is pre-filled.
+  // Clear email for all other transitions (entering/leaving signup).
   useEffect(() => {
+    const prevMode = prevModeRef.current;
+    prevModeRef.current = mode;
+    const keepEmail =
+      (prevMode === "signin" && mode === "forgot") ||
+      (prevMode === "forgot" && mode === "signin");
     setName("");
-    setEmail("");
     setPassword("");
+    setConfirmPassword("");
     setError(null);
+    setShowForgotLink(false);
+    setForgotSuccess(false);
+    if (!keepEmail) {
+      setEmail("");
+    }
   }, [mode]);
 
   const handleSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
-    setLoading(true);
     setError(null);
+    setShowForgotLink(false);
+
+    if (mode === "forgot") {
+      // TODO: POST /auth/forgot-password — backend password reset not yet implemented.
+      setForgotSuccess(true);
+      return;
+    }
+
+    if (mode === "signup") {
+      const unmet = getPasswordRequirements(password).filter((r) => !r.met);
+      if (unmet.length > 0) {
+        setError(
+          `Password must include: ${unmet.map((r) => r.label.toLowerCase()).join(", ")}.`,
+        );
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError("Passwords do not match.");
+        return;
+      }
+    }
+
+    setLoading(true);
     try {
       if (mode === "signup") {
         await register({ email, password, displayName: name });
@@ -186,98 +244,166 @@ function AuthCard({
       }
       navigate("/workspace");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
+      if (mode === "signin" && err instanceof ApiError && err.status === 401) {
+        setError("Invalid email or password.");
+        setShowForgotLink(true);
+      } else {
+        setError(
+          err instanceof ApiError ? err.message : "Something went wrong. Please try again.",
+        );
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const isSignUp = mode === "signup";
+  const isForgot = mode === "forgot";
 
   return (
     <div className="glass-panel inner-glow flex w-full max-w-[420px] flex-col gap-8 rounded-xl p-8">
       <div className="space-y-2 text-center">
         <div className="mb-2 inline-flex items-center justify-center rounded border border-outline-variant/30 bg-surface-container-high px-2 py-0.5 uppercase text-primary-fixed-dim label-caps">
-          {isSignUp ? "Start Coding" : "Welcome Back"}
+          {isSignUp ? "Start Coding" : isForgot ? "Reset Password" : "Welcome Back"}
         </div>
         <h1 className="text-headline-md font-semibold tracking-tight text-on-surface">
-          {isSignUp ? "Create your workspace" : "Sign in to Meridian"}
+          {isSignUp ? "Create your workspace" : isForgot ? "Forgot your password?" : "Log in"}
         </h1>
         <p className="text-body-sm text-on-surface-variant">
           {isSignUp
             ? "Sign up to join the collaborative IDE environment."
-            : "Enter your credentials to access your workspace."}
+            : isForgot
+              ? "Enter your email and we'll send you a reset link."
+              : "Enter your credentials to access your workspace."}
         </p>
       </div>
 
-      <form className="space-y-4" onSubmit={handleSubmit} noValidate>
-        {isSignUp ? (
-          <IconField
-            id="name"
-            label="Full Name"
-            icon="person"
-            placeholder="John Doe"
-            value={name}
-            onChange={(v) => setName(v)}
-            autoComplete="name"
-          />
-        ) : null}
-
-        <IconField
-          id="email"
-          label="Email Address"
-          icon="alternate_email"
-          type="email"
-          placeholder="name@company.com"
-          value={email}
-          onChange={(v) => setEmail(v)}
-          autoComplete="email"
-        />
-
-        <div className="space-y-1.5">
-          <label htmlFor="password" className="label-caps ml-1 text-on-surface-variant">
-            Password
-          </label>
-          <div className="group relative">
-            <MaterialIcon
-              name="lock"
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-outline transition-colors group-focus-within:text-primary"
-              aria-hidden
-            />
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="••••••••"
-              autoComplete={isSignUp ? "new-password" : "current-password"}
-              className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-outline-variant focus:border-primary focus:ring-1 focus:ring-primary"
-            />
-          </div>
-          {isSignUp ? <PasswordStrength password={password} /> : null}
-        </div>
-
-        {error !== null ? (
-          <p role="alert" className="rounded-lg bg-error/10 px-3 py-2 text-[12px] text-error">
-            {error}
+      {isForgot && forgotSuccess ? (
+        <div className="rounded-lg bg-primary/10 px-4 py-5 text-center">
+          <MaterialIcon name="mark_email_read" className="mb-3 text-4xl text-primary" aria-hidden />
+          <p className="text-body-sm text-on-surface">
+            If an account exists for this email, a reset link will be sent when password recovery is
+            enabled.
           </p>
-        ) : null}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="group mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-inverse-primary py-3 text-body-md font-semibold text-on-primary-fixed shadow-lg shadow-primary/10 transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-60"
-        >
-          {loading ? "Please wait…" : isSignUp ? "Create Account" : "Sign In"}
-          {!loading ? (
-            <MaterialIcon
-              name="arrow_forward"
-              className="text-lg transition-transform group-hover:translate-x-1"
-              aria-hidden
+        </div>
+      ) : (
+        <form className="space-y-4" onSubmit={handleSubmit} noValidate>
+          {isSignUp ? (
+            <IconField
+              id="name"
+              label="Full Name"
+              icon="person"
+              placeholder="John Doe"
+              value={name}
+              onChange={(v) => setName(v)}
+              autoComplete="name"
             />
           ) : null}
-        </button>
-      </form>
+
+          <IconField
+            id="email"
+            label="Email Address"
+            icon="alternate_email"
+            type="email"
+            placeholder="name@company.com"
+            value={email}
+            onChange={(v) => setEmail(v)}
+            autoComplete="email"
+          />
+
+          {!isForgot ? (
+            <div className="space-y-1.5">
+              <label htmlFor="password" className="label-caps ml-1 text-on-surface-variant">
+                Password
+              </label>
+              <div className="group relative">
+                <MaterialIcon
+                  name="lock"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-outline transition-colors group-focus-within:text-primary"
+                  aria-hidden
+                />
+                <input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="••••••••"
+                  autoComplete={isSignUp ? "new-password" : "current-password"}
+                  className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-outline-variant focus:border-primary focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              {isSignUp ? <PasswordStrength password={password} /> : null}
+            </div>
+          ) : null}
+
+          {isSignUp ? (
+            <div className="space-y-1.5">
+              <label
+                htmlFor="confirm-password"
+                className="label-caps ml-1 text-on-surface-variant"
+              >
+                Confirm Password
+              </label>
+              <div className="group relative">
+                <MaterialIcon
+                  name="lock"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-outline transition-colors group-focus-within:text-primary"
+                  aria-hidden
+                />
+                <input
+                  id="confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="new-password"
+                  className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-outline-variant focus:border-primary focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {error !== null ? (
+            <div role="alert" className="rounded-lg bg-error/10 px-3 py-2 text-[12px] text-error">
+              <p>{error}</p>
+              {showForgotLink ? (
+                <button
+                  type="button"
+                  onClick={() => onModeChange("forgot")}
+                  className="mt-1 text-primary hover:underline"
+                >
+                  Forgot password?
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="group mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-inverse-primary py-3 text-body-md font-semibold text-on-primary-fixed shadow-lg shadow-primary/10 transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-60"
+          >
+            {loading
+              ? isSignUp
+                ? "Creating account…"
+                : isForgot
+                  ? "Sending…"
+                  : "Logging in…"
+              : isSignUp
+                ? "Create account"
+                : isForgot
+                  ? "Send reset link"
+                  : "Log in"}
+            {!loading ? (
+              <MaterialIcon
+                name="arrow_forward"
+                className="text-lg transition-transform group-hover:translate-x-1"
+                aria-hidden
+              />
+            ) : null}
+          </button>
+        </form>
+      )}
 
       {isSignUp ? (
         <>
@@ -297,16 +423,28 @@ function AuthCard({
       ) : null}
 
       <div className="space-y-4 pt-2">
-        <p className="text-center text-body-sm text-on-surface-variant">
-          {isSignUp ? "Already have an account? " : "Don't have an account? "}
-          <button
-            type="button"
-            onClick={() => onModeChange(isSignUp ? "signin" : "signup")}
-            className="font-medium text-primary hover:underline"
-          >
-            {isSignUp ? "Log in" : "Sign up"}
-          </button>
-        </p>
+        {isForgot ? (
+          <p className="text-center text-body-sm text-on-surface-variant">
+            <button
+              type="button"
+              onClick={() => onModeChange("signin")}
+              className="font-medium text-primary hover:underline"
+            >
+              Back to Log in
+            </button>
+          </p>
+        ) : (
+          <p className="text-center text-body-sm text-on-surface-variant">
+            {isSignUp ? "Already have an account? " : "Don't have an account? "}
+            <button
+              type="button"
+              onClick={() => onModeChange(isSignUp ? "signin" : "signup")}
+              className="font-medium text-primary hover:underline"
+            >
+              {isSignUp ? "Log in" : "Sign up"}
+            </button>
+          </p>
+        )}
         {isSignUp ? (
           <p className="text-center text-[11px] leading-relaxed text-outline">
             By creating an account, you agree to our{" "}
@@ -350,7 +488,7 @@ function LandingFooter() {
 
 export function LandingPage() {
   const navigate = useNavigate();
-  const [authMode, setAuthMode] = useState<AuthMode>("signup");
+  const [authMode, setAuthMode] = useState<AuthMode>("signin");
 
   useEffect(() => {
     const html = document.documentElement;
