@@ -143,37 +143,45 @@ test.describe("collaboration panel", () => {
     expect(panelText.toLowerCase()).toContain("demo");
   });
 
-  test("backend mode shows 'No collaborators yet' when no collaborators joined", async ({
-    page,
-  }) => {
-    const available = await isBackendAvailable();
-    test.skip(!available, "Backend not available");
+  test.describe("backend mode collab panel", () => {
+    // Check backend availability once for this describe block.
+    let backendAvailable = false;
 
-    // Sign up so we're in real backend mode
-    await page.goto("/");
-    await signUpViaUI(page, uniqueEmail(), STRONG_PASSWORD);
-    await page.waitForURL("/workspace", { timeout: 20_000 });
-
-    // Wait for backend status to resolve
-    await page.waitForSelector('[data-testid="workspace-root"]', {
-      timeout: 15_000,
+    test.beforeAll(async () => {
+      backendAvailable = await isBackendAvailable();
     });
-    // Give socket connection time to resolve
-    await page.waitForTimeout(2_000);
 
-    const noCollabEl = page.getByTestId("collab-no-collaborators");
-    // Collaboration panel may not be open by default — toggle it if needed.
-    const panelVisible = await page
-      .getByTestId("collaboration-panel")
-      .isVisible()
-      .catch(() => false);
-    if (!panelVisible) {
-      // Open via View menu
-      await page.getByRole("button", { name: "View" }).click();
-      await page.getByRole("button", { name: "Toggle Collaboration" }).click();
-    }
+    test.beforeEach(() => {
+      test.skip(!backendAvailable, "Backend not available");
+    });
 
-    await expect(noCollabEl).toBeVisible({ timeout: 8_000 });
-    await expect(noCollabEl).toContainText("No collaborators yet");
+    test("backend mode shows 'No collaborators yet' when no collaborators joined", async ({
+      page,
+    }) => {
+      // Sign up so we're in real backend mode
+      await page.goto("/");
+      await signUpViaUI(page, uniqueEmail(), STRONG_PASSWORD);
+      await page.waitForURL("/workspace", { timeout: 20_000 });
+
+      // Wait for backend status to resolve
+      await page.waitForSelector('[data-testid="workspace-root"][data-backend-status="available"]', {
+        timeout: 15_000,
+      });
+
+      const noCollabEl = page.getByTestId("collab-no-collaborators");
+      // Collaboration panel may not be open by default — toggle it if needed.
+      const panelVisible = await page
+        .getByTestId("collaboration-panel")
+        .isVisible()
+        .catch(() => false);
+      if (!panelVisible) {
+        // Open via View menu
+        await page.getByRole("button", { name: "View" }).click();
+        await page.getByRole("button", { name: "Toggle Collaboration" }).click();
+      }
+
+      await expect(noCollabEl).toBeVisible({ timeout: 8_000 });
+      await expect(noCollabEl).toContainText("No collaborators yet");
+    });
   });
 });

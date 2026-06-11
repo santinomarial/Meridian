@@ -99,6 +99,7 @@ export function WorkspacePage() {
       className="flex h-screen flex-col overflow-hidden bg-surface-container-lowest"
       data-session-id={sessionId}
       data-testid="workspace-root"
+      data-backend-status={backendStatus}
     >
       <Header />
       <Breadcrumb />

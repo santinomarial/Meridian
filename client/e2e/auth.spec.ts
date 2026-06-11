@@ -151,18 +151,23 @@ test("forgot password flow shows professional success message", async ({ page })
 // ── 8–10. Backend-required tests ───────────────────────────────────────────────
 
 test.describe("backend required — auth", () => {
+  // Check once for the whole describe block — avoids per-test GET /auth/me calls
+  // that would otherwise exhaust the auth rate limiter.
+  let backendAvailable = false;
+
   test.beforeAll(async () => {
-    const available = await isBackendAvailable();
-    if (!available) {
+    backendAvailable = await isBackendAvailable();
+    if (!backendAvailable) {
       // eslint-disable-next-line no-console
       console.log("⚠  Backend not available — skipping backend auth tests.");
     }
   });
 
-  test("strong password sign-up creates account and redirects to workspace", async ({ page }) => {
-    const available = await isBackendAvailable();
-    test.skip(!available, "Backend not available");
+  test.beforeEach(() => {
+    test.skip(!backendAvailable, "Backend not available");
+  });
 
+  test("strong password sign-up creates account and redirects to workspace", async ({ page }) => {
     const email = uniqueEmail();
     await page.goto("/");
     await signUpViaUI(page, email, STRONG_PASSWORD);
@@ -171,9 +176,6 @@ test.describe("backend required — auth", () => {
   });
 
   test("sign out navigates back to landing page", async ({ page }) => {
-    const available = await isBackendAvailable();
-    test.skip(!available, "Backend not available");
-
     const email = uniqueEmail();
     await page.goto("/");
     await signUpViaUI(page, email, STRONG_PASSWORD);
@@ -191,9 +193,6 @@ test.describe("backend required — auth", () => {
   test("wrong credentials show 'Invalid email or password' and forgot-password link", async ({
     page,
   }) => {
-    const available = await isBackendAvailable();
-    test.skip(!available, "Backend not available");
-
     await page.goto("/");
     await fillLogin(page, "nobody@example.com", "WrongPass@1!");
     await expect(page.getByTestId("auth-error")).toContainText(
@@ -203,9 +202,6 @@ test.describe("backend required — auth", () => {
   });
 
   test("forgot password flow: enter email, get success message", async ({ page }) => {
-    const available = await isBackendAvailable();
-    test.skip(!available, "Backend not available");
-
     await page.goto("/");
     // Trigger the forgot link via a failed login
     await fillLogin(page, "nobody@example.com", "WrongPass@1!");
@@ -226,9 +222,6 @@ test.describe("backend required — auth", () => {
   });
 
   test("log back in after sign-out", async ({ page }) => {
-    const available = await isBackendAvailable();
-    test.skip(!available, "Backend not available");
-
     const email = uniqueEmail();
     // Create account
     await page.goto("/");

@@ -476,6 +476,7 @@ export function Header() {
         aria-hidden="true"
         tabIndex={-1}
         accept=".ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.cpp,.c,.h,.html,.css,.json,.md,.yaml,.yml,.sql,.sh,.bash,.txt,.toml,.xml"
+        data-testid="header-file-picker-input"
         onChange={async (e) => {
           const file = e.target.files?.[0];
           if (!file) return;
@@ -491,6 +492,7 @@ export function Header() {
         aria-hidden="true"
         tabIndex={-1}
         accept=".zip"
+        data-testid="header-zip-picker-input"
         onChange={async (e) => {
           const file = e.target.files?.[0];
           if (!file) return;

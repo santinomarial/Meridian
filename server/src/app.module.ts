@@ -36,6 +36,9 @@ import { AppService } from './app.service';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
         const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
+        // When E2E_TEST=true, use very high limits so automated Playwright
+        // suites never hit 429s.  Production / development limits are unchanged.
+        const isE2E = process.env['E2E_TEST'] === 'true';
         return {
           // Two named throttlers:
           //   'default' — broad limit for all endpoints (120 req / 60s)
@@ -46,12 +49,12 @@ import { AppService } from './app.service';
             {
               name: 'default',
               ttl: config.httpTtlSeconds * 1000,
-              limit: config.httpLimit,
+              limit: isE2E ? 100_000 : config.httpLimit,
             },
             {
               name: 'auth',
               ttl: config.authTtlSeconds * 1000,
-              limit: config.authLimit,
+              limit: isE2E ? 100_000 : config.authLimit,
             },
           ],
         };

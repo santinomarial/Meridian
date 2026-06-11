@@ -2,7 +2,8 @@
  * Workspace E2E tests.
  *
  * All tests require a running backend.  Run with:
- *   MERIDIAN_BACKEND_URL=http://localhost:3000 npm run test:e2e
+ *   E2E_TEST=true npm run start:dev   # in server/
+ *   MERIDIAN_BACKEND_URL=http://localhost:3000 npm run test:e2e  # in client/
  *
  * When the backend is absent every test in this file is skipped gracefully.
  */
@@ -17,21 +18,40 @@ const STRONG_PASSWORD = "Test@1234!";
 
 // ── Shared setup ───────────────────────────────────────────────────────────────
 
-/** Signs up a fresh user and waits for the workspace to load. */
+/** Signs up a fresh user and waits for the workspace to be visible. */
 async function freshWorkspace(page: Page): Promise<void> {
   await page.goto("/");
   await signUpViaUI(page, uniqueEmail(), STRONG_PASSWORD);
   await page.waitForURL("/workspace", { timeout: 20_000 });
-  // Wait for the file explorer to be present (workspace ready)
+  // Wait for file explorer to be present and workspace to settle
   await expect(page.getByTestId("file-explorer")).toBeVisible({ timeout: 15_000 });
+  // Wait for backend status to resolve (available or unavailable, not pending)
+  await page
+    .waitForSelector(
+      '[data-testid="workspace-root"][data-backend-status="available"], ' +
+        '[data-testid="backend-unavailable-banner"]',
+      { timeout: 10_000 },
+    )
+    .catch(() => {
+      // If neither signal appears in time, proceed — createFile has a local fallback.
+    });
 }
 
 test.describe("workspace (backend required)", () => {
-  test.beforeEach(async () => {
-    const available = await isBackendAvailable();
-    if (!available) {
-      test.skip(true, "Backend not available — skipping workspace tests");
+  // Check backend availability once for the entire describe block to avoid
+  // hitting the auth rate limiter with per-test GET /auth/me calls.
+  let backendAvailable = false;
+
+  test.beforeAll(async () => {
+    backendAvailable = await isBackendAvailable();
+    if (!backendAvailable) {
+      // eslint-disable-next-line no-console
+      console.log("⚠  Backend not available — skipping workspace tests.");
     }
+  });
+
+  test.beforeEach(() => {
+    test.skip(!backendAvailable, "Backend not available — skipping workspace tests");
   });
 
   // ── Workspace loads ──────────────────────────────────────────────────────────
@@ -181,11 +201,9 @@ test.describe("workspace (backend required)", () => {
     // Select all existing content and replace it.
     const textarea = page.locator(".monaco-editor textarea").first();
     await textarea.press("Control+a");
-    await textarea.type("const e2e = true;");
+    await textarea.pressSequentially("const e2e = true;");
 
-    // Dirty indicator (dot) should appear on the active tab
-    // The dot has no text — confirm the tab shows the dirty indicator via aria.
-    // We verify instead that the save-status shows "Unsaved".
+    // Verify save-status shows "Unsaved".
     await expect(page.getByTestId("save-status")).toContainText("Unsaved", {
       timeout: 5_000,
     });
@@ -207,7 +225,7 @@ test.describe("workspace (backend required)", () => {
 
     const textarea = page.locator(".monaco-editor textarea").first();
     await textarea.press("Control+a");
-    await textarea.type("const saved = true;");
+    await textarea.pressSequentially("const saved = true;");
 
     // Wait for unsaved state
     await expect(page.getByTestId("save-status")).toContainText("Unsaved", {
@@ -238,7 +256,7 @@ test.describe("workspace (backend required)", () => {
 
     const textarea = page.locator(".monaco-editor textarea").first();
     await textarea.press("Control+a");
-    await textarea.type("const persisted = 'yes';");
+    await textarea.pressSequentially("const persisted = 'yes';");
 
     // Save
     await page.keyboard.press("Meta+s");

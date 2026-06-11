@@ -22,12 +22,17 @@ and file-import tests require both the Vite dev server **and** the NestJS
 backend.
 
 ```bash
-# Terminal 1 — start the backend (from server/)
-npm run start:dev
+# Terminal 1 — start the backend with E2E rate-limit bypass (from server/)
+E2E_TEST=true npm run start:dev
 
 # Terminal 2 — run all tests (from client/)
 MERIDIAN_BACKEND_URL=http://localhost:3000 npm run test:e2e
 ```
+
+`E2E_TEST=true` is **required** when the backend is running alongside the
+Playwright suite.  Without it the strict auth rate limiter (10 req/60 s)
+will return 429 errors for `POST /auth/register` and `GET /auth/me` as the
+suite signs up many throwaway accounts.
 
 Tests that need the backend call `isBackendAvailable()` at runtime and skip
 themselves gracefully when the backend is not reachable.
@@ -50,6 +55,7 @@ npm run test:e2e:headed
 |---|---|---|
 | `MERIDIAN_BASE_URL` | `http://localhost:5173` | Playwright `baseURL` |
 | `MERIDIAN_BACKEND_URL` | `http://localhost:3000` | Backend availability probe |
+| `E2E_TEST` | `false` | Set to `true` on the **server** to bypass auth rate limits |
 
 ### Test files
 
