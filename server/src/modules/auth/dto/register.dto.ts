@@ -6,6 +6,8 @@ export class RegisterDto {
   @IsEmail()
   email!: string;
 
+  // TODO: Align backend password policy with frontend rules (uppercase, lowercase, number, special
+  // character) before production deployment. Currently only enforces @MinLength(8).
   @ApiProperty({ minLength: 8 })
   @IsString()
   @MinLength(8)
