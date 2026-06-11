@@ -98,6 +98,7 @@ export function WorkspacePage() {
     <div
       className="flex h-screen flex-col overflow-hidden bg-surface-container-lowest"
       data-session-id={sessionId}
+      data-testid="workspace-root"
     >
       <Header />
       <Breadcrumb />
@@ -106,6 +107,7 @@ export function WorkspacePage() {
         <div
           role="status"
           className="flex items-center gap-2 bg-surface-container-high px-4 py-1.5 text-[11px] text-on-surface-variant"
+          data-testid="backend-unavailable-banner"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-outline" aria-hidden />
           Backend unavailable — using local mock workspace.

@@ -284,7 +284,7 @@ function CollaborationPanelContent({
           ))}
         </ul>
       ) : isConnected ? (
-        <div className="flex shrink-0 flex-col items-center justify-center gap-1 px-3 py-5 text-center">
+        <div className="flex shrink-0 flex-col items-center justify-center gap-1 px-3 py-5 text-center" data-testid="collab-no-collaborators">
           <MaterialIcon
             name="group_add"
             className="text-[22px] text-on-surface-variant/30"
@@ -321,7 +321,7 @@ export function CollaborationPanel({
 }) {
   if (mode === "drawer") {
     return (
-      <aside className="meridian-panel flex h-full w-full flex-col" aria-label="Collaboration">
+      <aside className="meridian-panel flex h-full w-full flex-col" aria-label="Collaboration" data-testid="collaboration-panel">
         <CollaborationPanelContent isLoading={isLoading} onClose={onClose} showCloseButton />
       </aside>
     );
@@ -331,6 +331,7 @@ export function CollaborationPanel({
     <aside
       className="meridian-panel flex h-full w-60 shrink-0 flex-col meridian-crisp-border border-l"
       aria-label="Collaboration"
+      data-testid="collaboration-panel"
     >
       <CollaborationPanelContent isLoading={isLoading} showCloseButton={false} />
     </aside>

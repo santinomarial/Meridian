@@ -1,3 +1,74 @@
+# Meridian Client
+
+## E2E Tests (Playwright)
+
+### Quick start — frontend-only tests (no backend needed)
+
+These tests cover auth form validation, the demo workspace, theme toggle,
+share dialog, invite link, and backend-unavailable behaviour.
+
+```bash
+# From the client/ directory:
+npm run test:e2e
+```
+
+Playwright starts the Vite dev server automatically (`npm run dev` on port
+5173) and re-uses it if already running.
+
+### Full test suite — requires a running backend
+
+Auth, workspace, file-create/rename/delete, Monaco editing, save/persist,
+and file-import tests require both the Vite dev server **and** the NestJS
+backend.
+
+```bash
+# Terminal 1 — start the backend (from server/)
+npm run start:dev
+
+# Terminal 2 — run all tests (from client/)
+MERIDIAN_BACKEND_URL=http://localhost:3000 npm run test:e2e
+```
+
+Tests that need the backend call `isBackendAvailable()` at runtime and skip
+themselves gracefully when the backend is not reachable.
+
+### Interactive UI mode
+
+```bash
+npm run test:e2e:ui
+```
+
+### Headed mode (watch the browser)
+
+```bash
+npm run test:e2e:headed
+```
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MERIDIAN_BASE_URL` | `http://localhost:5173` | Playwright `baseURL` |
+| `MERIDIAN_BACKEND_URL` | `http://localhost:3000` | Backend availability probe |
+
+### Test files
+
+| File | Backend needed | Covers |
+|---|---|---|
+| `e2e/auth.spec.ts` | No (offline), Yes (backend group) | Landing page, login default, weak-password block, forgot-password, sign-up, sign-out |
+| `e2e/workspace.spec.ts` | Yes | Workspace load, auto-create, file/folder CRUD, Monaco edit, Cmd+S save, content persistence |
+| `e2e/file-import.spec.ts` | Yes | Open local file, import ZIP, file appears in explorer |
+| `e2e/ui-controls.spec.ts` | No (theme/share), Yes (collab empty state) | Theme toggle, share dialog, copy link, invite route, collaboration panel |
+| `e2e/offline.spec.ts` | No | Backend-unavailable banner, demo mode labels, no crash |
+
+### Generated fixture
+
+`e2e/global-setup.ts` writes `e2e/fixtures/test-project.zip` before the
+suite runs. The ZIP contains a single `hello.ts` file and requires no
+external dependencies.
+
+---
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

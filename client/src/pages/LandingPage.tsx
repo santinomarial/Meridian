@@ -261,7 +261,7 @@ function AuthCard({
   const isForgot = mode === "forgot";
 
   return (
-    <div className="glass-panel inner-glow flex w-full max-w-[420px] flex-col gap-8 rounded-xl p-8">
+    <div className="glass-panel inner-glow flex w-full max-w-[420px] flex-col gap-8 rounded-xl p-8" data-testid="auth-card">
       <div className="space-y-2 text-center">
         <div className="mb-2 inline-flex items-center justify-center rounded border border-outline-variant/30 bg-surface-container-high px-2 py-0.5 uppercase text-primary-fixed-dim label-caps">
           {isSignUp ? "Start Coding" : isForgot ? "Reset Password" : "Welcome Back"}
@@ -279,7 +279,7 @@ function AuthCard({
       </div>
 
       {isForgot && forgotSuccess ? (
-        <div className="rounded-lg bg-primary/10 px-4 py-5 text-center">
+        <div className="rounded-lg bg-primary/10 px-4 py-5 text-center" data-testid="forgot-success">
           <MaterialIcon name="mark_email_read" className="mb-3 text-4xl text-primary" aria-hidden />
           <p className="text-body-sm text-on-surface">
             If an account exists for this email, a reset link will be sent when password recovery is
@@ -287,7 +287,7 @@ function AuthCard({
           </p>
         </div>
       ) : (
-        <form className="space-y-4" onSubmit={handleSubmit} noValidate>
+        <form className="space-y-4" onSubmit={handleSubmit} noValidate data-testid="auth-form">
           {isSignUp ? (
             <IconField
               id="name"
@@ -364,13 +364,14 @@ function AuthCard({
           ) : null}
 
           {error !== null ? (
-            <div role="alert" className="rounded-lg bg-error/10 px-3 py-2 text-[12px] text-error">
+            <div role="alert" className="rounded-lg bg-error/10 px-3 py-2 text-[12px] text-error" data-testid="auth-error">
               <p>{error}</p>
               {showForgotLink ? (
                 <button
                   type="button"
                   onClick={() => onModeChange("forgot")}
                   className="mt-1 text-primary hover:underline"
+                  data-testid="forgot-password-link"
                 >
                   Forgot password?
                 </button>
@@ -381,6 +382,7 @@ function AuthCard({
           <button
             type="submit"
             disabled={loading}
+            data-testid="auth-submit"
             className="group mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-inverse-primary py-3 text-body-md font-semibold text-on-primary-fixed shadow-lg shadow-primary/10 transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-60"
           >
             {loading
@@ -429,6 +431,7 @@ function AuthCard({
               type="button"
               onClick={() => onModeChange("signin")}
               className="font-medium text-primary hover:underline"
+              data-testid="back-to-login"
             >
               Back to Log in
             </button>
@@ -440,6 +443,7 @@ function AuthCard({
               type="button"
               onClick={() => onModeChange(isSignUp ? "signin" : "signup")}
               className="font-medium text-primary hover:underline"
+              data-testid={isSignUp ? "switch-to-login" : "switch-to-signup"}
             >
               {isSignUp ? "Log in" : "Sign up"}
             </button>

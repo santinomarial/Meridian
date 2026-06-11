@@ -704,11 +704,12 @@ export function Header() {
             aria-expanded={openPanel === "share"}
             className={headerButtonPrimary}
             onClick={() => setOpenPanel(openPanel === "share" ? null : "share")}
+            data-testid="share-button"
           >
             Share
           </button>
           {openPanel === "share" ? (
-            <DropdownPanel className="right-0 w-80" role="dialog" aria-label="Share workspace">
+            <DropdownPanel className="right-0 w-80" role="dialog" aria-label="Share workspace" data-testid="share-dialog">
               {/* Header */}
               <div className="border-b meridian-crisp-border px-3 py-2">
                 <span className="text-xs font-semibold text-on-surface">Share Workspace</span>
@@ -764,13 +765,14 @@ export function Header() {
                   Or Copy Invite Link
                 </label>
                 <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1 truncate rounded border meridian-crisp-border bg-surface-container-highest px-2 py-1.5 font-mono text-[10px] text-on-surface-variant">
+                  <div className="min-w-0 flex-1 truncate rounded border meridian-crisp-border bg-surface-container-highest px-2 py-1.5 font-mono text-[10px] text-on-surface-variant" data-testid="invite-link-display">
                     {inviteLink}
                   </div>
                   <button
                     type="button"
                     onClick={() => void handleCopyLink()}
                     aria-label="Copy invite link"
+                    data-testid="copy-invite-link"
                     className={[
                       "shrink-0 rounded px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
                       copyStatus === "copied"
@@ -800,6 +802,7 @@ export function Header() {
             onClick={toggleTheme}
             className={iconButtonMutedClass}
             aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            data-testid="theme-toggle"
           >
             <MaterialIcon
               name={theme === "dark" ? "light_mode" : "dark_mode"}
@@ -861,11 +864,12 @@ export function Header() {
               aria-label="Account menu"
               aria-haspopup="dialog"
               aria-expanded={openPanel === "account"}
+              data-testid="account-menu-button"
             >
               <MaterialIcon name="account_circle" className="text-[18px]" aria-hidden />
             </button>
             {openPanel === "account" ? (
-              <DropdownPanel className="right-0 w-56" role="dialog" aria-label="Account">
+              <DropdownPanel className="right-0 w-56" role="dialog" aria-label="Account" data-testid="account-menu">
                 <div className="border-b meridian-crisp-border px-3 py-2.5">
                   {currentUser !== null ? (
                     <>

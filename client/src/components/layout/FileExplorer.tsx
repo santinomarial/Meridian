@@ -444,6 +444,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
         mode === "inline" ? "w-60 shrink-0 meridian-crisp-border border-r" : "w-full",
       ].join(" ")}
       aria-label="Explorer"
+      data-testid="file-explorer"
     >
       {/* Header */}
       <div className={panelHeaderClass}>
@@ -457,6 +458,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
             title="New File"
             onClick={() => startNaming("file")}
             disabled={isImporting}
+            data-testid="new-file-button"
           >
             <MaterialIcon name="note_add" className="text-[16px]" aria-hidden />
           </button>
@@ -468,6 +470,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
             title="New Folder"
             onClick={() => startNaming("folder")}
             disabled={isImporting}
+            data-testid="new-folder-button"
           >
             <MaterialIcon name="create_new_folder" className="text-[16px]" aria-hidden />
           </button>
@@ -479,6 +482,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
             title="Open File"
             disabled={isImporting}
             onClick={() => filePickerRef.current?.click()}
+            data-testid="open-file-button"
           >
             <MaterialIcon name="upload_file" className="text-[16px]" aria-hidden />
           </button>
@@ -490,6 +494,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
             title="Import ZIP"
             disabled={isImporting}
             onClick={() => zipPickerRef.current?.click()}
+            data-testid="import-zip-button"
           >
             <MaterialIcon name="folder_zip" className="text-[16px]" aria-hidden />
           </button>
@@ -508,6 +513,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
         className="sr-only"
         accept=".ts,.tsx,.js,.jsx,.py,.java,.go,.rs,.cpp,.cc,.cxx,.c,.h,.html,.css,.scss,.json,.md,.yml,.yaml,.sql,.sh,.bash,.txt"
         onChange={(e) => void handleFilePick(e)}
+        data-testid="file-picker-input"
       />
       <input
         ref={zipPickerRef}
@@ -515,6 +521,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
         className="sr-only"
         accept=".zip"
         onChange={(e) => void handleZipPick(e)}
+        data-testid="zip-picker-input"
       />
 
       {/* File tree */}
@@ -538,6 +545,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
               placeholder={namingPlaceholder}
               className="flex-1 bg-transparent text-[13px] text-on-surface outline-none placeholder:text-outline"
               aria-label={namingTarget === "folder" ? "New folder name" : "New file name"}
+              data-testid="new-item-input"
             />
           </div>
         ) : null}

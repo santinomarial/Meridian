@@ -164,7 +164,7 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   };
 
   return (
-    <div className="meridian-editor-chrome relative flex h-full min-h-0 w-full flex-1 flex-col">
+    <div className="meridian-editor-chrome relative flex h-full min-h-0 w-full flex-1 flex-col" data-testid="monaco-editor-wrapper">
       <Editor
         key={activeFileId}
         height="100%"

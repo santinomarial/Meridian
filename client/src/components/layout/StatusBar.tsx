@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { MERIDIAN_VERSION } from "../../constants/version";
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { transitionBase } from "../ui/styles";
@@ -24,7 +24,7 @@ const LANGUAGE_LABELS: Record<LanguageMode, string> = {
   plaintext: "Plain Text",
 };
 
-function StatusBarSegment({ children, className }: { children: ReactNode; className?: string }) {
+function StatusBarSegment({ children, className, ...rest }: HTMLAttributes<HTMLSpanElement> & { children?: ReactNode }) {
   return (
     <span
       className={[
@@ -35,6 +35,7 @@ function StatusBarSegment({ children, className }: { children: ReactNode; classN
       ]
         .filter(Boolean)
         .join(" ")}
+      {...rest}
     >
       {children}
     </span>
@@ -46,6 +47,7 @@ export function StatusBar() {
   const activeFileId = useWorkspaceStore((s) => s.activeFileId);
   const openTabs = useWorkspaceStore((s) => s.openTabs);
   const diagnosticCounts = useWorkspaceStore((s) => s.diagnosticCounts);
+  const saveStatus = useWorkspaceStore((s) => s.saveStatus);
 
   const activeTab = openTabs.find((t) => t.fileId === activeFileId);
   const languageLabel = activeTab ? LANGUAGE_LABELS[activeTab.language] : "Plain Text";
@@ -78,6 +80,15 @@ export function StatusBar() {
         <StatusBarSegment className="hidden md:inline-flex">
           <MaterialIcon name="check_circle" className="text-[12px]" aria-hidden />
           Prettier
+        </StatusBarSegment>
+        <StatusBarSegment data-testid="save-status" data-save-status={saveStatus}>
+          {saveStatus === "saving"
+            ? "Saving…"
+            : saveStatus === "error"
+              ? "Save failed"
+              : saveStatus === "unsaved"
+                ? "Unsaved"
+                : "Saved"}
         </StatusBarSegment>
         <StatusBarSegment className="font-semibold tabular-nums">
           Meridian v{MERIDIAN_VERSION}
