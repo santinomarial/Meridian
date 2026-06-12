@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { MailModule } from '../mail/mail.module';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 
@@ -12,6 +13,7 @@ import { APP_CONFIG_KEY } from '../../config/app.config';
 @Global()
 @Module({
   imports: [
+    MailModule,
     JwtModule.registerAsync({
       // global: true makes JwtService available in every module without
       // needing to re-export JwtModule from AuthModule.  This avoids the

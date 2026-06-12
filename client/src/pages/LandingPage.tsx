@@ -1,26 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
-import { ApiError, login, register } from "../lib/api";
+import { PasswordStrength } from "../components/ui/PasswordStrength";
+import { ApiError, login, register, forgotPassword } from "../lib/api";
+import { getPasswordRequirements } from "../lib/passwordPolicy";
 
 type AuthMode = "signup" | "signin" | "forgot";
-
-type PasswordRequirement = { label: string; met: boolean };
-
-function getPasswordRequirements(password: string): PasswordRequirement[] {
-  return [
-    { label: "At least 8 characters", met: password.length >= 8 },
-    { label: "1 uppercase letter", met: /[A-Z]/.test(password) },
-    { label: "1 lowercase letter", met: /[a-z]/.test(password) },
-    { label: "1 number", met: /\d/.test(password) },
-    { label: "1 special character", met: /[^A-Za-z0-9]/.test(password) },
-  ];
-}
-
-function getPasswordStrengthScore(password: string): number {
-  if (!password) return 0;
-  return getPasswordRequirements(password).filter((r) => r.met).length;
-}
 
 function AmbientBackground() {
   const primaryRef = useRef<HTMLDivElement>(null);
@@ -134,44 +119,6 @@ function IconField({
   );
 }
 
-function PasswordStrength({ password }: { password: string }) {
-  const score = getPasswordStrengthScore(password);
-  const reqs = getPasswordRequirements(password);
-
-  return (
-    <>
-      <div className="mt-2 flex gap-1 px-1" aria-hidden>
-        {[1, 2, 3, 4, 5].map((seg) => (
-          <div
-            key={seg}
-            className={[
-              "h-1 flex-grow rounded-full transition-all",
-              seg <= score ? "bg-primary" : "bg-outline-variant",
-            ].join(" ")}
-          />
-        ))}
-      </div>
-      <ul className="mt-2 space-y-0.5 px-1" aria-label="Password requirements">
-        {reqs.map((req) => (
-          <li
-            key={req.label}
-            className={[
-              "flex items-center gap-1.5 text-[11px]",
-              req.met ? "text-primary" : "text-on-surface-variant",
-            ].join(" ")}
-          >
-            <MaterialIcon
-              name={req.met ? "check_circle" : "radio_button_unchecked"}
-              className="text-[13px]"
-              aria-hidden
-            />
-            {req.label}
-          </li>
-        ))}
-      </ul>
-    </>
-  );
-}
 
 function AuthCard({
   mode,
@@ -216,7 +163,15 @@ function AuthCard({
     setShowForgotLink(false);
 
     if (mode === "forgot") {
-      // TODO: POST /auth/forgot-password — backend password reset not yet implemented.
+      setLoading(true);
+      try {
+        await forgotPassword({ email });
+      } catch {
+        setError("Unable to send reset link right now. Please try again later.");
+      } finally {
+        setLoading(false);
+      }
+      // Always show the generic success — never reveal whether the email exists.
       setForgotSuccess(true);
       return;
     }
@@ -282,8 +237,7 @@ function AuthCard({
         <div className="rounded-lg bg-primary/10 px-4 py-5 text-center" data-testid="forgot-success">
           <MaterialIcon name="mark_email_read" className="mb-3 text-4xl text-primary" aria-hidden />
           <p className="text-body-sm text-on-surface">
-            If an account exists for this email, a reset link will be sent when password recovery is
-            enabled.
+            If an account exists for this email, a reset link has been sent.
           </p>
         </div>
       ) : (

@@ -15,4 +15,8 @@ export interface AppConfig {
   authLimit: number;
   wsMessageLimitPerSecond: number;
   wsMaxYjsUpdateBytes: number;
+  // Mail / password-reset
+  resendApiKey: string | undefined;
+  mailFrom: string;
+  forgotPasswordTtlMinutes: number;
 }

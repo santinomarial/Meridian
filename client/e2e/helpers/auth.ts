@@ -54,3 +54,19 @@ export async function signUpViaUI(
   await page.getByLabel("Confirm Password").fill(password);
   await page.getByTestId("auth-submit").click();
 }
+
+/**
+ * Calls the E2E-only backend endpoint to get a raw password reset token for
+ * the given email without sending an email.  Only works when E2E_TEST=true.
+ */
+export async function getPasswordResetToken(
+  page: Page,
+  email: string,
+): Promise<{ token: string; resetUrl: string }> {
+  const url = `${BACKEND_URL}/auth/e2e/password-reset-token?email=${encodeURIComponent(email)}`;
+  const response = await page.request.get(url);
+  if (!response.ok()) {
+    throw new Error(`E2E reset-token helper returned ${response.status()}`);
+  }
+  return response.json() as Promise<{ token: string; resetUrl: string }>;
+}

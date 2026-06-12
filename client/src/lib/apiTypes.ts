@@ -67,3 +67,12 @@ export interface CreateDocumentPayload {
   language?: string;
   content?: string;
 }
+
+export interface ForgotPasswordPayload {
+  email: string;
+}
+
+export interface ResetPasswordPayload {
+  token: string;
+  password: string;
+}

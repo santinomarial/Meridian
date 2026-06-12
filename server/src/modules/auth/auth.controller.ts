@@ -4,7 +4,9 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -14,10 +16,15 @@ import type { Response } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from './types/auth-user.type';
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request.type';
+
+const FORGOT_SUCCESS =
+  'If an account exists for this email, a reset link has been sent.';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -60,5 +67,41 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<void> {
     await this.authService.logout(req.sessionJti, res);
+  }
+
+  // ── Password reset ──────────────────────────────────────────────────────────
+
+  @ApiOperation({ summary: 'Request a password reset email' })
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+  ): Promise<{ message: string }> {
+    await this.authService.forgotPassword(dto);
+    // Always return the same generic message — never reveal whether the email exists.
+    return { message: FORGOT_SUCCESS };
+  }
+
+  @ApiOperation({ summary: 'Complete a password reset using the token from the email link' })
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(
+    @Body() dto: ResetPasswordDto,
+  ): Promise<{ message: string }> {
+    await this.authService.resetPassword(dto);
+    return { message: 'Password reset successfully.' };
+  }
+
+  // ── E2E test helper — only works when E2E_TEST=true ─────────────────────────
+
+  @ApiOperation({ summary: '[E2E only] Get a raw reset token without sending email' })
+  @Get('e2e/password-reset-token')
+  async e2eGetResetToken(
+    @Query('email') email: string,
+  ): Promise<{ token: string; resetUrl: string }> {
+    if (process.env['E2E_TEST'] !== 'true') {
+      throw new NotFoundException();
+    }
+    return this.authService.generateResetTokenForE2E(email);
   }
 }

@@ -10,6 +10,7 @@ import {
   uniqueEmail,
   fillLogin,
   signUpViaUI,
+  getPasswordResetToken,
 } from "./helpers/auth.js";
 
 // Strong password that satisfies all client-side rules.
@@ -217,7 +218,7 @@ test.describe("backend required — auth", () => {
     await page.getByTestId("auth-submit").click();
     await expect(page.getByTestId("forgot-success")).toBeVisible();
     await expect(page.getByTestId("forgot-success")).toContainText(
-      "reset link will be sent",
+      "reset link has been sent",
     );
   });
 
@@ -237,5 +238,82 @@ test.describe("backend required — auth", () => {
     await fillLogin(page, email, STRONG_PASSWORD);
     await expect(page).toHaveURL("/workspace", { timeout: 15_000 });
     await expect(page.getByTestId("workspace-root")).toBeVisible();
+  });
+
+  // ── Full password-reset flow ─────────────────────────────────────────────────
+
+  test("full password-reset flow: reset works, old password fails, new password works", async ({
+    page,
+  }) => {
+    const email = uniqueEmail();
+    const newPassword = "NewPass@9876!";
+
+    // Create account and sign out
+    await page.goto("/");
+    await signUpViaUI(page, email, STRONG_PASSWORD);
+    await page.waitForURL("/workspace", { timeout: 15_000 });
+    await page.getByTestId("account-menu-button").click();
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.waitForURL("/");
+
+    // Get a raw reset token via the E2E-only endpoint (no email sent)
+    const { token } = await getPasswordResetToken(page, email);
+
+    // Navigate to the reset URL
+    await page.goto(`/reset-password/${token}`);
+    await expect(page.getByTestId("reset-password-form")).toBeVisible({ timeout: 10_000 });
+
+    // Weak password is blocked client-side before any network call
+    const requests: string[] = [];
+    page.on("request", (req) => {
+      if (req.url().includes("/auth/")) requests.push(req.url());
+    });
+    await page.getByLabel("New Password").fill("weakpass");
+    await page.getByLabel("Confirm Password").fill("weakpass");
+    await page.getByTestId("reset-submit").click();
+    await expect(page.getByTestId("reset-error")).toBeVisible();
+    expect(requests.filter((u) => u.includes("reset-password"))).toHaveLength(0);
+
+    // Mismatched confirm password is also blocked client-side
+    await page.getByLabel("New Password").fill(newPassword);
+    await page.getByLabel("Confirm Password").fill("Different@1!");
+    await page.getByTestId("reset-submit").click();
+    await expect(page.getByTestId("reset-error")).toContainText("do not match");
+    expect(requests.filter((u) => u.includes("reset-password"))).toHaveLength(0);
+
+    // Valid submission succeeds
+    await page.getByLabel("New Password").fill(newPassword);
+    await page.getByLabel("Confirm Password").fill(newPassword);
+    await page.getByTestId("reset-submit").click();
+    await expect(page.getByTestId("reset-success")).toBeVisible({ timeout: 10_000 });
+
+    // Follow the "Log in" link back to the landing page
+    await page.getByTestId("back-to-login").click();
+    await expect(page).toHaveURL("/");
+
+    // Old password no longer works
+    await fillLogin(page, email, STRONG_PASSWORD);
+    await expect(page.getByTestId("auth-error")).toBeVisible({ timeout: 8_000 });
+
+    // New password works
+    await fillLogin(page, email, newPassword);
+    await expect(page).toHaveURL("/workspace", { timeout: 15_000 });
+    await expect(page.getByTestId("workspace-root")).toBeVisible();
+  });
+
+  test("invalid reset token shows error and link back to forgot-password", async ({ page }) => {
+    await page.goto("/reset-password/this-is-not-a-valid-token");
+    await expect(page.getByTestId("reset-password-form")).toBeVisible({ timeout: 10_000 });
+
+    await page.getByLabel("New Password").fill(STRONG_PASSWORD);
+    await page.getByLabel("Confirm Password").fill(STRONG_PASSWORD);
+    await page.getByTestId("reset-submit").click();
+
+    // Backend returns 400 with "invalid or expired" message
+    const errorEl = page.getByTestId("reset-error");
+    await expect(errorEl).toBeVisible({ timeout: 8_000 });
+    await expect(errorEl).toContainText(/invalid|expired/i);
+    // Link back to request a new reset is shown
+    await expect(page.getByTestId("back-to-forgot")).toBeVisible();
   });
 });

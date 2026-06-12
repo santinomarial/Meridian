@@ -1,16 +1,14 @@
 import { IsEmail, IsString, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { IsStrongPassword } from '../../../common/validation/is-strong-password';
 
 export class RegisterDto {
   @ApiProperty({ example: 'alice@example.com' })
   @IsEmail()
   email!: string;
 
-  // TODO: Align backend password policy with frontend rules (uppercase, lowercase, number, special
-  // character) before production deployment. Currently only enforces @MinLength(8).
-  @ApiProperty({ minLength: 8 })
-  @IsString()
-  @MinLength(8)
+  @ApiProperty({ description: 'Must contain at least 8 characters, uppercase, lowercase, number, and special character' })
+  @IsStrongPassword()
   password!: string;
 
   @ApiProperty({ example: 'Alice' })

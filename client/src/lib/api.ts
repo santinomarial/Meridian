@@ -5,8 +5,10 @@ import type {
   ApiWorkspace,
   CreateDocumentPayload,
   CreateWorkspacePayload,
+  ForgotPasswordPayload,
   LoginPayload,
   RegisterPayload,
+  ResetPasswordPayload,
   UpdateDocumentPayload,
 } from './apiTypes';
 
@@ -17,8 +19,10 @@ export type {
   ApiWorkspace,
   CreateDocumentPayload,
   CreateWorkspacePayload,
+  ForgotPasswordPayload,
   LoginPayload,
   RegisterPayload,
+  ResetPasswordPayload,
   UpdateDocumentPayload,
 };
 
@@ -90,6 +94,12 @@ export const getCurrentUser = (): Promise<ApiUser> =>
   request<ApiUser>('GET', '/auth/me');
 
 export const logout = (): Promise<void> => request<void>('POST', '/auth/logout');
+
+export const forgotPassword = (payload: ForgotPasswordPayload): Promise<{ message: string }> =>
+  request<{ message: string }>('POST', '/auth/forgot-password', payload);
+
+export const resetPassword = (payload: ResetPasswordPayload): Promise<{ message: string }> =>
+  request<{ message: string }>('POST', '/auth/reset-password', payload);
 
 // ── Workspaces ────────────────────────────────────────────────────────────────
 
