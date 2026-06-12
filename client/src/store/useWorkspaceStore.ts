@@ -300,22 +300,39 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   setWorkspaceId: (id) => set({ workspaceId: id }),
 
   addFileNode: (file, content) => {
-    set((state) => ({
-      files: [...state.files, file],
-      editorContentByFileId: { ...state.editorContentByFileId, [file.id]: content },
-      openTabs: state.openTabs.some((t) => t.fileId === file.id)
-        ? state.openTabs
-        : [
-            ...state.openTabs,
-            { fileId: file.id, name: file.name, language: file.language, dirty: content.length > 0 },
-          ],
-      activeFileId: file.id,
-      saveStatus: content.length > 0 ? ("unsaved" as const) : ("saved" as const),
-    }));
+    set((state) => {
+      // Replace an existing root-level node with the same name or same id
+      // (handles local-id → real-id upgrade and prevents double-add).
+      const existingIdx = state.files.findIndex(
+        (f) => f.kind === "file" && (f.id === file.id || f.name === file.name),
+      );
+      const newFiles =
+        existingIdx >= 0
+          ? state.files.map((f, i) => (i === existingIdx ? file : f))
+          : [...state.files, file];
+      return {
+        files: newFiles,
+        editorContentByFileId: { ...state.editorContentByFileId, [file.id]: content },
+        openTabs: state.openTabs.some((t) => t.fileId === file.id)
+          ? state.openTabs
+          : [
+              ...state.openTabs,
+              { fileId: file.id, name: file.name, language: file.language, dirty: content.length > 0 },
+            ],
+        activeFileId: file.id,
+        saveStatus: content.length > 0 ? ("unsaved" as const) : ("saved" as const),
+      };
+    });
   },
 
   addFolderNode: (folder) => {
-    set((state) => ({ files: [...state.files, folder] }));
+    set((state) => {
+      const existingIdx = state.files.findIndex(
+        (f) => f.kind === "folder" && (f.id === folder.id || f.name === folder.name),
+      );
+      if (existingIdx >= 0) return state;
+      return { files: [...state.files, folder] };
+    });
   },
 
   deleteNode: (nodeId) => {

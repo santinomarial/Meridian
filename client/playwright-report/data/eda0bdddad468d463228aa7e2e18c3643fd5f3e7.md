@@ -7,7 +7,7 @@
 # Test info
 
 - Name: file-import.spec.ts >> file import (backend required) >> open file via the File menu also works
-- Location: e2e/file-import.spec.ts:105:3
+- Location: e2e/file-import.spec.ts:108:3
 
 # Error details
 
@@ -202,7 +202,6 @@ Call log:
 # Test source
 
 ```ts
-  12  | const __dirname = path.dirname(fileURLToPath(import.meta.url));
   13  | const FIXTURES = path.join(__dirname, "fixtures");
   14  | const STRONG_PASSWORD = "Test@1234!";
   15  | 
@@ -214,114 +213,120 @@ Call log:
   21  | }
   22  | 
   23  | test.describe("file import (backend required)", () => {
-  24  |   test.beforeEach(async () => {
-  25  |     const available = await isBackendAvailable();
-  26  |     if (!available) {
-  27  |       test.skip(true, "Backend not available — skipping file import tests");
-  28  |     }
-  29  |   });
-  30  | 
-  31  |   // ── Open local file ──────────────────────────────────────────────────────────
-  32  | 
-  33  |   test("open a local .ts file via the file picker", async ({ page }) => {
-  34  |     await freshWorkspace(page);
-  35  | 
-  36  |     // Create a temporary file on disk to pick — reuse the fixture.
-  37  |     const localFile = path.join(FIXTURES, "test-project.zip");
-  38  |     // Instead pick a real .ts text file we can construct inline via a
-  39  |     // Playwright file-chooser.  We provide a Buffer as the file content.
+  24  |   // Check backend availability once to avoid per-test GET /auth/me calls.
+  25  |   let backendAvailable = false;
+  26  | 
+  27  |   test.beforeAll(async () => {
+  28  |     backendAvailable = await isBackendAvailable();
+  29  |     if (!backendAvailable) {
+  30  |       // eslint-disable-next-line no-console
+  31  |       console.log("⚠  Backend not available — skipping file import tests.");
+  32  |     }
+  33  |   });
+  34  | 
+  35  |   test.beforeEach(() => {
+  36  |     test.skip(!backendAvailable, "Backend not available — skipping file import tests");
+  37  |   });
+  38  | 
+  39  |   // ── Open local file ──────────────────────────────────────────────────────────
   40  | 
-  41  |     const [fileChooser] = await Promise.all([
-  42  |       page.waitForEvent("filechooser"),
-  43  |       // The hidden file input is triggered by clicking the Open file button.
-  44  |       page.getByTestId("open-file-button").click(),
-  45  |     ]);
-  46  | 
-  47  |     // Create a synthetic .ts file from a Buffer
-  48  |     await fileChooser.setFiles({
-  49  |       name: "opened-local.ts",
-  50  |       mimeType: "text/plain",
-  51  |       buffer: Buffer.from("const local = 'opened';\n"),
-  52  |     });
-  53  | 
-  54  |     // File should appear in the explorer
-  55  |     await expect(
-  56  |       page.getByRole("treeitem", { name: "opened-local.ts" }),
-  57  |     ).toBeVisible({ timeout: 10_000 });
-  58  |   });
-  59  | 
-  60  |   // ── Import ZIP ───────────────────────────────────────────────────────────────
-  61  | 
-  62  |   test("import a ZIP archive — files appear in the explorer", async ({ page }) => {
-  63  |     await freshWorkspace(page);
+  41  |   test("open a local .ts file via the file picker", async ({ page }) => {
+  42  |     await freshWorkspace(page);
+  43  | 
+  44  |     const [fileChooser] = await Promise.all([
+  45  |       page.waitForEvent("filechooser"),
+  46  |       // The hidden file input is triggered by clicking the Open file button.
+  47  |       page.getByTestId("open-file-button").click(),
+  48  |     ]);
+  49  | 
+  50  |     // Create a synthetic .ts file from a Buffer
+  51  |     await fileChooser.setFiles({
+  52  |       name: "opened-local.ts",
+  53  |       mimeType: "text/plain",
+  54  |       buffer: Buffer.from("const local = 'opened';\n"),
+  55  |     });
+  56  | 
+  57  |     // File should appear in the explorer
+  58  |     await expect(
+  59  |       page.getByRole("treeitem", { name: "opened-local.ts" }),
+  60  |     ).toBeVisible({ timeout: 10_000 });
+  61  |   });
+  62  | 
+  63  |   // ── Import ZIP ───────────────────────────────────────────────────────────────
   64  | 
-  65  |     const [fileChooser] = await Promise.all([
-  66  |       page.waitForEvent("filechooser"),
-  67  |       page.getByTestId("import-zip-button").click(),
-  68  |     ]);
-  69  | 
-  70  |     await fileChooser.setFiles(path.join(FIXTURES, "test-project.zip"));
-  71  | 
-  72  |     // The fixture ZIP contains hello.ts
-  73  |     await expect(
-  74  |       page.getByRole("treeitem", { name: "hello.ts" }),
-  75  |     ).toBeVisible({ timeout: 15_000 });
-  76  |   });
-  77  | 
-  78  |   // ── Imported file is openable ────────────────────────────────────────────────
-  79  | 
-  80  |   test("imported file can be opened in the editor", async ({ page }) => {
-  81  |     await freshWorkspace(page);
+  65  |   test("import a ZIP archive — files appear in the explorer", async ({ page }) => {
+  66  |     await freshWorkspace(page);
+  67  | 
+  68  |     const [fileChooser] = await Promise.all([
+  69  |       page.waitForEvent("filechooser"),
+  70  |       page.getByTestId("import-zip-button").click(),
+  71  |     ]);
+  72  | 
+  73  |     await fileChooser.setFiles(path.join(FIXTURES, "test-project.zip"));
+  74  | 
+  75  |     // The fixture ZIP contains hello.ts
+  76  |     await expect(
+  77  |       page.getByRole("treeitem", { name: "hello.ts" }),
+  78  |     ).toBeVisible({ timeout: 15_000 });
+  79  |   });
+  80  | 
+  81  |   // ── Imported file is openable ────────────────────────────────────────────────
   82  | 
-  83  |     const [fileChooser] = await Promise.all([
-  84  |       page.waitForEvent("filechooser"),
-  85  |       page.getByTestId("import-zip-button").click(),
-  86  |     ]);
-  87  |     await fileChooser.setFiles(path.join(FIXTURES, "test-project.zip"));
-  88  | 
-  89  |     const treeItem = page.getByRole("treeitem", { name: "hello.ts" });
-  90  |     await expect(treeItem).toBeVisible({ timeout: 15_000 });
-  91  |     await treeItem.click();
-  92  | 
-  93  |     await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
-  94  |       timeout: 10_000,
-  95  |     });
-  96  |     // Editor should contain the file content from the fixture
-  97  |     const editorLines = await page
-  98  |       .locator(".monaco-editor .view-lines")
-  99  |       .textContent();
-  100 |     expect(editorLines).toContain("hello");
-  101 |   });
-  102 | 
-  103 |   // ── Open local file via Header "File" menu ────────────────────────────────────
-  104 | 
-  105 |   test("open file via the File menu also works", async ({ page }) => {
-  106 |     await freshWorkspace(page);
+  83  |   test("imported file can be opened in the editor", async ({ page }) => {
+  84  |     await freshWorkspace(page);
+  85  | 
+  86  |     const [fileChooser] = await Promise.all([
+  87  |       page.waitForEvent("filechooser"),
+  88  |       page.getByTestId("import-zip-button").click(),
+  89  |     ]);
+  90  |     await fileChooser.setFiles(path.join(FIXTURES, "test-project.zip"));
+  91  | 
+  92  |     const treeItem = page.getByRole("treeitem", { name: "hello.ts" });
+  93  |     await expect(treeItem).toBeVisible({ timeout: 15_000 });
+  94  |     await treeItem.click();
+  95  | 
+  96  |     await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
+  97  |       timeout: 10_000,
+  98  |     });
+  99  |     // Editor should contain the file content from the fixture
+  100 |     const editorLines = await page
+  101 |       .locator(".monaco-editor .view-lines")
+  102 |       .textContent();
+  103 |     expect(editorLines).toContain("hello");
+  104 |   });
+  105 | 
+  106 |   // ── Open local file via Header "File" menu ────────────────────────────────────
   107 | 
-  108 |     // Use the File menu in the header instead of the explorer toolbar button.
-  109 |     const [fileChooser] = await Promise.all([
-  110 |       page.waitForEvent("filechooser"),
-  111 |       (async () => {
-> 112 |         await page.getByRole("button", { name: "File" }).click();
-      |                                                          ^ Error: locator.click: Error: strict mode violation: getByRole('button', { name: 'File' }) resolved to 5 elements:
-  113 |         await page.getByRole("button", { name: "Open File..." }).click();
-  114 |       })(),
-  115 |     ]);
-  116 | 
-  117 |     await fileChooser.setFiles({
-  118 |       name: "menu-opened.ts",
-  119 |       mimeType: "text/plain",
-  120 |       buffer: Buffer.from("const menu = true;\n"),
-  121 |     });
+  108 |   test("open file via the File menu also works", async ({ page }) => {
+  109 |     await freshWorkspace(page);
+  110 | 
+  111 |     // Open the File menu first (separate await so the dropdown is visible
+  112 |     // before we register the filechooser listener).
+> 113 |     await page.getByRole("button", { name: "File" }).click();
+      |                                                      ^ Error: locator.click: Error: strict mode violation: getByRole('button', { name: 'File' }) resolved to 5 elements:
+  114 | 
+  115 |     // Now race the filechooser event against clicking "Open File..." in the
+  116 |     // dropdown.  The handler calls fileInputRef.current?.click() which
+  117 |     // Playwright intercepts as a filechooser event.
+  118 |     const [fileChooser] = await Promise.all([
+  119 |       page.waitForEvent("filechooser"),
+  120 |       page.getByRole("button", { name: "Open File..." }).click(),
+  121 |     ]);
   122 | 
-  123 |     await expect(
-  124 |       page.getByRole("treeitem", { name: "menu-opened.ts" }),
-  125 |     ).toBeVisible({ timeout: 10_000 });
-  126 |   });
-  127 | 
-  128 |   // ── TODO: import via Header File menu (ZIP) ───────────────────────────────────
-  129 |   // TODO: add a test for "Import ZIP..." via the File menu once the header
-  130 |   // zip input and explorer zip input share the same trigger path.
-  131 | });
-  132 | 
+  123 |     await fileChooser.setFiles({
+  124 |       name: "menu-opened.ts",
+  125 |       mimeType: "text/plain",
+  126 |       buffer: Buffer.from("const menu = true;\n"),
+  127 |     });
+  128 | 
+  129 |     await expect(
+  130 |       page.getByRole("treeitem", { name: "menu-opened.ts" }),
+  131 |     ).toBeVisible({ timeout: 10_000 });
+  132 |   });
+  133 | 
+  134 |   // ── TODO: import via Header File menu (ZIP) ───────────────────────────────────
+  135 |   // TODO: add a test for "Import ZIP..." via the File menu once the header
+  136 |   // zip input and explorer zip input share the same trigger path.
+  137 | });
+  138 | 
 ```

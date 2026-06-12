@@ -6,18 +6,30 @@
  */
 import * as path from "path";
 import { fileURLToPath } from "url";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Locator } from "@playwright/test";
 import { isBackendAvailable, uniqueEmail, signUpViaUI } from "./helpers/auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(__dirname, "fixtures");
 const STRONG_PASSWORD = "Test@1234!";
 
+/** Locate a file tree item by its exact displayed name. */
+function fileItem(page: Page, name: string): Locator {
+  return page.locator(`[data-testid="file-tree-item"][data-node-name="${name}"]`);
+}
+
 async function freshWorkspace(page: Page): Promise<void> {
   await page.goto("/");
   await signUpViaUI(page, uniqueEmail(), STRONG_PASSWORD);
   await page.waitForURL("/workspace", { timeout: 20_000 });
   await expect(page.getByTestId("file-explorer")).toBeVisible({ timeout: 15_000 });
+  // Wait for backend status to resolve before running file operations so that
+  // isBackendAvailable is true when openLocalFile / importZip are called.
+  await page
+    .waitForSelector('[data-testid="workspace-root"][data-backend-status="available"]', {
+      timeout: 10_000,
+    })
+    .catch(() => {});
 }
 
 test.describe("file import (backend required)", () => {
@@ -54,10 +66,10 @@ test.describe("file import (backend required)", () => {
       buffer: Buffer.from("const local = 'opened';\n"),
     });
 
-    // File should appear in the explorer
-    await expect(
-      page.getByRole("treeitem", { name: "opened-local.ts" }),
-    ).toBeVisible({ timeout: 10_000 });
+    // File should appear in the explorer (exactly once)
+    const item = fileItem(page, "opened-local.ts");
+    await expect(item).toBeVisible({ timeout: 10_000 });
+    await expect(item).toHaveCount(1);
   });
 
   // ── Import ZIP ───────────────────────────────────────────────────────────────
@@ -73,9 +85,9 @@ test.describe("file import (backend required)", () => {
     await fileChooser.setFiles(path.join(FIXTURES, "test-project.zip"));
 
     // The fixture ZIP contains hello.ts
-    await expect(
-      page.getByRole("treeitem", { name: "hello.ts" }),
-    ).toBeVisible({ timeout: 15_000 });
+    const item = fileItem(page, "hello.ts");
+    await expect(item).toBeVisible({ timeout: 15_000 });
+    await expect(item).toHaveCount(1);
   });
 
   // ── Imported file is openable ────────────────────────────────────────────────
@@ -89,8 +101,9 @@ test.describe("file import (backend required)", () => {
     ]);
     await fileChooser.setFiles(path.join(FIXTURES, "test-project.zip"));
 
-    const treeItem = page.getByRole("treeitem", { name: "hello.ts" });
+    const treeItem = fileItem(page, "hello.ts");
     await expect(treeItem).toBeVisible({ timeout: 15_000 });
+    await expect(treeItem).toHaveCount(1);
     await treeItem.click();
 
     await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
@@ -110,7 +123,7 @@ test.describe("file import (backend required)", () => {
 
     // Open the File menu first (separate await so the dropdown is visible
     // before we register the filechooser listener).
-    await page.getByRole("button", { name: "File" }).click();
+    await page.getByTestId("top-menu-file").click();
 
     // Now race the filechooser event against clicking "Open File..." in the
     // dropdown.  The handler calls fileInputRef.current?.click() which
@@ -126,9 +139,9 @@ test.describe("file import (backend required)", () => {
       buffer: Buffer.from("const menu = true;\n"),
     });
 
-    await expect(
-      page.getByRole("treeitem", { name: "menu-opened.ts" }),
-    ).toBeVisible({ timeout: 10_000 });
+    const item = fileItem(page, "menu-opened.ts");
+    await expect(item).toBeVisible({ timeout: 10_000 });
+    await expect(item).toHaveCount(1);
   });
 
   // ── TODO: import via Header File menu (ZIP) ───────────────────────────────────

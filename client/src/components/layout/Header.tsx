@@ -523,6 +523,7 @@ export function Header() {
                     onClick={() => setOpenPanel(isOpen ? null : panelKey)}
                     aria-expanded={isOpen}
                     aria-haspopup="menu"
+                    data-testid={item === "File" ? "top-menu-file" : undefined}
                   >
                     {item}
                   </button>

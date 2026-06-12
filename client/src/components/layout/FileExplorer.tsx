@@ -144,6 +144,9 @@ function FileTreeNode({
               aria-expanded={node.expanded}
               tabIndex={isFocused ? 0 : -1}
               data-tree-item-id={node.id}
+              data-testid="folder-tree-item"
+              data-node-name={node.name}
+              data-node-id={node.id}
               onFocus={() => onFocusItem(node.id)}
               onClick={() => onToggleFolder(node.id)}
               className={[treeRow, "border-transparent text-on-surface-variant hover:bg-surface-container-high/80 pr-14"].join(" ")}
@@ -219,6 +222,9 @@ function FileTreeNode({
           role="treeitem"
           tabIndex={isFocused ? 0 : -1}
           data-tree-item-id={node.id}
+          data-testid="file-tree-item"
+          data-node-name={node.name}
+          data-node-id={node.id}
           onFocus={() => onFocusItem(node.id)}
           onClick={() => onOpenFile(node.id)}
           className={[
@@ -283,6 +289,8 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
   const newItemInputRef = useRef<HTMLInputElement>(null);
   const filePickerRef = useRef<HTMLInputElement>(null);
   const zipPickerRef = useRef<HTMLInputElement>(null);
+  // Prevents Enter keydown + subsequent blur from calling submitNaming twice.
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (namingTarget !== null) newItemInputRef.current?.focus();
@@ -353,12 +361,21 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
 
   const submitNaming = useCallback(
     async (name: string): Promise<void> => {
+      if (submittingRef.current) return;
+      submittingRef.current = true;
       const target = namingTarget;
       setNamingTarget(null);
       setNewItemName("");
-      if (!target) return;
-      const result = target === "file" ? await createFile(name) : await createFolder(name);
-      if (result.error) setImportError(result.error);
+      if (!target) {
+        submittingRef.current = false;
+        return;
+      }
+      try {
+        const result = target === "file" ? await createFile(name) : await createFolder(name);
+        if (result.error) setImportError(result.error);
+      } finally {
+        submittingRef.current = false;
+      }
     },
     [namingTarget, createFile, createFolder],
   );

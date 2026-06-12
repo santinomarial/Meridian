@@ -6,18 +6,23 @@
 
 # Test info
 
-- Name: workspace.spec.ts >> workspace (backend required) >> edit file content in Monaco editor
-- Location: e2e/workspace.spec.ts:186:3
+- Name: workspace.spec.ts >> workspace (backend required) >> rename a folder
+- Location: e2e/workspace.spec.ts:136:3
 
 # Error details
 
 ```
-Error: locator.click: Error: strict mode violation: getByRole('treeitem', { name: 'edit-test.ts' }) resolved to 2 elements:
-    1) <button type="button" tabindex="-1" role="treeitem" aria-selected="false" data-tree-item-id="cmqa3xz07001c9254sweov5j1" class="flex w-full items-center gap-0.5 border-l-2 py-[3px] pr-2 text-left text-[13px] leading-snug transition-colors duration-100 ease-out focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-offset-0 pr-14 border-transparent text-on-surface-variant hover:bg-surface-container-high/80">…</button> aka getByRole('treeitem', { name: 'description edit-test.ts' }).first()
-    2) <button type="button" tabindex="-1" role="treeitem" aria-selected="true" data-tree-item-id="local-3fb4fc45-6e0a-4306-97af-817b63173f3d" class="flex w-full items-center gap-0.5 border-l-2 py-[3px] pr-2 text-left text-[13px] leading-snug transition-colors duration-100 ease-out focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-offset-0 pr-14 border-primary bg-primary/10 font-medium text-on-surface">…</button> aka getByRole('treeitem', { name: 'description edit-test.ts' }).nth(1)
+Error: expect(locator).toBeVisible() failed
+
+Locator: getByRole('treeitem', { name: 'new-folder' })
+Expected: visible
+Error: strict mode violation: getByRole('treeitem', { name: 'new-folder' }) resolved to 2 elements:
+    1) <button type="button" tabindex="-1" role="treeitem" aria-expanded="true" data-tree-item-id="cmqa3xxy600129254wwjkgh4f" class="flex w-full items-center gap-0.5 border-l-2 py-[3px] pr-2 text-left text-[13px] leading-snug transition-colors duration-100 ease-out focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-offset-0 border-transparent text-on-surface-variant hover:bg-surface-container-high/80 pr-14">…</button> aka getByRole('treeitem', { name: 'expand_more folder new-folder' }).first()
+    2) <button type="button" tabindex="-1" role="treeitem" aria-expanded="true" data-tree-item-id="cmqa4qrbl001furpr8dyklbml" class="flex w-full items-center gap-0.5 border-l-2 py-[3px] pr-2 text-left text-[13px] leading-snug transition-colors duration-100 ease-out focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-offset-0 border-transparent text-on-surface-variant hover:bg-surface-container-high/80 pr-14">…</button> aka getByRole('treeitem', { name: 'expand_more folder new-folder' }).nth(1)
 
 Call log:
-  - waiting for getByRole('treeitem', { name: 'edit-test.ts' })
+  - Expect "toBeVisible" with timeout 8000ms
+  - waiting for getByRole('treeitem', { name: 'new-folder' })
 
 ```
 
@@ -64,7 +69,7 @@ Call log:
       - list [ref=e52]:
         - listitem [ref=e53]:
           - generic [ref=e54]: description
-          - generic [ref=e55]: edit-test.ts
+          - generic [ref=e55]: e2e-test-file.ts
     - generic [ref=e56]:
       - navigation "Activity bar" [ref=e57]:
         - generic [ref=e58]:
@@ -107,7 +112,7 @@ Call log:
               - generic [ref=e95]: edit
             - button "Delete e2e-folder" [ref=e96] [cursor=pointer]:
               - generic [ref=e97]: delete
-          - treeitem "description e2e-test-file.ts" [ref=e98] [cursor=pointer]:
+          - treeitem "description e2e-test-file.ts" [selected] [ref=e98] [cursor=pointer]:
             - generic [ref=e99]: description
             - generic [ref=e100]: e2e-test-file.ts
           - generic [ref=e101]:
@@ -148,161 +153,154 @@ Call log:
               - generic [ref=e136]: edit
             - button "Delete new-folder" [ref=e137] [cursor=pointer]:
               - generic [ref=e138]: delete
-          - treeitem "expand_more folder old-folder" [expanded] [ref=e139] [cursor=pointer]:
-            - generic [ref=e140]: expand_more
-            - generic [ref=e141]: folder
-            - generic [ref=e142]: old-folder
-          - generic [ref=e143]:
-            - button "Rename old-folder" [ref=e144] [cursor=pointer]:
-              - generic [ref=e145]: edit
-            - button "Delete old-folder" [ref=e146] [cursor=pointer]:
-              - generic [ref=e147]: delete
-          - treeitem "description opened-local.ts" [ref=e148] [cursor=pointer]:
-            - generic [ref=e149]: description
-            - generic [ref=e150]: opened-local.ts
-          - generic [ref=e151]:
-            - button "Rename opened-local.ts" [ref=e152] [cursor=pointer]:
-              - generic [ref=e153]: edit
-            - button "Delete opened-local.ts" [ref=e154] [cursor=pointer]:
-              - generic [ref=e155]: delete
-          - treeitem "description persist-test.ts" [ref=e156] [cursor=pointer]:
-            - generic [ref=e157]: description
-            - generic [ref=e158]: persist-test.ts
-          - generic [ref=e159]:
-            - button "Rename persist-test.ts" [ref=e160] [cursor=pointer]:
-              - generic [ref=e161]: edit
-            - button "Delete persist-test.ts" [ref=e162] [cursor=pointer]:
-              - generic [ref=e163]: delete
-          - treeitem "description renamed.ts" [ref=e164] [cursor=pointer]:
-            - generic [ref=e165]: description
-            - generic [ref=e166]: renamed.ts
-          - generic [ref=e167]:
-            - button "Rename renamed.ts" [ref=e168] [cursor=pointer]:
-              - generic [ref=e169]: edit
-            - button "Delete renamed.ts" [ref=e170] [cursor=pointer]:
-              - generic [ref=e171]: delete
-          - treeitem "description save-test.ts" [ref=e172] [cursor=pointer]:
-            - generic [ref=e173]: description
-            - generic [ref=e174]: save-test.ts
+          - treeitem "description opened-local.ts" [ref=e139] [cursor=pointer]:
+            - generic [ref=e140]: description
+            - generic [ref=e141]: opened-local.ts
+          - generic [ref=e142]:
+            - button "Rename opened-local.ts" [ref=e143] [cursor=pointer]:
+              - generic [ref=e144]: edit
+            - button "Delete opened-local.ts" [ref=e145] [cursor=pointer]:
+              - generic [ref=e146]: delete
+          - treeitem "description persist-test.ts" [ref=e147] [cursor=pointer]:
+            - generic [ref=e148]: description
+            - generic [ref=e149]: persist-test.ts
+          - generic [ref=e150]:
+            - button "Rename persist-test.ts" [ref=e151] [cursor=pointer]:
+              - generic [ref=e152]: edit
+            - button "Delete persist-test.ts" [ref=e153] [cursor=pointer]:
+              - generic [ref=e154]: delete
+          - treeitem "description renamed.ts" [ref=e155] [cursor=pointer]:
+            - generic [ref=e156]: description
+            - generic [ref=e157]: renamed.ts
+          - generic [ref=e158]:
+            - button "Rename renamed.ts" [ref=e159] [cursor=pointer]:
+              - generic [ref=e160]: edit
+            - button "Delete renamed.ts" [ref=e161] [cursor=pointer]:
+              - generic [ref=e162]: delete
+          - treeitem "description save-test.ts" [ref=e163] [cursor=pointer]:
+            - generic [ref=e164]: description
+            - generic [ref=e165]: save-test.ts
+          - generic [ref=e166]:
+            - button "Rename save-test.ts" [ref=e167] [cursor=pointer]:
+              - generic [ref=e168]: edit
+            - button "Delete save-test.ts" [ref=e169] [cursor=pointer]:
+              - generic [ref=e170]: delete
+          - treeitem "expand_more folder new-folder" [expanded] [ref=e171] [cursor=pointer]:
+            - generic [ref=e172]: expand_more
+            - generic [ref=e173]: folder
+            - generic [ref=e174]: new-folder
           - generic [ref=e175]:
-            - button "Rename save-test.ts" [ref=e176] [cursor=pointer]:
+            - button "Rename new-folder" [ref=e176] [cursor=pointer]:
               - generic [ref=e177]: edit
-            - button "Delete save-test.ts" [ref=e178] [cursor=pointer]:
+            - button "Delete new-folder" [ref=e178] [cursor=pointer]:
               - generic [ref=e179]: delete
-          - treeitem "description edit-test.ts" [selected] [ref=e180] [cursor=pointer]:
-            - generic [ref=e181]: description
-            - generic [ref=e182]: edit-test.ts
-          - generic [ref=e183]:
-            - button "Rename edit-test.ts" [ref=e184] [cursor=pointer]:
-              - generic [ref=e185]: edit
-            - button "Delete edit-test.ts" [ref=e186] [cursor=pointer]:
-              - generic [ref=e187]: delete
-      - main [ref=e188]:
-        - tablist "Open editors" [ref=e190]:
-          - listitem [ref=e191]:
-            - button "description e2e-test-file.ts" [ref=e192] [cursor=pointer]:
-              - generic [ref=e193]: description
-              - generic [ref=e194]: e2e-test-file.ts
-            - button "Close e2e-test-file.ts" [ref=e196] [cursor=pointer]:
-              - generic [ref=e197]: close
-          - listitem [ref=e198]:
-            - button "description edit-test.ts" [ref=e199] [cursor=pointer]:
-              - generic [ref=e200]: description
-              - generic [ref=e201]: edit-test.ts
-        - code [ref=e207]:
-          - generic [ref=e208]:
+        - generic [ref=e180]:
+          - generic [ref=e181]: error_outline
+          - generic [ref=e182]: Renamed locally. Could not sync rename to backend.
+          - button "Dismiss error" [ref=e183] [cursor=pointer]:
+            - generic [ref=e184]: close
+      - main [ref=e185]:
+        - tablist "Open editors" [ref=e187]:
+          - listitem [ref=e188]:
+            - button "description e2e-test-file.ts" [ref=e189] [cursor=pointer]:
+              - generic [ref=e190]: description
+              - generic [ref=e191]: e2e-test-file.ts
+            - button "Close e2e-test-file.ts" [ref=e193] [cursor=pointer]:
+              - generic [ref=e194]: close
+        - code [ref=e198]:
+          - generic [ref=e199]:
             - textbox "Editor content"
-            - textbox [ref=e209]
-            - generic [ref=e211]:
-              - generic [ref=e214]: "1"
-              - generic [ref=e216]: "2"
-              - generic [ref=e218]: "3"
-              - generic [ref=e220]: "4"
-            - generic [ref=e228]:
-              - generic [ref=e230]: "export function Edit_test(): void {"
-              - generic [ref=e234]: "}"
-        - region "Bottom panel" [ref=e236]:
-          - generic [ref=e237]:
-            - tablist "Panel tabs" [ref=e238]:
-              - tab "TERMINAL" [selected] [ref=e239] [cursor=pointer]
-              - tab "OUTPUT" [ref=e240] [cursor=pointer]
-              - tab "DEBUG CONSOLE" [ref=e241] [cursor=pointer]
-              - tab "bolt AI ASSISTANT" [ref=e242] [cursor=pointer]:
-                - generic [ref=e243]: bolt
+            - textbox [ref=e200]
+            - generic [ref=e202]:
+              - generic [ref=e205]: "1"
+              - generic [ref=e207]: "2"
+              - generic [ref=e209]: "3"
+              - generic [ref=e211]: "4"
+            - generic [ref=e219]:
+              - generic [ref=e221]: "export function E2e_test_file(): void {"
+              - generic [ref=e225]: "}"
+        - region "Bottom panel" [ref=e227]:
+          - generic [ref=e228]:
+            - tablist "Panel tabs" [ref=e229]:
+              - tab "TERMINAL" [selected] [ref=e230] [cursor=pointer]
+              - tab "OUTPUT" [ref=e231] [cursor=pointer]
+              - tab "DEBUG CONSOLE" [ref=e232] [cursor=pointer]
+              - tab "bolt AI ASSISTANT" [ref=e233] [cursor=pointer]:
+                - generic [ref=e234]: bolt
                 - text: AI ASSISTANT
-            - generic [ref=e244]:
-              - button "Add panel tab" [ref=e245] [cursor=pointer]:
-                - generic [ref=e246]: add
-              - button "Collapse panel" [ref=e247] [cursor=pointer]:
-                - generic [ref=e248]: keyboard_arrow_up
-              - button "Close panel" [ref=e249] [cursor=pointer]:
-                - generic [ref=e250]: close
-          - tabpanel [ref=e251]:
-            - generic [ref=e252]:
-              - paragraph [ref=e253]: meridian-app@0.1.0 start
-              - paragraph [ref=e254]: $ npm run start:dev
-              - paragraph [ref=e255]: "[10:42:01 AM] Starting compilation in watch mode..."
-              - paragraph [ref=e256]: "[10:42:05 AM] Found 0 errors. Watching for file changes."
-              - paragraph [ref=e257]: Ready on http://localhost:3000
-            - complementary [ref=e259]:
-              - generic [ref=e260]:
-                - generic [ref=e261]: Meridian AI
-                - generic [ref=e262]: v0.1
-              - generic [ref=e263]:
-                - paragraph [ref=e264]: Missing JWT verification step.
-                - button "Insert" [ref=e265] [cursor=pointer]
-              - paragraph [ref=e266]: ⌘I deep dive
-      - complementary "Collaboration" [ref=e267]:
-        - heading "Collaborators" [level=2] [ref=e271]
-        - generic [ref=e272]:
-          - generic [ref=e273]: group_add
-          - paragraph [ref=e274]: No collaborators yet.
-          - paragraph [ref=e275]:
+            - generic [ref=e235]:
+              - button "Add panel tab" [ref=e236] [cursor=pointer]:
+                - generic [ref=e237]: add
+              - button "Collapse panel" [ref=e238] [cursor=pointer]:
+                - generic [ref=e239]: keyboard_arrow_up
+              - button "Close panel" [ref=e240] [cursor=pointer]:
+                - generic [ref=e241]: close
+          - tabpanel [ref=e242]:
+            - generic [ref=e243]:
+              - paragraph [ref=e244]: meridian-app@0.1.0 start
+              - paragraph [ref=e245]: $ npm run start:dev
+              - paragraph [ref=e246]: "[10:42:01 AM] Starting compilation in watch mode..."
+              - paragraph [ref=e247]: "[10:42:05 AM] Found 0 errors. Watching for file changes."
+              - paragraph [ref=e248]: Ready on http://localhost:3000
+            - complementary [ref=e250]:
+              - generic [ref=e251]:
+                - generic [ref=e252]: Meridian AI
+                - generic [ref=e253]: v0.1
+              - generic [ref=e254]:
+                - paragraph [ref=e255]: Missing JWT verification step.
+                - button "Insert" [ref=e256] [cursor=pointer]
+              - paragraph [ref=e257]: ⌘I deep dive
+      - complementary "Collaboration" [ref=e258]:
+        - heading "Collaborators" [level=2] [ref=e262]
+        - generic [ref=e263]:
+          - generic [ref=e264]: group_add
+          - paragraph [ref=e265]: No collaborators yet.
+          - paragraph [ref=e266]:
             - text: Use
-            - strong [ref=e276]: Share
+            - strong [ref=e267]: Share
             - text: to invite someone.
-        - generic [ref=e277]:
-          - heading "Live Chat" [level=2] [ref=e279]
+        - generic [ref=e268]:
+          - heading "Live Chat" [level=2] [ref=e270]
+          - generic [ref=e272]:
+            - generic [ref=e273]: chat_bubble_outline
+            - paragraph [ref=e274]: No messages yet.
+            - paragraph [ref=e275]: Start the conversation.
+          - generic [ref=e276]:
+            - textbox "Send a message…" [ref=e277]
+            - button "Send message" [disabled] [ref=e278]:
+              - generic [ref=e279]: send
+        - generic [ref=e280]:
           - generic [ref=e281]:
-            - generic [ref=e282]: chat_bubble_outline
-            - paragraph [ref=e283]: No messages yet.
-            - paragraph [ref=e284]: Start the conversation.
-          - generic [ref=e285]:
-            - textbox "Send a message…" [ref=e286]
-            - button "Send message" [disabled] [ref=e287]:
-              - generic [ref=e288]: send
-        - generic [ref=e289]:
-          - generic [ref=e290]:
-            - heading "Review Notes" [level=2] [ref=e291]
-            - generic [ref=e292]: "2"
-          - list [ref=e293]:
-            - listitem [ref=e294]:
-              - paragraph [ref=e295]: Memory leak risk
-              - paragraph [ref=e296]: "L128: Observable not unsubscribed."
-            - listitem [ref=e297]:
-              - paragraph [ref=e298]: Refactor request
-              - paragraph [ref=e299]: Extract helper to shared service.
-    - contentinfo "Status bar" [ref=e300]:
+            - heading "Review Notes" [level=2] [ref=e282]
+            - generic [ref=e283]: "2"
+          - list [ref=e284]:
+            - listitem [ref=e285]:
+              - paragraph [ref=e286]: Memory leak risk
+              - paragraph [ref=e287]: "L128: Observable not unsubscribed."
+            - listitem [ref=e288]:
+              - paragraph [ref=e289]: Refactor request
+              - paragraph [ref=e290]: Extract helper to shared service.
+    - contentinfo "Status bar" [ref=e291]:
+      - generic [ref=e292]:
+        - generic [ref=e293]:
+          - generic [ref=e294]: sync
+          - generic [ref=e295]: main
+        - generic [ref=e296]:
+          - generic [ref=e297]: error_outline
+          - generic [ref=e298]: "0"
+          - generic [ref=e299]: warning_amber
+          - generic [ref=e300]: "2"
       - generic [ref=e301]:
-        - generic [ref=e302]:
-          - generic [ref=e303]: sync
-          - generic [ref=e304]: main
-        - generic [ref=e305]:
-          - generic [ref=e306]: error_outline
-          - generic [ref=e307]: "0"
-          - generic [ref=e308]: warning_amber
-          - generic [ref=e309]: "2"
-      - generic [ref=e310]:
-        - generic [ref=e311]: Ln 1, Col 1
-        - generic [ref=e312]: "Spaces: 4"
-        - generic [ref=e313]: UTF-8
-        - generic [ref=e314]: TypeScript
-        - generic [ref=e315]:
-          - generic [ref=e316]: check_circle
+        - generic [ref=e302]: Ln 1, Col 1
+        - generic [ref=e303]: "Spaces: 4"
+        - generic [ref=e304]: UTF-8
+        - generic [ref=e305]: TypeScript
+        - generic [ref=e306]:
+          - generic [ref=e307]: check_circle
           - text: Prettier
-        - generic [ref=e317]: Unsaved
-        - generic [ref=e318]: Meridian v0.1.0
-  - generic [ref=e319]:
+        - generic [ref=e308]: Saved
+        - generic [ref=e309]: Meridian v0.1.0
+  - generic [ref=e310]:
     - alert
     - alert
 ```
@@ -310,6 +308,44 @@ Call log:
 # Test source
 
 ```ts
+  55  |   });
+  56  | 
+  57  |   // ── Workspace loads ──────────────────────────────────────────────────────────
+  58  | 
+  59  |   test("workspace page opens after sign-up", async ({ page }) => {
+  60  |     await freshWorkspace(page);
+  61  |     await expect(page.getByTestId("workspace-root")).toBeVisible();
+  62  |   });
+  63  | 
+  64  |   test("workspace auto-creates when user has no existing workspace", async ({ page }) => {
+  65  |     // A brand-new account will trigger auto-create on the backend hook.
+  66  |     await page.goto("/");
+  67  |     await signUpViaUI(page, uniqueEmail(), STRONG_PASSWORD);
+  68  |     await page.waitForURL("/workspace", { timeout: 20_000 });
+  69  |     // The file explorer should be present — workspace was auto-created.
+  70  |     await expect(page.getByTestId("file-explorer")).toBeVisible({ timeout: 15_000 });
+  71  |   });
+  72  | 
+  73  |   // ── Create file ──────────────────────────────────────────────────────────────
+  74  | 
+  75  |   test("create a new file via the explorer toolbar", async ({ page }) => {
+  76  |     await freshWorkspace(page);
+  77  | 
+  78  |     await page.getByTestId("new-file-button").click();
+  79  |     const input = page.getByTestId("new-item-input");
+  80  |     await expect(input).toBeVisible();
+  81  |     await input.fill("e2e-test-file.ts");
+  82  |     await input.press("Enter");
+  83  | 
+  84  |     // File should appear in the tree
+  85  |     await expect(
+  86  |       page.getByRole("treeitem", { name: "e2e-test-file.ts" }),
+  87  |     ).toBeVisible({ timeout: 8_000 });
+  88  |   });
+  89  | 
+  90  |   // ── Create folder ────────────────────────────────────────────────────────────
+  91  | 
+  92  |   test("create a new folder via the explorer toolbar", async ({ page }) => {
   93  |     await freshWorkspace(page);
   94  | 
   95  |     await page.getByTestId("new-folder-button").click();
@@ -372,7 +408,8 @@ Call log:
   152 |     await renameInput.fill("new-folder");
   153 |     await renameInput.press("Enter");
   154 | 
-  155 |     await expect(page.getByRole("treeitem", { name: "new-folder" })).toBeVisible({
+> 155 |     await expect(page.getByRole("treeitem", { name: "new-folder" })).toBeVisible({
+      |                                                                      ^ Error: expect(locator).toBeVisible() failed
   156 |       timeout: 8_000,
   157 |     });
   158 |   });
@@ -410,8 +447,7 @@ Call log:
   190 |     await page.getByTestId("new-file-button").click();
   191 |     await page.getByTestId("new-item-input").fill("edit-test.ts");
   192 |     await page.getByTestId("new-item-input").press("Enter");
-> 193 |     await page.getByRole("treeitem", { name: "edit-test.ts" }).click();
-      |                                                                ^ Error: locator.click: Error: strict mode violation: getByRole('treeitem', { name: 'edit-test.ts' }) resolved to 2 elements:
+  193 |     await page.getByRole("treeitem", { name: "edit-test.ts" }).click();
   194 | 
   195 |     // Wait for Monaco to mount
   196 |     await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
@@ -474,34 +510,4 @@ Call log:
   253 |     await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
   254 |       timeout: 10_000,
   255 |     });
-  256 | 
-  257 |     const textarea = page.locator(".monaco-editor textarea").first();
-  258 |     await textarea.press("Control+a");
-  259 |     await textarea.pressSequentially("const persisted = 'yes';");
-  260 | 
-  261 |     // Save
-  262 |     await page.keyboard.press("Meta+s");
-  263 |     await expect(page.getByTestId("save-status")).toContainText("Saved", {
-  264 |       timeout: 8_000,
-  265 |     });
-  266 | 
-  267 |     // Reload
-  268 |     await page.reload();
-  269 |     await page.waitForURL("/workspace");
-  270 |     await expect(page.getByTestId("file-explorer")).toBeVisible({ timeout: 15_000 });
-  271 | 
-  272 |     // Reopen the file
-  273 |     await page.getByRole("treeitem", { name: "persist-test.ts" }).click();
-  274 |     await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
-  275 |       timeout: 10_000,
-  276 |     });
-  277 | 
-  278 |     // Check content
-  279 |     const editorContent = await page
-  280 |       .locator(".monaco-editor .view-lines")
-  281 |       .textContent();
-  282 |     expect(editorContent).toContain("persisted");
-  283 |   });
-  284 | });
-  285 | 
 ```
