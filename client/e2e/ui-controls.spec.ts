@@ -124,16 +124,16 @@ test.describe("share / invite dialog", () => {
 
 test.describe("collaboration panel", () => {
   test("demo mode shows demo-labelled collaborators, not real users", async ({ page }) => {
-    await openDemoWorkspace(page);
-    const banner = page.getByTestId("backend-unavailable-banner");
+    // Block the backend API to force demo mode unconditionally, regardless of
+    // whether the server is running.  Mirrors the pattern in offline.spec.ts.
+    const apiBase = process.env["MERIDIAN_BACKEND_URL"] ?? "http://localhost:3000";
+    await page.route(`${apiBase}/**`, (route) => route.abort("connectionrefused"));
 
-    // Only test collab panel state when backend is actually unavailable
-    const isMock = await banner.isVisible();
-    if (!isMock) {
-      // Backend is up — this test is only meaningful in demo mode.
-      test.skip(true, "Workspace is in backend mode — skipping demo collab test");
-      return;
-    }
+    await page.goto("/workspace");
+    // Wait for the backend-unavailable banner — guaranteed because the API is blocked.
+    await page.waitForSelector('[data-testid="backend-unavailable-banner"]', {
+      timeout: 10_000,
+    });
 
     // The collaboration panel should show mock/demo collaborators clearly
     // labelled as "demo".  Verify the panel heading or badge contains "demo".

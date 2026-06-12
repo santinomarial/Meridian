@@ -291,6 +291,8 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
   const zipPickerRef = useRef<HTMLInputElement>(null);
   // Prevents Enter keydown + subsequent blur from calling submitNaming twice.
   const submittingRef = useRef(false);
+  // Prevents Enter keydown + subsequent blur from calling handleRenameSubmit twice.
+  const renamingRef = useRef(false);
 
   useEffect(() => {
     if (namingTarget !== null) newItemInputRef.current?.focus();
@@ -423,11 +425,20 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
 
   const handleRenameSubmit = useCallback(
     async (id: string): Promise<void> => {
+      if (renamingRef.current) return;
+      renamingRef.current = true;
       setRenamingId(null);
       const name = renameValue.trim();
-      if (!name) return;
-      const result = await renameItem(id, name);
-      if (result.error) setImportError(result.error);
+      if (!name) {
+        renamingRef.current = false;
+        return;
+      }
+      try {
+        const result = await renameItem(id, name);
+        if (result.error) setImportError(result.error);
+      } finally {
+        renamingRef.current = false;
+      }
     },
     [renameValue, renameItem],
   );

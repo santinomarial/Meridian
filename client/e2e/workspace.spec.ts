@@ -16,6 +16,13 @@ import {
 
 const STRONG_PASSWORD = "Test@1234!";
 
+// ── Unique name helper ─────────────────────────────────────────────────────────
+
+/** Short unique suffix so file/folder names never collide across re-runs. */
+function uid(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
 // ── Stable selectors ───────────────────────────────────────────────────────────
 
 /** Locate a file tree item by its exact displayed name. */
@@ -30,22 +37,24 @@ function folderItem(page: Page, name: string): Locator {
 
 // ── Shared setup ───────────────────────────────────────────────────────────────
 
-/** Signs up a fresh user and waits for the workspace + backend to be ready. */
+/**
+ * Signs up a fresh user and waits for the workspace + backend to be fully ready.
+ *
+ * We do NOT swallow the timeout here.  If the backend takes longer than 20 s to
+ * become available the test fails with a clear selector-timeout error rather
+ * than silently proceeding with backendStatus="pending", which would cause
+ * createFile to use a local-id and every subsequent PATCH to return 404
+ * ("Save failed").
+ */
 async function freshWorkspace(page: Page): Promise<void> {
   await page.goto("/");
   await signUpViaUI(page, uniqueEmail(), STRONG_PASSWORD);
   await page.waitForURL("/workspace", { timeout: 20_000 });
   await expect(page.getByTestId("file-explorer")).toBeVisible({ timeout: 15_000 });
-  // Wait for backend status to resolve (available or unavailable, not pending)
-  await page
-    .waitForSelector(
-      '[data-testid="workspace-root"][data-backend-status="available"], ' +
-        '[data-testid="backend-unavailable-banner"]',
-      { timeout: 10_000 },
-    )
-    .catch(() => {
-      // If neither signal appears in time, proceed — createFile has a local fallback.
-    });
+  await page.waitForSelector(
+    '[data-testid="workspace-root"][data-backend-status="available"]',
+    { timeout: 20_000 },
+  );
 }
 
 test.describe("workspace (backend required)", () => {
@@ -85,14 +94,15 @@ test.describe("workspace (backend required)", () => {
 
   test("create a new file via the explorer toolbar", async ({ page }) => {
     await freshWorkspace(page);
+    const name = `e2e-file-${uid()}.ts`;
 
     await page.getByTestId("new-file-button").click();
     const input = page.getByTestId("new-item-input");
     await expect(input).toBeVisible();
-    await input.fill("e2e-test-file.ts");
+    await input.fill(name);
     await input.press("Enter");
 
-    const item = fileItem(page, "e2e-test-file.ts");
+    const item = fileItem(page, name);
     await expect(item).toBeVisible({ timeout: 8_000 });
     await expect(item).toHaveCount(1);
   });
@@ -101,14 +111,15 @@ test.describe("workspace (backend required)", () => {
 
   test("create a new folder via the explorer toolbar", async ({ page }) => {
     await freshWorkspace(page);
+    const name = `e2e-folder-${uid()}`;
 
     await page.getByTestId("new-folder-button").click();
     const input = page.getByTestId("new-item-input");
     await expect(input).toBeVisible();
-    await input.fill("e2e-folder");
+    await input.fill(name);
     await input.press("Enter");
 
-    const item = folderItem(page, "e2e-folder");
+    const item = folderItem(page, name);
     await expect(item).toBeVisible({ timeout: 8_000 });
     await expect(item).toHaveCount(1);
   });
@@ -117,59 +128,68 @@ test.describe("workspace (backend required)", () => {
 
   test("rename a file", async ({ page }) => {
     await freshWorkspace(page);
+    const ts = uid();
+    const sourceName = `rename-src-${ts}.ts`;
+    const targetName = `renamed-${ts}.ts`;
 
-    // Create a file first
     await page.getByTestId("new-file-button").click();
-    await page.getByTestId("new-item-input").fill("rename-me.ts");
+    await page.getByTestId("new-item-input").fill(sourceName);
     await page.getByTestId("new-item-input").press("Enter");
-    const beforeItem = fileItem(page, "rename-me.ts");
+    const beforeItem = fileItem(page, sourceName);
     await expect(beforeItem).toBeVisible({ timeout: 8_000 });
     await expect(beforeItem).toHaveCount(1);
 
-    // Hover over the file to reveal the rename button
     await beforeItem.hover();
-    await page.getByRole("button", { name: "Rename rename-me.ts" }).click();
+    await page.getByRole("button", { name: `Rename ${sourceName}` }).click();
 
     const renameInput = page.getByLabel("Rename file");
     await renameInput.selectText();
-    await renameInput.fill("renamed.ts");
+    await renameInput.fill(targetName);
     await renameInput.press("Enter");
 
-    await expect(fileItem(page, "renamed.ts")).toBeVisible({ timeout: 8_000 });
+    const afterItem = fileItem(page, targetName);
+    await expect(afterItem).toBeVisible({ timeout: 8_000 });
+    await expect(afterItem).toHaveCount(1);
   });
 
   // ── Rename folder ────────────────────────────────────────────────────────────
 
   test("rename a folder", async ({ page }) => {
     await freshWorkspace(page);
+    const ts = uid();
+    const sourceName = `folder-src-${ts}`;
+    const targetName = `folder-dst-${ts}`;
 
     await page.getByTestId("new-folder-button").click();
-    await page.getByTestId("new-item-input").fill("old-folder");
+    await page.getByTestId("new-item-input").fill(sourceName);
     await page.getByTestId("new-item-input").press("Enter");
-    const beforeItem = folderItem(page, "old-folder");
+    const beforeItem = folderItem(page, sourceName);
     await expect(beforeItem).toBeVisible({ timeout: 8_000 });
     await expect(beforeItem).toHaveCount(1);
 
     await beforeItem.hover();
-    await page.getByRole("button", { name: "Rename old-folder" }).click();
+    await page.getByRole("button", { name: `Rename ${sourceName}` }).click();
 
-    const renameInput = page.getByLabel("Rename folder");
+    const renameInput = page.getByRole("textbox", { name: "Rename folder" });
     await renameInput.selectText();
-    await renameInput.fill("new-folder");
+    await renameInput.fill(targetName);
     await renameInput.press("Enter");
 
-    await expect(folderItem(page, "new-folder")).toBeVisible({ timeout: 8_000 });
+    const afterItem = folderItem(page, targetName);
+    await expect(afterItem).toBeVisible({ timeout: 8_000 });
+    await expect(afterItem).toHaveCount(1);
   });
 
   // ── Delete file ──────────────────────────────────────────────────────────────
 
   test("delete a file", async ({ page }) => {
     await freshWorkspace(page);
+    const name = `delete-me-${uid()}.ts`;
 
     await page.getByTestId("new-file-button").click();
-    await page.getByTestId("new-item-input").fill("delete-me.ts");
+    await page.getByTestId("new-item-input").fill(name);
     await page.getByTestId("new-item-input").press("Enter");
-    const item = fileItem(page, "delete-me.ts");
+    const item = fileItem(page, name);
     await expect(item).toBeVisible({ timeout: 8_000 });
     await expect(item).toHaveCount(1);
 
@@ -177,7 +197,7 @@ test.describe("workspace (backend required)", () => {
 
     // Accept the window.confirm dialog
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "Delete delete-me.ts" }).click();
+    await page.getByRole("button", { name: `Delete ${name}` }).click();
 
     await expect(item).toBeHidden({ timeout: 8_000 });
   });
@@ -186,26 +206,27 @@ test.describe("workspace (backend required)", () => {
 
   test("edit file content in Monaco editor", async ({ page }) => {
     await freshWorkspace(page);
+    const name = `edit-test-${uid()}.ts`;
 
     // Create + open a file
     await page.getByTestId("new-file-button").click();
-    await page.getByTestId("new-item-input").fill("edit-test.ts");
+    await page.getByTestId("new-item-input").fill(name);
     await page.getByTestId("new-item-input").press("Enter");
-    const item = fileItem(page, "edit-test.ts");
+    const item = fileItem(page, name);
     await expect(item).toBeVisible({ timeout: 8_000 });
     await expect(item).toHaveCount(1);
     await item.click();
 
-    // Wait for Monaco to mount
-    await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
-      timeout: 10_000,
-    });
+    // Wait for Monaco to mount and render its view
+    await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".monaco-editor .view-lines")).toBeVisible({ timeout: 5_000 });
 
-    // Monaco exposes a hidden textarea for keyboard input.
-    // Select all existing content and replace it.
-    const textarea = page.locator(".monaco-editor textarea").first();
-    await textarea.press("Control+a");
-    await textarea.pressSequentially("const e2e = true;");
+    // Click inside the editor view to focus Monaco, then type via page.keyboard
+    // which fires the full keydown+keypress+input+keyup sequence that Monaco's
+    // input pipeline requires.  (Locator.pressSequentially / press only emits
+    // keydown+keyup — no input event — so Monaco silently ignores it.)
+    await page.locator(".monaco-editor .view-lines").click();
+    await page.keyboard.type("const e2e = true;");
 
     // Verify save-status shows "Unsaved".
     await expect(page.getByTestId("save-status")).toContainText("Unsaved", {
@@ -217,22 +238,21 @@ test.describe("workspace (backend required)", () => {
 
   test("Cmd+S saves the active file and clears dirty state", async ({ page }) => {
     await freshWorkspace(page);
+    const name = `save-test-${uid()}.ts`;
 
     await page.getByTestId("new-file-button").click();
-    await page.getByTestId("new-item-input").fill("save-test.ts");
+    await page.getByTestId("new-item-input").fill(name);
     await page.getByTestId("new-item-input").press("Enter");
-    const item = fileItem(page, "save-test.ts");
+    const item = fileItem(page, name);
     await expect(item).toBeVisible({ timeout: 8_000 });
     await expect(item).toHaveCount(1);
     await item.click();
 
-    await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
-      timeout: 10_000,
-    });
+    await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".monaco-editor .view-lines")).toBeVisible({ timeout: 5_000 });
 
-    const textarea = page.locator(".monaco-editor textarea").first();
-    await textarea.press("Control+a");
-    await textarea.pressSequentially("const saved = true;");
+    await page.locator(".monaco-editor .view-lines").click();
+    await page.keyboard.type("const saved = true;");
 
     // Wait for unsaved state
     await expect(page.getByTestId("save-status")).toContainText("Unsaved", {
@@ -251,22 +271,28 @@ test.describe("workspace (backend required)", () => {
 
   test("file content persists after page refresh", async ({ page }) => {
     await freshWorkspace(page);
+    const name = `persist-test-${uid()}.ts`;
+    // A unique string to verify round-trip: typed → saved → reloaded.
+    const marker = `e2e-persisted-${uid()}`;
 
     await page.getByTestId("new-file-button").click();
-    await page.getByTestId("new-item-input").fill("persist-test.ts");
+    await page.getByTestId("new-item-input").fill(name);
     await page.getByTestId("new-item-input").press("Enter");
-    const item = fileItem(page, "persist-test.ts");
+    const item = fileItem(page, name);
     await expect(item).toBeVisible({ timeout: 8_000 });
     await expect(item).toHaveCount(1);
     await item.click();
 
-    await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
-      timeout: 10_000,
-    });
+    await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".monaco-editor .view-lines")).toBeVisible({ timeout: 5_000 });
 
-    const textarea = page.locator(".monaco-editor textarea").first();
-    await textarea.press("Control+a");
-    await textarea.pressSequentially("const persisted = 'yes';");
+    await page.locator(".monaco-editor .view-lines").click();
+    await page.keyboard.type(marker);
+
+    // Assert "Unsaved" before saving
+    await expect(page.getByTestId("save-status")).toContainText("Unsaved", {
+      timeout: 5_000,
+    });
 
     // Save
     await page.keyboard.press("Meta+s");
@@ -274,27 +300,23 @@ test.describe("workspace (backend required)", () => {
       timeout: 8_000,
     });
 
-    // Reload
+    // Reload and wait for backend tree to load
     await page.reload();
     await page.waitForURL("/workspace");
     await expect(page.getByTestId("file-explorer")).toBeVisible({ timeout: 15_000 });
-    // Wait for backend to reload the tree
-    await page
-      .waitForSelector('[data-testid="workspace-root"][data-backend-status="available"]', {
-        timeout: 10_000,
-      })
-      .catch(() => {});
+    await page.waitForSelector(
+      '[data-testid="workspace-root"][data-backend-status="available"]',
+      { timeout: 20_000 },
+    );
 
-    // Reopen the file
-    await page.locator('[data-testid="file-tree-item"][data-node-name="persist-test.ts"]').click();
-    await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
+    // Reopen the file and wait for Monaco to render
+    await page.locator(`[data-testid="file-tree-item"][data-node-name="${name}"]`).click();
+    await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({ timeout: 10_000 });
+
+    // Assert the marker survives the round-trip.  toContainText handles Monaco's
+    // multi-span rendering by collecting all descendant text.
+    await expect(page.locator(".monaco-editor .view-lines")).toContainText(marker, {
       timeout: 10_000,
     });
-
-    // Check content
-    const editorContent = await page
-      .locator(".monaco-editor .view-lines")
-      .textContent();
-    expect(editorContent).toContain("persisted");
   });
 });

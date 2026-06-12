@@ -301,17 +301,38 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   addFileNode: (file, content) => {
     set((state) => {
-      // Replace an existing root-level node with the same name or same id
-      // (handles local-id → real-id upgrade and prevents double-add).
+      const isLocal = (id: string): boolean => id.startsWith("local-");
+
       const existingIdx = state.files.findIndex(
         (f) => f.kind === "file" && (f.id === file.id || f.name === file.name),
       );
-      const newFiles =
-        existingIdx >= 0
-          ? state.files.map((f, i) => (i === existingIdx ? file : f))
-          : [...state.files, file];
+
+      if (existingIdx >= 0) {
+        const existing = state.files[existingIdx]!;
+        // Never downgrade a real backend id to a local placeholder id.
+        // This prevents a double-submit race (Enter+blur) from replacing the
+        // first real-id node with the fallback local-id from the second call.
+        if (isLocal(file.id) && !isLocal(existing.id)) {
+          return state;
+        }
+        // Replace (upgrade local → real, or same-id re-add).
+        const newFiles = state.files.map((f, i) => (i === existingIdx ? file : f));
+        return {
+          files: newFiles,
+          editorContentByFileId: { ...state.editorContentByFileId, [file.id]: content },
+          openTabs: state.openTabs.some((t) => t.fileId === file.id)
+            ? state.openTabs
+            : [
+                ...state.openTabs,
+                { fileId: file.id, name: file.name, language: file.language, dirty: content.length > 0 },
+              ],
+          activeFileId: file.id,
+          saveStatus: content.length > 0 ? ("unsaved" as const) : ("saved" as const),
+        };
+      }
+
       return {
-        files: newFiles,
+        files: [...state.files, file],
         editorContentByFileId: { ...state.editorContentByFileId, [file.id]: content },
         openTabs: state.openTabs.some((t) => t.fileId === file.id)
           ? state.openTabs
