@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateWorkspaceDto {
   @ApiProperty({ example: 'Meridian' })
@@ -7,7 +7,12 @@ export class CreateWorkspaceDto {
   @MinLength(1)
   name!: string;
 
-  @ApiProperty({ description: 'cuid of the owning user' })
+  /**
+   * Deprecated — the owner is always the authenticated user. Accepted for
+   * backwards compatibility with older clients but ignored by the server.
+   */
+  @ApiPropertyOptional({ description: 'Ignored; owner is the authenticated user' })
   @IsString()
-  ownerId!: string;
+  @IsOptional()
+  ownerId?: string;
 }

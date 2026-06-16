@@ -27,6 +27,8 @@ import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
 import { WsRateLimiter } from './ws-rate-limiter.service';
 import { JoinDocumentDto } from './dto/join-document.dto';
+import { JoinWorkspaceDto } from './dto/join-workspace.dto';
+import { ChatMessageDto } from './dto/chat-message.dto';
 import { LeaveDocumentDto } from './dto/leave-document.dto';
 import { YjsUpdateDto } from './dto/yjs-update.dto';
 import { YjsSyncDto } from './dto/yjs-sync.dto';
@@ -50,6 +52,21 @@ interface CrossInstanceAwareness {
   originId: string;
   documentId: string;
   update: string; // base64-encoded awareness update bytes
+}
+
+interface CrossInstanceChat {
+  originId: string;
+  workspaceId: string;
+  message: ChatMessagePayload;
+}
+
+export interface ChatMessagePayload {
+  id: string;
+  workspaceId: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
 }
 
 // CORS is configured on the IoAdapter in main.ts so it reads from typed config.
@@ -84,7 +101,10 @@ export class EditorGateway
     private readonly logger: PinoLogger,
   ) {
     const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
-    this.wsMessageLimit = config.wsMessageLimitPerSecond;
+    // Mirror the HTTP throttler: E2E suites drive the editor far faster than
+    // a human and must never have CRDT updates dropped by the rate limiter.
+    const isE2E = process.env['E2E_TEST'] === 'true';
+    this.wsMessageLimit = isE2E ? 100_000 : config.wsMessageLimitPerSecond;
     this.wsMaxUpdateBytes = config.wsMaxYjsUpdateBytes;
   }
 
@@ -113,6 +133,9 @@ export class EditorGateway
       ),
       this.redis.subscribe('document:*:awareness', (channel, msg) =>
         this.onRedisAwareness(channel, msg as string),
+      ),
+      this.redis.subscribe('workspace:*:chat', (channel, msg) =>
+        this.onRedisChat(channel, msg as string),
       ),
     ]);
 
@@ -274,6 +297,78 @@ export class EditorGateway
     this.logger.info(
       { socketId: client.id, documentId: dto.documentId },
       'Socket left document',
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Workspace rooms — presence-wide events such as chat
+  // ---------------------------------------------------------------------------
+
+  @SubscribeMessage('joinWorkspace')
+  async handleJoinWorkspace(
+    @MessageBody() dto: JoinWorkspaceDto,
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
+    if (!this.checkRateLimit(client, 'joinWorkspace')) return;
+
+    const user = client.data['user'] as AuthUser;
+    const authorized = await this.workspaces.canUserAccessWorkspace(
+      user.id,
+      dto.workspaceId,
+    );
+    if (!authorized) {
+      client.emit('error', {
+        message: `Access denied to workspace ${dto.workspaceId}`,
+      });
+      this.logger.warn(
+        { socketId: client.id, userId: user.id, workspaceId: dto.workspaceId },
+        'Unauthorized joinWorkspace attempt',
+      );
+      return;
+    }
+
+    await client.join(`workspace:${dto.workspaceId}`);
+    client.emit('joinedWorkspace', { workspaceId: dto.workspaceId });
+
+    this.logger.info(
+      { socketId: client.id, workspaceId: dto.workspaceId, userId: user.id },
+      'Socket joined workspace room',
+    );
+  }
+
+  @SubscribeMessage('chat:message')
+  handleChatMessage(
+    @MessageBody() dto: ChatMessageDto,
+    @ConnectedSocket() client: Socket,
+  ): void {
+    if (!this.checkRateLimit(client, 'chat:message')) return;
+
+    const room = `workspace:${dto.workspaceId}`;
+    // Room membership doubles as the authorization check — joinWorkspace
+    // already verified the user belongs to this workspace.
+    if (!client.rooms.has(room)) {
+      client.emit('error', {
+        message: 'chat:message — send joinWorkspace first',
+      });
+      return;
+    }
+
+    const user = client.data['user'] as AuthUser;
+    const message: ChatMessagePayload = {
+      id: `msg-${Date.now()}-${client.id.slice(0, 6)}`,
+      workspaceId: dto.workspaceId,
+      senderId: user.id,
+      senderName: user.displayName,
+      text: dto.text,
+      timestamp: Date.now(),
+    };
+
+    client.to(room).emit('chat:message', message);
+    void this.publishChat(dto.workspaceId, message);
+
+    this.logger.debug(
+      { socketId: client.id, workspaceId: dto.workspaceId },
+      'Chat message relayed',
     );
   }
 
@@ -482,6 +577,22 @@ export class EditorGateway
     }
   }
 
+  private onRedisChat(channel: string, message: string): void {
+    let payload: CrossInstanceChat;
+    try {
+      payload = JSON.parse(message) as CrossInstanceChat;
+    } catch {
+      this.logger.warn({ channel }, 'Received malformed Redis chat message');
+      return;
+    }
+
+    if (payload.originId === ORIGIN_ID) return;
+
+    this.server
+      .to(`workspace:${payload.workspaceId}`)
+      .emit('chat:message', payload.message);
+  }
+
   // ---------------------------------------------------------------------------
   // Redis — outbound helpers
   // ---------------------------------------------------------------------------
@@ -512,6 +623,21 @@ export class EditorGateway
     };
     await this.redis.publish(
       `document:${documentId}:awareness`,
+      JSON.stringify(payload),
+    );
+  }
+
+  private async publishChat(
+    workspaceId: string,
+    message: ChatMessagePayload,
+  ): Promise<void> {
+    const payload: CrossInstanceChat = {
+      originId: ORIGIN_ID,
+      workspaceId,
+      message,
+    };
+    await this.redis.publish(
+      `workspace:${workspaceId}:chat`,
       JSON.stringify(payload),
     );
   }

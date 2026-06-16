@@ -387,6 +387,7 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
     const { gateway, documentManager } = makeGateway({ maxBytes });
     const socket = makeAuthenticatedSocket();
 
+    documentManager.hasDocument.mockReturnValue(true);
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
     const exactly = new Uint8Array(maxBytes);
@@ -408,6 +409,7 @@ describe('EditorGateway — WebSocket rate limiting', () => {
     socket.to.mockReturnValue({ emit: jest.fn() } as never);
 
     const smallUpdate = new Uint8Array(10);
+    documentManager.hasDocument.mockReturnValue(true);
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
     // First 3 calls should pass

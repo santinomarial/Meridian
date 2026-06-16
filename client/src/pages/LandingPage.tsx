@@ -7,6 +7,19 @@ import { getPasswordRequirements } from "../lib/passwordPolicy";
 
 type AuthMode = "signup" | "signin" | "forgot";
 
+/**
+ * Returns a safe in-app redirect target from the ?redirect= query param.
+ * Only same-origin relative paths are allowed (must start with a single "/")
+ * to prevent open-redirects to external sites.
+ */
+function getSafeRedirect(): string {
+  const target = new URLSearchParams(window.location.search).get("redirect");
+  if (target !== null && target.startsWith("/") && !target.startsWith("//")) {
+    return target;
+  }
+  return "/workspace";
+}
+
 function AmbientBackground() {
   const primaryRef = useRef<HTMLDivElement>(null);
   const secondaryRef = useRef<HTMLDivElement>(null);
@@ -197,7 +210,7 @@ function AuthCard({
       } else {
         await login({ email, password });
       }
-      navigate("/workspace");
+      navigate(getSafeRedirect());
     } catch (err) {
       if (mode === "signin" && err instanceof ApiError && err.status === 401) {
         setError("Invalid email or password.");
@@ -360,23 +373,6 @@ function AuthCard({
           </button>
         </form>
       )}
-
-      {isSignUp ? (
-        <>
-          <div className="relative flex items-center justify-center">
-            <div className="absolute w-full border-t border-outline-variant" />
-            <span className="relative bg-surface-dim px-4 text-outline label-caps">OR</span>
-          </div>
-
-          <button
-            type="button"
-            className="flex w-full items-center justify-center gap-3 rounded-lg border border-outline-variant bg-surface-container-high py-3 text-body-md text-on-surface transition-colors hover:bg-surface-variant active:scale-[0.98]"
-          >
-            <MaterialIcon name="terminal" aria-hidden />
-            Sign up with GitHub
-          </button>
-        </>
-      ) : null}
 
       <div className="space-y-4 pt-2">
         {isForgot ? (

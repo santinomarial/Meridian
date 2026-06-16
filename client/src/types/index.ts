@@ -63,22 +63,14 @@ export type ChatMessage = {
   timestamp: number;
 };
 
-export type ReviewNote = {
+export type AppNotification = {
   id: string;
-  severity: "error" | "note";
-  title: string;
-  description: string;
-  line: number;
+  icon: string;
+  text: string;
+  timestamp: number;
 };
 
-export type TerminalTab = "terminal" | "output" | "debug" | "ai";
-
-export type ActivityItem =
-  | "explorer"
-  | "search"
-  | "source-control"
-  | "run"
-  | "extensions";
+export type ActivityItem = "explorer" | "collaboration";
 
 export type WorkspaceTheme = "dark" | "light";
 
@@ -93,28 +85,34 @@ export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 
 export type BackendStatus = "pending" | "available" | "unavailable";
 
-export type PanelKey = "explorer" | "collaboration" | "bottom";
+export type PanelKey = "explorer" | "collaboration";
 
 export type DiagnosticCounts = {
   errors: number;
   warnings: number;
 };
 
+export type CurrentUser = {
+  id: string;
+  email: string;
+  displayName: string;
+};
+
 export type WorkspaceState = {
   workspaceId: string | null;
+  currentUser: CurrentUser | null;
   files: FileNode[];
   activeFileId: string | null;
   openTabs: OpenTab[];
   editorContentByFileId: Record<string, string>;
   collaborators: Collaborator[];
   chatMessages: ChatMessage[];
-  reviewNotes: ReviewNote[];
+  notifications: AppNotification[];
   diagnosticCounts: DiagnosticCounts;
-  activeTerminalTab: TerminalTab;
   selectedActivityItem: ActivityItem;
   isExplorerOpen: boolean;
   isCollaborationPanelOpen: boolean;
-  isBottomPanelOpen: boolean;
+  isSettingsOpen: boolean;
   theme: WorkspaceTheme;
   cursorPosition: CursorPosition;
   saveStatus: SaveStatus;

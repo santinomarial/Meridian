@@ -13,15 +13,7 @@ type TopActivityConfig = {
 
 const TOP_ACTIVITIES: TopActivityConfig[] = [
   { item: "explorer", icon: "folder_copy", label: "Explorer", panel: "explorer" },
-  { item: "search", icon: "search", label: "Search" },
-  { item: "source-control", icon: "account_tree", label: "Source Control", panel: "collaboration" },
-  { item: "run", icon: "play_arrow", label: "Run and Debug", panel: "bottom" },
-  { item: "extensions", icon: "extension", label: "Extensions" },
-];
-
-const BOTTOM_ACTIVITIES = [
-  { icon: "account_circle", label: "Account" },
-  { icon: "settings", label: "Settings" },
+  { item: "collaboration", icon: "group", label: "Collaboration", panel: "collaboration" },
 ];
 
 function ActivityButton({
@@ -60,16 +52,15 @@ export function ActivityBar() {
   const selectedActivityItem = useWorkspaceStore((s) => s.selectedActivityItem);
   const isExplorerOpen = useWorkspaceStore((s) => s.isExplorerOpen);
   const isCollaborationPanelOpen = useWorkspaceStore((s) => s.isCollaborationPanelOpen);
-  const isBottomPanelOpen = useWorkspaceStore((s) => s.isBottomPanelOpen);
   const setSelectedActivityItem = useWorkspaceStore((s) => s.setSelectedActivityItem);
   const togglePanel = useWorkspaceStore((s) => s.togglePanel);
+  const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
 
   const openPanel = (panel: PanelKey): void => {
     if (breakpoint === "mobile") {
       useWorkspaceStore.setState({
         isExplorerOpen: panel === "explorer",
         isCollaborationPanelOpen: panel === "collaboration",
-        isBottomPanelOpen: panel === "bottom",
       });
       return;
     }
@@ -81,11 +72,7 @@ export function ActivityBar() {
     if (!activity.panel) return;
 
     const isOpen =
-      activity.panel === "explorer"
-        ? isExplorerOpen
-        : activity.panel === "collaboration"
-          ? isCollaborationPanelOpen
-          : isBottomPanelOpen;
+      activity.panel === "explorer" ? isExplorerOpen : isCollaborationPanelOpen;
 
     if (breakpoint === "mobile") {
       if (isOpen) togglePanel(activity.panel);
@@ -112,9 +99,11 @@ export function ActivityBar() {
         ))}
       </div>
       <div className="mt-auto flex w-full flex-col gap-0.5 pb-0.5">
-        {BOTTOM_ACTIVITIES.map((a) => (
-          <ActivityButton key={a.icon} icon={a.icon} label={a.label} />
-        ))}
+        <ActivityButton
+          icon="settings"
+          label="Settings"
+          onClick={() => setSettingsOpen(true)}
+        />
       </div>
     </nav>
   );

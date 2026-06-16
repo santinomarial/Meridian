@@ -1,24 +1,25 @@
 import { create } from "zustand";
-import {
-  mockFileContents,
-  mockFiles,
-  mockReviewNotes,
-} from "../data/mock";
+import { mockFileContents, mockFiles } from "../data/mock";
 import { getLanguageFromFilename, toLanguageMode } from "../lib/language";
 import type {
   ActivityItem,
+  AppNotification,
   BackendStatus,
   ChatMessage,
+  Collaborator,
   ConnectionStatus,
+  CurrentUser,
   CursorPosition,
+  DiagnosticCounts,
   FileNode,
   OpenTab,
   PanelKey,
   SaveStatus,
-  TerminalTab,
   WorkspaceState as WorkspaceData,
   WorkspaceTheme,
 } from "../types";
+
+const MAX_NOTIFICATIONS = 30;
 
 type BackendLoadData = {
   files: FileNode[];
@@ -32,14 +33,19 @@ type WorkspaceActions = {
   setActiveFile: (fileId: string) => void;
   updateFileContent: (fileId: string, content: string) => void;
   toggleFolder: (folderId: string) => void;
-  setActiveTerminalTab: (tab: TerminalTab) => void;
   setSelectedActivityItem: (item: ActivityItem) => void;
   togglePanel: (panel: PanelKey) => void;
   closeAllOverlays: () => void;
+  setSettingsOpen: (open: boolean) => void;
   setTheme: (theme: WorkspaceTheme) => void;
   toggleTheme: () => void;
   setCursorPosition: (pos: CursorPosition) => void;
   addChatMessage: (msg: ChatMessage) => void;
+  addNotification: (notification: Omit<AppNotification, "id" | "timestamp">) => void;
+  clearNotifications: () => void;
+  setCollaborators: (collaborators: Collaborator[]) => void;
+  setCurrentUser: (user: CurrentUser | null) => void;
+  setDiagnosticCounts: (counts: DiagnosticCounts) => void;
   setSaveStatus: (status: SaveStatus) => void;
   setBackendStatus: (status: BackendStatus) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
@@ -161,23 +167,23 @@ const INITIAL_OPEN_TABS: OpenTab[] = [
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // ── Data state ────────────────────────────────────────────────────────────
   workspaceId: null,
+  currentUser: null,
   files: mockFiles,
   activeFileId: "file-auth",
   openTabs: INITIAL_OPEN_TABS,
   editorContentByFileId: { ...mockFileContents },
   collaborators: [],
   chatMessages: [],
-  reviewNotes: mockReviewNotes,
-  diagnosticCounts: { errors: 0, warnings: 2 },
+  notifications: [],
+  diagnosticCounts: { errors: 0, warnings: 0 },
 
   // ── UI state ──────────────────────────────────────────────────────────────
-  activeTerminalTab: "terminal",
   selectedActivityItem: "explorer",
   isExplorerOpen: true,
   isCollaborationPanelOpen: true,
-  isBottomPanelOpen: true,
+  isSettingsOpen: false,
   theme: _initialTheme,
-  cursorPosition: { line: 42, column: 12 },
+  cursorPosition: { line: 1, column: 1 },
   saveStatus: "saved",
 
   // ── Backend / socket state ────────────────────────────────────────────────
@@ -250,7 +256,6 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   // ── UI actions ────────────────────────────────────────────────────────────
 
-  setActiveTerminalTab: (tab) => set({ activeTerminalTab: tab }),
   setSelectedActivityItem: (item) => set({ selectedActivityItem: item }),
 
   togglePanel: (panel) => {
@@ -260,15 +265,15 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
           return { isExplorerOpen: !state.isExplorerOpen };
         case "collaboration":
           return { isCollaborationPanelOpen: !state.isCollaborationPanelOpen };
-        case "bottom":
-          return { isBottomPanelOpen: !state.isBottomPanelOpen };
       }
     });
   },
 
   closeAllOverlays: () => {
-    set({ isExplorerOpen: false, isCollaborationPanelOpen: false, isBottomPanelOpen: false });
+    set({ isExplorerOpen: false, isCollaborationPanelOpen: false });
   },
+
+  setSettingsOpen: (open) => set({ isSettingsOpen: open }),
 
   setTheme: (theme) => {
     persistTheme(theme);
@@ -287,6 +292,30 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   addChatMessage: (msg) => {
     set((state) => ({ chatMessages: [...state.chatMessages, msg] }));
+  },
+
+  addNotification: (notification) => {
+    set((state) => {
+      const entry: AppNotification = {
+        ...notification,
+        id: `ntf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: Date.now(),
+      };
+      // Newest first; cap the list so it can't grow unbounded over a session.
+      return { notifications: [entry, ...state.notifications].slice(0, MAX_NOTIFICATIONS) };
+    });
+  },
+
+  clearNotifications: () => set({ notifications: [] }),
+
+  setCollaborators: (collaborators) => set({ collaborators }),
+
+  setCurrentUser: (user) => set({ currentUser: user }),
+
+  setDiagnosticCounts: (counts) => {
+    const current = get().diagnosticCounts;
+    if (current.errors === counts.errors && current.warnings === counts.warnings) return;
+    set({ diagnosticCounts: counts });
   },
 
   // ── Save / backend / socket actions ───────────────────────────────────────

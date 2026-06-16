@@ -52,6 +52,10 @@ export interface RegisterPayload {
   displayName: string;
 }
 
+export interface UpdateProfilePayload {
+  displayName?: string;
+}
+
 export interface UpdateDocumentPayload {
   content?: string | null;
   name?: string;
@@ -75,4 +79,59 @@ export interface ForgotPasswordPayload {
 export interface ResetPasswordPayload {
   token: string;
   password: string;
+}
+
+// ── Members ───────────────────────────────────────────────────────────────────
+
+export type ApiWorkspaceRole = 'OWNER' | 'EDITOR' | 'VIEWER';
+
+export interface ApiWorkspaceMember {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  role: ApiWorkspaceRole;
+  createdAt: string;
+}
+
+export interface UpdateWorkspacePayload {
+  name?: string;
+}
+
+// ── Invites ───────────────────────────────────────────────────────────────────
+
+export interface CreateInvitePayload {
+  role: 'EDITOR' | 'VIEWER';
+  email?: string;
+}
+
+export interface ApiInvite {
+  id: string;
+  token: string;
+  workspaceId: string;
+  role: ApiWorkspaceRole;
+  email: string | null;
+  expiresAt: string;
+  inviteUrl: string;
+}
+
+export interface ApiInviteDetails {
+  token: string;
+  workspaceName: string;
+  role: ApiWorkspaceRole;
+  invitedByName: string;
+  expiresAt: string;
+  expired: boolean;
+}
+
+export interface AcceptInviteResponse {
+  workspaceId: string;
+  workspaceName: string;
+  role: ApiWorkspaceRole;
+  alreadyMember: boolean;
+}
+
+// ── ZIP import ────────────────────────────────────────────────────────────────
+
+export interface BulkCreateDocumentsPayload {
+  documents: CreateDocumentPayload[];
 }

@@ -4,7 +4,7 @@ import { focusRing, transitionBase } from "../ui/styles";
 type PanelOverlayProps = {
   children: ReactNode;
   onClose: () => void;
-  side: "left" | "right" | "bottom";
+  side: "left" | "right";
   label: string;
 };
 
@@ -24,9 +24,7 @@ export function PanelOverlay({ children, onClose, side, label }: PanelOverlayPro
   const panelPositionClass =
     side === "left"
       ? "left-0 top-0 h-full w-[min(240px,88vw)] border-r border-outline-variant"
-      : side === "right"
-        ? "right-0 top-0 ml-auto h-full w-[min(240px,88vw)] border-l border-outline-variant"
-        : "bottom-0 left-0 right-0 mt-auto max-h-[min(50vh,320px)] w-full border-t border-outline-variant";
+      : "right-0 top-0 ml-auto h-full w-[min(240px,88vw)] border-l border-outline-variant";
 
   return (
     <div className="fixed inset-0 z-40 flex" role="presentation">

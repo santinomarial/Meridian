@@ -112,4 +112,19 @@ export default async function globalSetup() {
   const zipPath = path.join(fixturesDir, "test-project.zip");
   const zip = buildMinimalZip("hello.ts", "const hello = 'world';\n");
   fs.writeFileSync(zipPath, zip);
+
+  // Best-effort: purge throwaway accounts left behind by previous runs. The
+  // endpoint only works when the server is started with E2E_TEST=true, and is
+  // a no-op (or unreachable) otherwise — so failures here are non-fatal.
+  const backendUrl =
+    process.env["MERIDIAN_BACKEND_URL"] ?? "http://localhost:3000";
+  try {
+    await fetch(`${backendUrl}/e2e/cleanup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ emailPrefix: "e2e-" }),
+    });
+  } catch {
+    // Backend not running (offline-only test run) — ignore.
+  }
 }

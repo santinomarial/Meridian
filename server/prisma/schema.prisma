@@ -39,6 +39,7 @@ model User {
   memberships         WorkspaceMember[]
   sessions            Session[]
   passwordResetTokens PasswordResetToken[]
+  sentInvites         Invite[]             @relation("InviteSender")
 }
 
 model Workspace {
@@ -51,6 +52,7 @@ model Workspace {
   owner     User              @relation("WorkspaceOwner", fields: [ownerId], references: [id])
   documents Document[]
   members   WorkspaceMember[]
+  invites   Invite[]
 }
 
 model WorkspaceMember {
@@ -64,6 +66,23 @@ model WorkspaceMember {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, userId])
+}
+
+model Invite {
+  id          String        @id @default(cuid())
+  token       String        @unique
+  workspaceId String
+  invitedById String
+  email       String?
+  role        WorkspaceRole @default(EDITOR)
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy User      @relation("InviteSender", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }
 
 model Document {

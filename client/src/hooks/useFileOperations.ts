@@ -7,7 +7,13 @@ import {
   isSupportedTextFile,
   toLanguageMode,
 } from "../lib/language";
-import { createDocument, deleteDocument, updateDocument } from "../lib/api";
+import {
+  bulkCreateDocuments,
+  createDocument,
+  deleteDocument,
+  updateDocument,
+} from "../lib/api";
+import type { CreateDocumentPayload } from "../lib/apiTypes";
 import type { FileNode, LanguageMode } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -52,6 +58,7 @@ interface FileEntry {
 /** Build a FileNode tree from a flat list of path-keyed file entries. */
 function buildTreeFromEntries(
   entries: FileEntry[],
+  folderIdByPath?: Map<string, string>,
 ): { nodes: FileNode[]; contentMap: Record<string, string> } {
   const contentMap: Record<string, string> = {};
   for (const e of entries) contentMap[e.id] = e.content;
@@ -74,7 +81,7 @@ function buildTreeFromEntries(
         folderChildren.set(nextPath, children);
         const folder: FileNode = {
           kind: "folder",
-          id: generateId(),
+          id: folderIdByPath?.get(nextPath) ?? generateId(),
           name: segment,
           children,
           expanded: i < 2,
@@ -95,6 +102,48 @@ function buildTreeFromEntries(
   }
 
   return { nodes: root, contentMap };
+}
+
+function collectNodeIds(nodes: FileNode[], acc: Set<string>): void {
+  for (const node of nodes) {
+    acc.add(node.id);
+    if (node.kind === "folder") collectNodeIds(node.children, acc);
+  }
+}
+
+/** Drop nodes that already exist in the tree (re-imports reuse backend ids). */
+function pruneExistingNodes(nodes: FileNode[], existingIds: Set<string>): FileNode[] {
+  const result: FileNode[] = [];
+  for (const node of nodes) {
+    if (existingIds.has(node.id)) continue;
+    result.push(
+      node.kind === "folder"
+        ? { ...node, children: pruneExistingNodes(node.children, existingIds) }
+        : node,
+    );
+  }
+  return result;
+}
+
+/** Normalized path: no leading/trailing slashes or empty segments. */
+function normalizePath(path: string): string {
+  return path.split("/").filter(Boolean).join("/");
+}
+
+/** All ancestor folder paths needed by the given file entries, depth order. */
+function collectFolderPaths(entries: FileEntry[]): string[] {
+  const folderPaths = new Set<string>();
+  for (const entry of entries) {
+    const parts = normalizePath(entry.path).split("/");
+    let current = "";
+    for (let i = 0; i < parts.length - 1; i++) {
+      current = current ? `${current}/${parts[i]!}` : parts[i]!;
+      folderPaths.add(current);
+    }
+  }
+  return [...folderPaths].sort(
+    (a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +358,46 @@ export function useFileOperations() {
         }
 
         entries.sort((a, b) => a.path.localeCompare(b.path));
-        const { nodes, contentMap } = buildTreeFromEntries(entries);
+
+        // Sync the whole import to the backend in one bulk request, then use
+        // the returned ids so the local tree matches the persisted documents.
+        let folderIdByPath: Map<string, string> | undefined;
+        let syncedToBackend = false;
+        if (isBackendAvailable) {
+          try {
+            const documents: CreateDocumentPayload[] = [
+              ...collectFolderPaths(entries).map((path): CreateDocumentPayload => ({
+                type: "FOLDER",
+                name: path.split("/").pop()!,
+                path,
+              })),
+              ...entries.map((entry): CreateDocumentPayload => ({
+                type: "FILE",
+                name: entry.name,
+                path: normalizePath(entry.path),
+                language: entry.language,
+                content: entry.content,
+              })),
+            ];
+            const created = await bulkCreateDocuments(workspaceId!, { documents });
+            const idByPath = new Map(created.map((doc) => [doc.path, doc.id]));
+            folderIdByPath = idByPath;
+            for (const entry of entries) {
+              const backendId = idByPath.get(normalizePath(entry.path));
+              if (backendId !== undefined) entry.id = backendId;
+            }
+            syncedToBackend = true;
+          } catch {
+            // Backend sync failed — import locally with generated ids.
+          }
+        }
+
+        const { nodes: builtNodes, contentMap } = buildTreeFromEntries(entries, folderIdByPath);
+
+        // Re-imports reuse backend ids; skip nodes already in the tree.
+        const existingIds = new Set<string>();
+        collectNodeIds(useWorkspaceStore.getState().files, existingIds);
+        const nodes = pruneExistingNodes(builtNodes, existingIds);
 
         const firstEntry =
           entries.find((e) => e.name.toLowerCase() === "readme.md") ??
@@ -317,6 +405,7 @@ export function useFileOperations() {
           entries[0];
 
         importFiles(nodes, contentMap, firstEntry?.id ?? null);
+        if (syncedToBackend) setSaveStatus("saved");
 
         if (skippedCount > 0) {
           const detail = firstSkipReason ? ` First skipped: ${firstSkipReason}.` : "";
@@ -327,7 +416,7 @@ export function useFileOperations() {
         setIsImporting(false);
       }
     },
-    [importFiles],
+    [importFiles, isBackendAvailable, workspaceId, setSaveStatus],
   );
 
   // ── Rename file or folder ──────────────────────────────────────────────────

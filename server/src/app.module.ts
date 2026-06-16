@@ -15,9 +15,11 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { DocumentsModule } from './documents/documents.module';
+import { InvitesModule } from './invites/invites.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { E2eController } from './e2e/e2e.controller';
 
 @Module({
   imports: [
@@ -66,9 +68,10 @@ import { AppService } from './app.service';
     UsersModule,
     WorkspacesModule,
     DocumentsModule,
+    InvitesModule,
     RealtimeModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, E2eController],
   providers: [
     AppService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },

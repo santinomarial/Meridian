@@ -59,11 +59,7 @@ export function StatusBar() {
       aria-label="Status bar"
     >
       <div className="flex h-full min-w-0 items-center overflow-x-auto">
-        <StatusBarSegment>
-          <MaterialIcon name="sync" className="text-[12px]" aria-hidden />
-          <span>main</span>
-        </StatusBarSegment>
-        <StatusBarSegment>
+        <StatusBarSegment title="Errors and warnings in the active file">
           <MaterialIcon name="error_outline" className="text-[12px]" aria-hidden />
           <span className="tabular-nums">{diagnosticCounts.errors}</span>
           <MaterialIcon name="warning_amber" className="ml-0.5 text-[12px]" aria-hidden />
@@ -77,10 +73,6 @@ export function StatusBar() {
         <StatusBarSegment className="hidden md:inline-flex">Spaces: 4</StatusBarSegment>
         <StatusBarSegment className="hidden lg:inline-flex">UTF-8</StatusBarSegment>
         <StatusBarSegment className="hidden sm:inline-flex">{languageLabel}</StatusBarSegment>
-        <StatusBarSegment className="hidden md:inline-flex">
-          <MaterialIcon name="check_circle" className="text-[12px]" aria-hidden />
-          Prettier
-        </StatusBarSegment>
         <StatusBarSegment data-testid="save-status" data-save-status={saveStatus}>
           {saveStatus === "saving"
             ? "Saving…"

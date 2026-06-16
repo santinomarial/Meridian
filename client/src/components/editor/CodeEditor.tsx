@@ -5,6 +5,8 @@ import { EmptyState } from "../ui/EmptyState";
 import { EditorSkeleton } from "../ui/Skeleton";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useYjsMonaco } from "../../hooks/useYjsMonaco";
+import { registerEditor, unregisterEditor } from "../../lib/editorRegistry";
+import { mockCollaborators } from "../../data/mock";
 import type { LanguageMode, WorkspaceTheme } from "../../types";
 import {
   attachRemoteCollaboratorCursors,
@@ -78,10 +80,10 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   const activeFileId = useWorkspaceStore((state) => state.activeFileId);
   const openTabs = useWorkspaceStore((state) => state.openTabs);
   const editorContentByFileId = useWorkspaceStore((state) => state.editorContentByFileId);
-  const collaborators = useWorkspaceStore((state) => state.collaborators);
   const updateFileContent = useWorkspaceStore((state) => state.updateFileContent);
   const setCursorPosition = useWorkspaceStore((state) => state.setCursorPosition);
   const backendStatus = useWorkspaceStore((state) => state.backendStatus);
+  const isDemoMode = backendStatus === "unavailable";
 
   useYjsMonaco(mountedEditor, activeFileId, backendStatus === "available");
 
@@ -102,9 +104,31 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
     remoteCursorControllerRef.current?.dispose();
     remoteCursorControllerRef.current = null;
     editorRef.current = monacoEditor;
+    registerEditor(monacoEditor);
     setMountedEditor(monacoEditor);
     syncCursorPosition(monacoEditor);
     monacoEditor.onDidChangeCursorPosition(() => syncCursorPosition(monacoEditor));
+
+    // Reflect Monaco's diagnostics (squiggles) in the status bar.
+    const updateDiagnostics = (): void => {
+      const model = monacoEditor.getModel();
+      if (model === null) return;
+      const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+      useWorkspaceStore.getState().setDiagnosticCounts({
+        errors: markers.filter(
+          (m: editor.IMarker) => m.severity === monaco.MarkerSeverity.Error,
+        ).length,
+        warnings: markers.filter(
+          (m: editor.IMarker) => m.severity === monaco.MarkerSeverity.Warning,
+        ).length,
+      });
+    };
+    updateDiagnostics();
+    const markerListener = monaco.editor.onDidChangeMarkers(updateDiagnostics);
+    monacoEditor.onDidDispose(() => {
+      markerListener.dispose();
+      unregisterEditor(monacoEditor);
+    });
   };
 
   useEffect(() => {
@@ -114,15 +138,18 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
     editorRef.current = null;
   }, [activeFileId]);
 
+  // Demo mode only: animate fake collaborator cursors so the offline demo
+  // still feels alive. With a backend, real cursors come from Yjs awareness
+  // (rendered by y-monaco via the styles in lib/awarenessPresence).
   useEffect(() => {
-    if (!mountedEditor || !activeFileId) {
+    if (!mountedEditor || !activeFileId || !isDemoMode) {
       return;
     }
 
     remoteCursorControllerRef.current?.dispose();
     remoteCursorControllerRef.current = attachRemoteCollaboratorCursors(
       mountedEditor,
-      collaborators,
+      mockCollaborators,
       activeFileId,
     );
 
@@ -130,7 +157,7 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
       remoteCursorControllerRef.current?.dispose();
       remoteCursorControllerRef.current = null;
     };
-  }, [mountedEditor, activeFileId, collaborators]);
+  }, [mountedEditor, activeFileId, isDemoMode]);
 
   useEffect(() => {
     return () => {

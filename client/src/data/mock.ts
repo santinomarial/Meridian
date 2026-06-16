@@ -1,9 +1,4 @@
-import type {
-  ChatMessage,
-  Collaborator,
-  FileNode,
-  ReviewNote,
-} from "../types";
+import type { Collaborator, FileNode } from "../types";
 
 export const mockFiles: FileNode[] = [
   {
@@ -164,46 +159,3 @@ export const mockCollaborators: Collaborator[] = [
   },
 ];
 
-export const mockChatMessages: ChatMessage[] = [
-  {
-    id: "msg-1",
-    senderId: "user-elena",
-    senderName: "Elena",
-    senderColor: "#565e74",
-    text: "Just pushed the latest schema changes to the dev server.",
-    timestamp: 1_714_521_600_000,
-  },
-  {
-    id: "msg-2",
-    senderId: "user-santino",
-    senderName: "Santino",
-    senderColor: "#3525cd",
-    text: "Nice! Checking the auth flow now.",
-    timestamp: 1_714_521_612_000,
-  },
-  {
-    id: "msg-3",
-    senderId: "user-you",
-    senderName: "You",
-    senderColor: "#191c1e",
-    text: "I'll take a look at the retry logic Santino mentioned.",
-    timestamp: 1_714_521_630_000,
-  },
-];
-
-export const mockReviewNotes: ReviewNote[] = [
-  {
-    id: "review-1",
-    severity: "error",
-    title: "Memory leak risk",
-    description: "Observable not unsubscribed.",
-    line: 128,
-  },
-  {
-    id: "review-2",
-    severity: "note",
-    title: "Refactor request",
-    description: "Extract helper to shared service.",
-    line: 0,
-  },
-];

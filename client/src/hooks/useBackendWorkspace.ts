@@ -74,6 +74,16 @@ export function useBackendWorkspace(): void {
         } catch {
           // unauthenticated — workspace still loads in read-only / demo mode
         }
+        if (cancelled) return;
+        useWorkspaceStore.getState().setCurrentUser(
+          currentUser !== null
+            ? {
+                id: currentUser.id,
+                email: currentUser.email,
+                displayName: currentUser.displayName,
+              }
+            : null,
+        );
 
         const workspaces = await getWorkspaces();
         if (cancelled) return;

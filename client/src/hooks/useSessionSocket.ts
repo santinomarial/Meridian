@@ -6,6 +6,7 @@ import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { getSocket } from "../lib/socket";
 import { getOrCreateAwareness, getOrCreateDoc } from "../lib/yjsDocs";
+import { colorForUser } from "../lib/collabColors";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 
 function toUint8Array(value: unknown): Uint8Array | null {
@@ -17,9 +18,18 @@ function toUint8Array(value: unknown): Uint8Array | null {
 
 type SyncPayload = { documentId: string; message: unknown };
 type UpdatePayload = { documentId: string; update: unknown };
+type ChatPayload = {
+  id: string;
+  workspaceId: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+};
 
 export function useSessionSocket(): void {
   const backendStatus = useWorkspaceStore((s) => s.backendStatus);
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const setConnectionStatus = useWorkspaceStore((s) => s.setConnectionStatus);
 
   useEffect(() => {
@@ -27,9 +37,26 @@ export function useSessionSocket(): void {
 
     const socket = getSocket();
 
-    const onConnect = (): void => setConnectionStatus("connected");
+    const onConnect = (): void => {
+      setConnectionStatus("connected");
+      // Join the workspace room for workspace-wide events (chat).
+      if (workspaceId !== null) {
+        socket.emit("joinWorkspace", { workspaceId });
+      }
+    };
     const onDisconnect = (): void => setConnectionStatus("disconnected");
     const onConnectError = (): void => setConnectionStatus("disconnected");
+
+    const onChatMessage = (payload: ChatPayload): void => {
+      useWorkspaceStore.getState().addChatMessage({
+        id: payload.id,
+        senderId: payload.senderId,
+        senderName: payload.senderName,
+        senderColor: colorForUser(payload.senderId),
+        text: payload.text,
+        timestamp: payload.timestamp,
+      });
+    };
 
     const onYjsSync = ({ documentId, message }: SyncPayload): void => {
       const bytes = toUint8Array(message);
@@ -38,12 +65,30 @@ export function useSessionSocket(): void {
       const doc = getOrCreateDoc(documentId);
       const decoder = decoding.createDecoder(bytes);
       const responseEncoder = encoding.createEncoder();
-      syncProtocol.readSyncMessage(decoder, responseEncoder, doc, "remote");
+      const messageType = syncProtocol.readSyncMessage(
+        decoder,
+        responseEncoder,
+        doc,
+        "remote",
+      );
 
       if (encoding.length(responseEncoder) > 0) {
         socket.emit("yjs:sync", {
           documentId,
           message: encoding.toUint8Array(responseEncoder),
+        });
+      }
+
+      // The server opens the handshake with SyncStep1 (its state vector),
+      // which only lets it pull OUR missing state. Reply with our own
+      // SyncStep1 so the server sends back the document state we are missing
+      // — without this the joining client never receives existing content.
+      if (messageType === syncProtocol.messageYjsSyncStep1) {
+        const step1Encoder = encoding.createEncoder();
+        syncProtocol.writeSyncStep1(step1Encoder, doc);
+        socket.emit("yjs:sync", {
+          documentId,
+          message: encoding.toUint8Array(step1Encoder),
         });
       }
     };
@@ -70,9 +115,16 @@ export function useSessionSocket(): void {
     socket.on("yjs:sync", onYjsSync);
     socket.on("yjs:update", onYjsUpdate);
     socket.on("awareness:update", onAwarenessUpdate);
+    socket.on("chat:message", onChatMessage);
 
     setConnectionStatus("connecting");
-    socket.connect();
+    if (socket.connected) {
+      // Already connected (e.g. workspaceId resolved after the socket) —
+      // run the connect logic now since no "connect" event will fire.
+      onConnect();
+    } else {
+      socket.connect();
+    }
 
     return (): void => {
       socket.off("connect", onConnect);
@@ -81,8 +133,9 @@ export function useSessionSocket(): void {
       socket.off("yjs:sync", onYjsSync);
       socket.off("yjs:update", onYjsUpdate);
       socket.off("awareness:update", onAwarenessUpdate);
+      socket.off("chat:message", onChatMessage);
       socket.disconnect();
       setConnectionStatus("disconnected");
     };
-  }, [backendStatus, setConnectionStatus]);
+  }, [backendStatus, workspaceId, setConnectionStatus]);
 }

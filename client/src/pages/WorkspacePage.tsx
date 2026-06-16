@@ -4,11 +4,11 @@ import { CodeEditor } from "../components/editor/CodeEditor";
 import { EditorTabs } from "../components/editor/EditorTabs";
 import { ActivityBar } from "../components/layout/ActivityBar";
 import { Breadcrumb } from "../components/layout/Breadcrumb";
-import { BottomPanel } from "../components/layout/BottomPanel";
 import { CollaborationPanel } from "../components/layout/CollaborationPanel";
 import { FileExplorer } from "../components/layout/FileExplorer";
 import { Header } from "../components/layout/Header";
 import { PanelOverlay } from "../components/layout/PanelOverlay";
+import { SettingsDialog } from "../components/layout/SettingsDialog";
 import { StatusBar } from "../components/layout/StatusBar";
 import { useBackendWorkspace } from "../hooks/useBackendWorkspace";
 import { useBreakpoint } from "../hooks/useBreakpoint";
@@ -29,7 +29,6 @@ export function WorkspacePage() {
   const isCollaborationPanelOpen = useWorkspaceStore(
     (state) => state.isCollaborationPanelOpen,
   );
-  const isBottomPanelOpen = useWorkspaceStore((state) => state.isBottomPanelOpen);
   const togglePanel = useWorkspaceStore((state) => state.togglePanel);
   const closeAllOverlays = useWorkspaceStore((state) => state.closeAllOverlays);
   const backendStatus = useWorkspaceStore((state) => state.backendStatus);
@@ -37,6 +36,7 @@ export function WorkspacePage() {
   const editorContentByFileId = useWorkspaceStore((state) => state.editorContentByFileId);
   const setSaveStatus = useWorkspaceStore((state) => state.setSaveStatus);
   const clearTabDirty = useWorkspaceStore((state) => state.clearTabDirty);
+  const addNotification = useWorkspaceStore((state) => state.addNotification);
 
   const isWorkspaceReady = useWorkspaceReady();
 
@@ -67,10 +67,15 @@ export function WorkspacePage() {
       const content = editorContentByFileId[activeFileId] ?? "";
       setSaveStatus("saving");
 
+      const tabName =
+        useWorkspaceStore.getState().openTabs.find((t) => t.fileId === activeFileId)?.name ??
+        "file";
+
       updateDocument(activeFileId, { content })
         .then(() => {
           setSaveStatus("saved");
           clearTabDirty(activeFileId);
+          addNotification({ icon: "save", text: `Saved ${tabName}` });
         })
         .catch(() => {
           setSaveStatus("error");
@@ -79,11 +84,16 @@ export function WorkspacePage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [backendStatus, activeFileId, editorContentByFileId, setSaveStatus, clearTabDirty]);
+  }, [
+    backendStatus,
+    activeFileId,
+    editorContentByFileId,
+    setSaveStatus,
+    clearTabDirty,
+    addNotification,
+  ]);
 
-  const hasOpenOverlay =
-    isCompact &&
-    (isExplorerOpen || isCollaborationPanelOpen || isBottomPanelOpen);
+  const hasOpenOverlay = isCompact && (isExplorerOpen || isCollaborationPanelOpen);
 
   useEscapeClose(hasOpenOverlay, closeAllOverlays);
 
@@ -128,7 +138,6 @@ export function WorkspacePage() {
         >
           <EditorTabs />
           <CodeEditor workspaceTheme={workspaceTheme} />
-          {!isCompact && <BottomPanel mode="inline" />}
         </main>
 
         {!isCompact ? (
@@ -166,15 +175,7 @@ export function WorkspacePage() {
         </PanelOverlay>
       ) : null}
 
-      {isCompact && isBottomPanelOpen ? (
-        <PanelOverlay
-          side="bottom"
-          label="Bottom panel"
-          onClose={() => closePanel("bottom")}
-        >
-          <BottomPanel mode="overlay" onClose={() => closePanel("bottom")} />
-        </PanelOverlay>
-      ) : null}
+      <SettingsDialog />
     </div>
   );
 }

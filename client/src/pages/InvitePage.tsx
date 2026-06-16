@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
-import { getCurrentUser } from "../lib/api";
-import type { ApiUser } from "../lib/apiTypes";
+import { acceptInvite, getCurrentUser, getInvite } from "../lib/api";
+import type { ApiInviteDetails, ApiUser } from "../lib/apiTypes";
 
 type LoadState = "loading" | "authenticated" | "unauthenticated";
 
@@ -38,71 +38,144 @@ function LoadingState() {
   );
 }
 
-function UnauthenticatedState({ inviteId }: { inviteId: string }) {
+function PrimaryButton({
+  onClick,
+  disabled = false,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 active:scale-[0.98] disabled:opacity-50"
+    >
+      {children}
+    </button>
+  );
+}
+
+function UnauthenticatedState({
+  invite,
+  inviteId,
+}: {
+  invite: ApiInviteDetails | null;
+  inviteId: string;
+}) {
   const navigate = useNavigate();
+  // Send the user to auth with a redirect back here, so after signing in they
+  // land on this invite page (now authenticated) and can accept in one step.
+  const goToAuth = (): void => {
+    navigate(`/?redirect=${encodeURIComponent(`/invite/${inviteId}`)}`);
+  };
 
   return (
     <PageShell>
       <div className="mb-5 text-center">
         <MaterialIcon name="group_add" className="text-[36px] text-primary" aria-hidden />
         <h1 className="mt-2 text-base font-semibold text-on-surface">
-          You've been invited to a workspace
+          {invite !== null
+            ? `You've been invited to "${invite.workspaceName}"`
+            : "You've been invited to a workspace"}
         </h1>
         <p className="mt-1 text-sm text-on-surface-variant">
-          Sign in or create an account to accept this invite and start collaborating.
+          {invite !== null
+            ? `${invite.invitedByName} invited you to collaborate as ${invite.role.toLowerCase()}.`
+            : "Sign in or create an account to accept this invite and start collaborating."}
         </p>
       </div>
 
-      <button
-        type="button"
-        onClick={() => navigate("/")}
-        className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 active:scale-[0.98]"
-      >
+      <PrimaryButton onClick={goToAuth}>
         Sign In / Sign Up
         <MaterialIcon name="arrow_forward" className="text-[16px]" aria-hidden />
-      </button>
+      </PrimaryButton>
 
       <p className="mt-4 text-center text-[10px] text-on-surface-variant/50">
-        Invite ID: {inviteId}
+        Sign in, then reopen this invite link to join the workspace.
       </p>
     </PageShell>
   );
 }
 
-function AuthenticatedState({ user, inviteId }: { user: ApiUser; inviteId: string }) {
+function AuthenticatedState({
+  user,
+  invite,
+  inviteId,
+}: {
+  user: ApiUser;
+  invite: ApiInviteDetails | null;
+  inviteId: string;
+}) {
   const navigate = useNavigate();
+  const [accepting, setAccepting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isRealInvite = invite !== null && !invite.expired;
+
+  const handleAccept = async (): Promise<void> => {
+    if (!isRealInvite) {
+      navigate("/workspace");
+      return;
+    }
+    setAccepting(true);
+    setError(null);
+    try {
+      await acceptInvite(inviteId);
+      navigate("/workspace");
+    } catch {
+      setError("Could not accept this invite. It may have expired or been revoked.");
+      setAccepting(false);
+    }
+  };
 
   return (
     <PageShell>
       <div className="mb-5 text-center">
-        <MaterialIcon name="check_circle" className="text-[36px] text-primary" aria-hidden />
-        <h1 className="mt-2 text-base font-semibold text-on-surface">Accept Invite</h1>
+        <MaterialIcon
+          name={invite?.expired === true ? "schedule" : "check_circle"}
+          className="text-[36px] text-primary"
+          aria-hidden
+        />
+        <h1 className="mt-2 text-base font-semibold text-on-surface">
+          {invite !== null ? `Join "${invite.workspaceName}"` : "Accept Invite"}
+        </h1>
         <p className="mt-1 text-sm text-on-surface-variant">
           You're joining as{" "}
-          <span className="font-semibold text-on-surface">{user.displayName}</span>.
+          <span className="font-semibold text-on-surface">{user.displayName}</span>
+          {invite !== null ? (
+            <>
+              {" "}
+              with <span className="font-semibold text-on-surface">
+                {invite.role.toLowerCase()}
+              </span>{" "}
+              access, invited by {invite.invitedByName}.
+            </>
+          ) : (
+            "."
+          )}
         </p>
-        {/*
-         * TODO: call POST /invites/:token/accept when backend invite API is
-         * available, then add the user as a WorkspaceMember with the invite's
-         * role before navigating to the workspace.
-         */}
-        <p className="mt-2 text-[10px] text-on-surface-variant/60">
-          Demo mode — invite acceptance is not yet persisted to the backend.
-        </p>
+        {invite?.expired === true ? (
+          <p className="mt-2 text-xs text-error">
+            This invite has expired. Ask for a new invite link.
+          </p>
+        ) : null}
+        {invite === null ? (
+          <p className="mt-2 text-[10px] text-on-surface-variant/60">
+            This invite link could not be verified — you can still open your own
+            workspace.
+          </p>
+        ) : null}
+        {error !== null ? <p className="mt-2 text-xs text-error">{error}</p> : null}
       </div>
 
-      <button
-        type="button"
-        onClick={() => navigate("/workspace")}
-        className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 active:scale-[0.98]"
-      >
-        Go to Workspace
+      <PrimaryButton onClick={() => void handleAccept()} disabled={accepting || invite?.expired === true}>
+        {accepting ? "Joining…" : isRealInvite ? "Accept & Open Workspace" : "Go to Workspace"}
         <MaterialIcon name="arrow_forward" className="text-[16px]" aria-hidden />
-      </button>
-
-      <p className="mt-4 text-center text-[10px] text-on-surface-variant/50">
-        Invite ID: {inviteId}
-      </p>
+      </PrimaryButton>
     </PageShell>
   );
 }
@@ -111,11 +184,25 @@ export function InvitePage() {
   const { inviteId } = useParams<{ inviteId: string }>();
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [user, setUser] = useState<ApiUser | null>(null);
+  const [invite, setInvite] = useState<ApiInviteDetails | null>(null);
 
   const displayInviteId = inviteId ?? "unknown";
 
   useEffect(() => {
     let mounted = true;
+
+    // Invite details are public — load them regardless of auth state. Falls
+    // back to null (generic invite UI) for demo links or when offline.
+    if (inviteId !== undefined) {
+      getInvite(inviteId)
+        .then((details) => {
+          if (mounted) setInvite(details);
+        })
+        .catch(() => {
+          if (mounted) setInvite(null);
+        });
+    }
+
     getCurrentUser()
       .then((u) => {
         if (!mounted) return;
@@ -129,15 +216,15 @@ export function InvitePage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [inviteId]);
 
   if (loadState === "loading") {
     return <LoadingState />;
   }
 
   if (loadState === "unauthenticated" || user === null) {
-    return <UnauthenticatedState inviteId={displayInviteId} />;
+    return <UnauthenticatedState invite={invite} inviteId={displayInviteId} />;
   }
 
-  return <AuthenticatedState user={user} inviteId={displayInviteId} />;
+  return <AuthenticatedState user={user} invite={invite} inviteId={displayInviteId} />;
 }

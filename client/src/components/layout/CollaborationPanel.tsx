@@ -11,7 +11,9 @@ import {
 } from "../ui/styles";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { mockCollaborators } from "../../data/mock";
-import type { ChatMessage, Collaborator, ReviewNote } from "../../types";
+import { getSocket } from "../../lib/socket";
+import { colorForUser } from "../../lib/collabColors";
+import type { ChatMessage, Collaborator } from "../../types";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -68,18 +70,6 @@ function CollaboratorRow({ collaborator }: { collaborator: Collaborator }) {
         </div>
         <p className="truncate text-[10px] text-on-surface-variant">{collaborator.activity}</p>
       </div>
-      <button
-        type="button"
-        className={[
-          "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-0",
-          transitionBase,
-          "group-hover:opacity-100 hover:bg-surface-container-highest hover:text-primary",
-          focusRing,
-        ].join(" ")}
-        aria-label={`Chat with ${collaborator.name}`}
-      >
-        <MaterialIcon name="chat" className="text-[15px]" aria-hidden />
-      </button>
     </li>
   );
 }
@@ -104,6 +94,9 @@ function LiveChatSection({ isDemoMode }: { isDemoMode: boolean }) {
   const feedRef = useRef<HTMLDivElement>(null);
   const chatMessages = useWorkspaceStore((s) => s.chatMessages);
   const addChatMessage = useWorkspaceStore((s) => s.addChatMessage);
+  const connectionStatus = useWorkspaceStore((s) => s.connectionStatus);
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+  const currentUser = useWorkspaceStore((s) => s.currentUser);
 
   useEffect(() => {
     const feed = feedRef.current;
@@ -113,14 +106,24 @@ function LiveChatSection({ isDemoMode }: { isDemoMode: boolean }) {
   const sendMessage = (): void => {
     const text = draft.trim();
     if (!text) return;
+
+    const isLive =
+      !isDemoMode && connectionStatus === "connected" && workspaceId !== null;
+
+    // Show our own message immediately; when live, the server relays it to
+    // everyone else in the workspace room.
     addChatMessage({
-      id: `msg-${Date.now()}`,
-      senderId: "user-you",
-      senderName: "You",
-      senderColor: MERIDIAN_BRAND,
+      id: `msg-${Date.now()}-local`,
+      senderId: currentUser?.id ?? "user-you",
+      senderName: currentUser?.displayName ?? "You",
+      senderColor:
+        currentUser !== null ? colorForUser(currentUser.id) : MERIDIAN_BRAND,
       text,
       timestamp: Date.now(),
     });
+    if (isLive) {
+      getSocket().emit("chat:message", { workspaceId, text });
+    }
     setDraft("");
   };
 
@@ -181,45 +184,6 @@ function LiveChatSection({ isDemoMode }: { isDemoMode: boolean }) {
           <MaterialIcon name="send" className="text-[16px]" aria-hidden />
         </button>
       </div>
-    </section>
-  );
-}
-
-// ── Review notes ──────────────────────────────────────────────────────────────
-
-function ReviewNoteCard({ note }: { note: ReviewNote }) {
-  return (
-    <li
-      className={[
-        "rounded-md meridian-crisp-border border border-l-2 bg-surface-container-lowest px-2 py-1.5",
-        note.severity === "error" ? "border-l-error" : "border-l-secondary",
-      ].join(" ")}
-    >
-      <p className="text-[10px] font-semibold text-on-surface">{note.title}</p>
-      <p className="mt-0.5 text-[9px] leading-snug text-on-surface-variant">
-        {note.line > 0 ? `L${note.line}: ` : ""}
-        {note.description}
-      </p>
-    </li>
-  );
-}
-
-function ReviewNotesSection() {
-  const reviewNotes = useWorkspaceStore((s) => s.reviewNotes);
-
-  return (
-    <section className="shrink-0 meridian-crisp-border border-t bg-surface-container-low">
-      <div className="flex items-center justify-between px-3 py-2">
-        <h2 className={panelSectionLabel}>Review Notes</h2>
-        <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-1 text-[8px] font-bold text-on-error">
-          {reviewNotes.length}
-        </span>
-      </div>
-      <ul className="max-h-28 space-y-1 overflow-y-auto px-2 pb-2">
-        {reviewNotes.map((note) => (
-          <ReviewNoteCard key={note.id} note={note} />
-        ))}
-      </ul>
     </section>
   );
 }
@@ -303,7 +267,6 @@ function CollaborationPanelContent({
       )}
 
       <LiveChatSection isDemoMode={isDemoMode} />
-      <ReviewNotesSection />
     </>
   );
 }

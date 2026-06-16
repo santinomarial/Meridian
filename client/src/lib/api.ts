@@ -1,29 +1,47 @@
 import type {
+  AcceptInviteResponse,
   ApiAuthResponse,
   ApiDocument,
+  ApiInvite,
+  ApiInviteDetails,
   ApiUser,
   ApiWorkspace,
+  ApiWorkspaceMember,
+  ApiWorkspaceRole,
+  BulkCreateDocumentsPayload,
   CreateDocumentPayload,
+  CreateInvitePayload,
   CreateWorkspacePayload,
   ForgotPasswordPayload,
   LoginPayload,
   RegisterPayload,
   ResetPasswordPayload,
   UpdateDocumentPayload,
+  UpdateProfilePayload,
+  UpdateWorkspacePayload,
 } from './apiTypes';
 
 export type {
+  AcceptInviteResponse,
   ApiAuthResponse,
   ApiDocument,
+  ApiInvite,
+  ApiInviteDetails,
   ApiUser,
   ApiWorkspace,
+  ApiWorkspaceMember,
+  ApiWorkspaceRole,
+  BulkCreateDocumentsPayload,
   CreateDocumentPayload,
+  CreateInvitePayload,
   CreateWorkspacePayload,
   ForgotPasswordPayload,
   LoginPayload,
   RegisterPayload,
   ResetPasswordPayload,
   UpdateDocumentPayload,
+  UpdateProfilePayload,
+  UpdateWorkspacePayload,
 };
 
 const _rawApiUrl = import.meta.env['VITE_API_URL'] as string | undefined;
@@ -95,6 +113,11 @@ export const getCurrentUser = (): Promise<ApiUser> =>
 
 export const logout = (): Promise<void> => request<void>('POST', '/auth/logout');
 
+export const updateProfile = (
+  userId: string,
+  payload: UpdateProfilePayload,
+): Promise<ApiUser> => request<ApiUser>('PATCH', `/users/${userId}`, payload);
+
 export const forgotPassword = (payload: ForgotPasswordPayload): Promise<{ message: string }> =>
   request<{ message: string }>('POST', '/auth/forgot-password', payload);
 
@@ -111,6 +134,54 @@ export const getWorkspace = (workspaceId: string): Promise<ApiWorkspace> =>
 
 export const createWorkspace = (payload: CreateWorkspacePayload): Promise<ApiWorkspace> =>
   request<ApiWorkspace>('POST', '/workspaces', payload);
+
+export const updateWorkspace = (
+  workspaceId: string,
+  payload: UpdateWorkspacePayload,
+): Promise<ApiWorkspace> =>
+  request<ApiWorkspace>('PATCH', `/workspaces/${workspaceId}`, payload);
+
+export const deleteWorkspace = (workspaceId: string): Promise<void> =>
+  request<void>('DELETE', `/workspaces/${workspaceId}`);
+
+// ── Members ───────────────────────────────────────────────────────────────────
+
+export const getWorkspaceMembers = (workspaceId: string): Promise<ApiWorkspaceMember[]> =>
+  request<ApiWorkspaceMember[]>('GET', `/workspaces/${workspaceId}/members`);
+
+export const addWorkspaceMember = (
+  workspaceId: string,
+  userId: string,
+  role: ApiWorkspaceRole,
+): Promise<ApiWorkspaceMember> =>
+  request<ApiWorkspaceMember>('POST', `/workspaces/${workspaceId}/members`, { userId, role });
+
+export const updateWorkspaceMember = (
+  workspaceId: string,
+  memberId: string,
+  role: ApiWorkspaceRole,
+): Promise<ApiWorkspaceMember> =>
+  request<ApiWorkspaceMember>('PATCH', `/workspaces/${workspaceId}/members/${memberId}`, { role });
+
+export const removeWorkspaceMember = (
+  workspaceId: string,
+  memberId: string,
+): Promise<void> =>
+  request<void>('DELETE', `/workspaces/${workspaceId}/members/${memberId}`);
+
+// ── Invites ───────────────────────────────────────────────────────────────────
+
+export const createInvite = (
+  workspaceId: string,
+  payload: CreateInvitePayload,
+): Promise<ApiInvite> =>
+  request<ApiInvite>('POST', `/workspaces/${workspaceId}/invites`, payload);
+
+export const getInvite = (token: string): Promise<ApiInviteDetails> =>
+  request<ApiInviteDetails>('GET', `/invites/${token}`);
+
+export const acceptInvite = (token: string): Promise<AcceptInviteResponse> =>
+  request<AcceptInviteResponse>('POST', `/invites/${token}/accept`);
 
 // ── Documents ─────────────────────────────────────────────────────────────────
 
@@ -137,3 +208,9 @@ export const updateDocument = (
 
 export const deleteDocument = (documentId: string): Promise<void> =>
   request<void>('DELETE', `/documents/${documentId}`);
+
+export const bulkCreateDocuments = (
+  workspaceId: string,
+  payload: BulkCreateDocumentsPayload,
+): Promise<ApiDocument[]> =>
+  request<ApiDocument[]>('POST', `/workspaces/${workspaceId}/documents/bulk`, payload);

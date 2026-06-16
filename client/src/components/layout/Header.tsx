@@ -11,8 +11,8 @@ import {
 } from "../ui/styles";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useFileOperations } from "../../hooks/useFileOperations";
-import { getCurrentUser, logout, updateDocument } from "../../lib/api";
-import type { ApiUser } from "../../lib/apiTypes";
+import { createInvite, logout, updateDocument } from "../../lib/api";
+import { getActiveEditor } from "../../lib/editorRegistry";
 import type { Collaborator } from "../../types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -25,7 +25,6 @@ type OpenPanel =
   | "selection-menu"
   | "view-menu"
   | "go-menu"
-  | "branch"
   | "collaborators"
   | "share"
   | "notifications"
@@ -46,13 +45,6 @@ type InviteRole = "EDITOR" | "VIEWER";
 
 const NAV_ITEMS: NavItem[] = ["File", "Edit", "Selection", "View", "Go"];
 const MAX_VISIBLE_COLLABORATORS = 3;
-const BRANCHES = ["main", "feature/realtime-sync", "feature/editor-polish"] as const;
-
-const MOCK_NOTIFICATIONS = [
-  { id: "n1", icon: "sync", text: "Workspace synced", time: "just now" },
-  { id: "n2", icon: "save", text: "File saved", time: "2 min ago" },
-  { id: "n3", icon: "person_add", text: "Collaborator joined", time: "5 min ago" },
-] as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -60,6 +52,17 @@ function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
   if (parts.length === 1) return (parts[0] ?? "").slice(0, 2).toUpperCase();
   return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase();
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 10) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -134,6 +137,7 @@ export function Header() {
   // ── Store ──────────────────────────────────────────────────────────────────
   const collaborators = useWorkspaceStore((s) => s.collaborators);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+  const currentUser = useWorkspaceStore((s) => s.currentUser);
   const theme = useWorkspaceStore((s) => s.theme);
   const toggleTheme = useWorkspaceStore((s) => s.toggleTheme);
   const backendStatus = useWorkspaceStore((s) => s.backendStatus);
@@ -146,24 +150,26 @@ export function Header() {
   const editorContentByFileId = useWorkspaceStore((s) => s.editorContentByFileId);
   const setSaveStatus = useWorkspaceStore((s) => s.setSaveStatus);
   const clearTabDirty = useWorkspaceStore((s) => s.clearTabDirty);
+  const notifications = useWorkspaceStore((s) => s.notifications);
+  const clearNotifications = useWorkspaceStore((s) => s.clearNotifications);
+  const addNotification = useWorkspaceStore((s) => s.addNotification);
+  const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
 
   // ── File operations ────────────────────────────────────────────────────────
   const { createFile, createFolder, openLocalFile, importZip } = useFileOperations();
 
   // ── Local state ────────────────────────────────────────────────────────────
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
-  const [selectedBranch, setSelectedBranch] = useState("main");
-  const [currentUser, setCurrentUser] = useState<ApiUser | null>(null);
 
   // Share / invite state
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<InviteRole>("EDITOR");
   const [inviteStatus, setInviteStatus] = useState<"idle" | "sent">("idle");
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const navRef = useRef<HTMLDivElement>(null);
-  const branchRef = useRef<HTMLDivElement>(null);
   const collaboratorsRef = useRef<HTMLDivElement>(null);
   const shareRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
@@ -183,9 +189,6 @@ export function Header() {
       case "view-menu":
       case "go-menu":
         activeRef = navRef;
-        break;
-      case "branch":
-        activeRef = branchRef;
         break;
       case "collaborators":
         activeRef = collaboratorsRef;
@@ -221,19 +224,6 @@ export function Header() {
     return () => document.removeEventListener("keydown", handleKey);
   }, [openPanel]);
 
-  // ── Fetch current user once ────────────────────────────────────────────────
-  useEffect(() => {
-    let mounted = true;
-    getCurrentUser()
-      .then((user) => {
-        if (mounted) setCurrentUser(user);
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
   // Reset invite state when share panel closes
   useEffect(() => {
     if (openPanel !== "share") {
@@ -248,9 +238,24 @@ export function Header() {
   const overflowCount = Math.max(0, collaborators.length - MAX_VISIBLE_COLLABORATORS);
   const isBackendAvailable = backendStatus === "available";
 
-  // Invite link uses workspace id when available so recipients land in the right workspace
-  const inviteToken = workspaceId ?? "demo";
-  const inviteLink = `${window.location.origin}/invite/${inviteToken}`;
+  // Create a real invite when the share panel opens (and again when the role
+  // changes). Offline demo mode falls back to a non-persistent /invite/demo link.
+  useEffect(() => {
+    if (openPanel !== "share" || !isBackendAvailable || workspaceId === null) return;
+    let cancelled = false;
+    createInvite(workspaceId, { role: inviteRole })
+      .then((invite) => {
+        if (!cancelled) setInviteToken(invite.token);
+      })
+      .catch(() => {
+        if (!cancelled) setInviteToken(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [openPanel, isBackendAvailable, workspaceId, inviteRole]);
+
+  const inviteLink = `${window.location.origin}/invite/${inviteToken ?? "demo"}`;
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -277,17 +282,27 @@ export function Header() {
       return;
     }
     const content = editorContentByFileId[activeFileId] ?? "";
+    const tabName = openTabs.find((t) => t.fileId === activeFileId)?.name ?? "file";
     setSaveStatus("saving");
     try {
       await updateDocument(activeFileId, { content });
       setSaveStatus("saved");
       clearTabDirty(activeFileId);
+      addNotification({ icon: "save", text: `Saved ${tabName}` });
       toast("Saved.", "success");
     } catch {
       setSaveStatus("error");
       toast("Save failed — try Cmd+S.", "error");
     }
-  }, [isBackendAvailable, activeFileId, editorContentByFileId, setSaveStatus, clearTabDirty]);
+  }, [
+    isBackendAvailable,
+    activeFileId,
+    editorContentByFileId,
+    openTabs,
+    setSaveStatus,
+    clearTabDirty,
+    addNotification,
+  ]);
 
   const handleSignOut = useCallback(async () => {
     setOpenPanel(null);
@@ -327,36 +342,74 @@ export function Header() {
     }
   }, [inviteLink]);
 
-  // Generates an invite link for the provided email address.
-  // TODO: call POST /workspaces/:workspaceId/invites when backend invite API is available.
+  // Creates an invite for the provided email address and emails the link.
   const handleSendInvite = useCallback(async () => {
     const email = inviteEmail.trim();
     if (!email || !email.includes("@")) {
       toast("Please enter a valid email address.", "error");
       return;
     }
+
+    if (isBackendAvailable && workspaceId !== null) {
+      try {
+        const invite = await createInvite(workspaceId, { role: inviteRole, email });
+        const url = `${window.location.origin}/invite/${invite.token}`;
+        try {
+          await navigator.clipboard.writeText(url);
+        } catch {
+          // Clipboard failed — the email still went out.
+        }
+        addNotification({ icon: "person_add", text: `Invite created for ${email}` });
+        toast(`Invite sent to ${email}. Link copied to clipboard.`, "success");
+        setInviteEmail("");
+        setInviteStatus("sent");
+        window.setTimeout(() => setInviteStatus("idle"), 3000);
+      } catch {
+        toast("Could not create invite — try again.", "error");
+      }
+      return;
+    }
+
+    // Offline demo fallback — no backend to persist or email the invite.
     try {
       await navigator.clipboard.writeText(inviteLink);
     } catch {
-      // Clipboard failed — still show the success message.
+      // Clipboard failed — still show the message.
     }
-    toast(
-      `Invite link for ${email} copied. (Demo: no email sent — invite API coming soon.)`,
-      "info",
-    );
+    toast(`Invite link for ${email} copied. (Demo mode — no email sent.)`, "info");
     setInviteEmail("");
     setInviteStatus("sent");
     window.setTimeout(() => setInviteStatus("idle"), 3000);
-  }, [inviteEmail, inviteLink]);
+  }, [inviteEmail, inviteLink, inviteRole, isBackendAvailable, workspaceId, addNotification]);
 
+  // Live Session reflects the real collaboration state. Collaboration in
+  // Meridian is document-based: opening a file in a backend workspace already
+  // joins a live Yjs room, so this surfaces that real state rather than
+  // navigating to a fabricated session route.
   const handleLiveSession = useCallback(() => {
     if (!isBackendAvailable) {
       toast("Live session unavailable — connect the backend first.", "error");
       return;
     }
+    if (!activeFileId) {
+      toast("Open a file to start a live session.");
+      return;
+    }
     if (!isCollaborationPanelOpen) togglePanel("collaboration");
-    navigate("/session/demo");
-  }, [isBackendAvailable, isCollaborationPanelOpen, togglePanel, navigate]);
+    const message =
+      connectionStatus === "connected"
+        ? "Live session active — collaborators editing this file appear here."
+        : connectionStatus === "connecting"
+          ? "Connecting to the live session…"
+          : "Live session disconnected — reconnecting.";
+    toast(message, connectionStatus === "connected" ? "success" : "info");
+  }, [
+    isBackendAvailable,
+    activeFileId,
+    isCollaborationPanelOpen,
+    connectionStatus,
+    togglePanel,
+  ]);
 
   const handleGoToActiveFile = useCallback(() => {
     setOpenPanel(null);
@@ -364,10 +417,32 @@ export function Header() {
       toast("No file is currently open.");
       return;
     }
-    const tab = openTabs.find((t) => t.fileId === activeFileId);
     if (!isExplorerOpen) togglePanel("explorer");
-    toast(`Active: ${tab?.name ?? activeFileId}`);
+    const editor = getActiveEditor();
+    if (editor !== null) {
+      editor.focus();
+    } else {
+      const tab = openTabs.find((t) => t.fileId === activeFileId);
+      toast(`Active file: ${tab?.name ?? activeFileId}`);
+    }
   }, [activeFileId, openTabs, isExplorerOpen, togglePanel]);
+
+  // Runs a Monaco editor action from the menu bar (undo, format, etc.).
+  const runEditorAction = useCallback((actionId: string, fallbackHint: string) => {
+    setOpenPanel(null);
+    const editor = getActiveEditor();
+    if (editor === null) {
+      toast(`No editor open. ${fallbackHint}`, "error");
+      return;
+    }
+    editor.focus();
+    const action = editor.getAction(actionId);
+    if (action) {
+      void action.run();
+    } else {
+      editor.trigger("menu", actionId, null);
+    }
+  }, []);
 
   // ── Nav menu definitions ───────────────────────────────────────────────────
 
@@ -398,17 +473,18 @@ export function Header() {
       {
         label: "Undo",
         icon: "undo",
-        onClick: () => { toast("Use Cmd+Z in the editor."); setOpenPanel(null); },
+        onClick: () => runEditorAction("undo", "Use Cmd+Z in the editor."),
       },
       {
         label: "Redo",
         icon: "redo",
-        onClick: () => { toast("Use Shift+Cmd+Z in the editor."); setOpenPanel(null); },
+        onClick: () => runEditorAction("redo", "Use Shift+Cmd+Z in the editor."),
       },
       {
         label: "Format Document",
         icon: "auto_fix_high",
-        onClick: () => { toast("Use Shift+Alt+F in the editor."); setOpenPanel(null); },
+        onClick: () =>
+          runEditorAction("editor.action.formatDocument", "Use Shift+Alt+F in the editor."),
       },
       { label: "Copy Path", icon: "content_copy", onClick: handleCopyPath },
     ],
@@ -416,12 +492,17 @@ export function Header() {
       {
         label: "Select All",
         icon: "select_all",
-        onClick: () => { toast("Use Cmd+A in the editor."); setOpenPanel(null); },
+        onClick: () =>
+          runEditorAction("editor.action.selectAll", "Use Cmd+A in the editor."),
       },
       {
         label: "Copy Selection",
         icon: "content_copy",
-        onClick: () => { toast("Use Cmd+C to copy selection."); setOpenPanel(null); },
+        onClick: () =>
+          runEditorAction(
+            "editor.action.clipboardCopyAction",
+            "Use Cmd+C to copy selection.",
+          ),
       },
     ],
     View: [
@@ -434,11 +515,6 @@ export function Header() {
         label: "Toggle Collaboration",
         icon: "group",
         onClick: () => { togglePanel("collaboration"); setOpenPanel(null); },
-      },
-      {
-        label: "Toggle Terminal",
-        icon: "terminal",
-        onClick: () => { togglePanel("bottom"); setOpenPanel(null); },
       },
       {
         label: "Toggle Theme",
@@ -551,52 +627,6 @@ export function Header() {
 
       {/* ── Right: controls ──────────────────────────────────────────────── */}
       <div className="flex items-center gap-2.5">
-
-        {/* Branch selector */}
-        <div ref={branchRef} className="relative hidden sm:block">
-          <button
-            type="button"
-            aria-label="Branch selector"
-            aria-haspopup="listbox"
-            aria-expanded={openPanel === "branch"}
-            className="hidden h-8 items-center gap-1.5 rounded-md meridian-crisp-border border bg-surface-container px-2.5 text-xs transition-colors hover:bg-surface-container-high focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary sm:inline-flex"
-            onClick={() => setOpenPanel(openPanel === "branch" ? null : "branch")}
-          >
-            <MaterialIcon name="account_tree" className="text-[14px] text-primary" aria-hidden />
-            <span className="text-on-surface-variant">branch:</span>
-            <span className="font-semibold text-on-surface">{selectedBranch}</span>
-            <MaterialIcon name="expand_more" className="text-[12px] text-on-surface-variant" aria-hidden />
-          </button>
-          {openPanel === "branch" ? (
-            <DropdownPanel className="right-0 w-56" role="listbox" aria-label="Branches">
-              <div className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">
-                Branches
-              </div>
-              <div className="py-1">
-                {BRANCHES.map((branch) => (
-                  <button
-                    key={branch}
-                    type="button"
-                    role="option"
-                    aria-selected={branch === selectedBranch}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-on-surface transition-colors hover:bg-surface-container-high focus-visible:outline-none"
-                    onClick={() => { setSelectedBranch(branch); setOpenPanel(null); }}
-                  >
-                    <MaterialIcon
-                      name={branch === selectedBranch ? "radio_button_checked" : "radio_button_unchecked"}
-                      className={[
-                        "shrink-0 text-[14px]",
-                        branch === selectedBranch ? "text-primary" : "text-on-surface-variant",
-                      ].join(" ")}
-                      aria-hidden
-                    />
-                    <span className={branch === selectedBranch ? "font-semibold" : ""}>{branch}</span>
-                  </button>
-                ))}
-              </div>
-            </DropdownPanel>
-          ) : null}
-        </div>
 
         {/* Collaborator avatars */}
         <div ref={collaboratorsRef} className="relative">
@@ -786,11 +816,16 @@ export function Header() {
                     {copyStatus === "copied" ? "Copied!" : "Copy"}
                   </button>
                 </div>
-                {workspaceId === null ? (
+                {inviteToken === null ? (
                   <p className="mt-1.5 text-[10px] text-on-surface-variant/60">
                     Connect backend to generate a persistent invite link.
                   </p>
-                ) : null}
+                ) : (
+                  <p className="mt-1.5 text-[10px] text-on-surface-variant/60">
+                    Anyone with this link can join as{" "}
+                    {inviteRole === "EDITOR" ? "an editor" : "a viewer"}. Expires in 7 days.
+                  </p>
+                )}
               </div>
             </DropdownPanel>
           ) : null}
@@ -827,33 +862,48 @@ export function Header() {
               <MaterialIcon name="notifications" className="text-[18px]" aria-hidden />
             </button>
             {openPanel === "notifications" ? (
-              <DropdownPanel className="right-0 w-64" role="dialog" aria-label="Notifications">
+              <DropdownPanel className="right-0 w-64" role="dialog" aria-label="Notifications" data-testid="notifications-panel">
                 <div className="flex items-center justify-between border-b meridian-crisp-border px-3 py-2">
                   <span className="text-xs font-semibold text-on-surface">Notifications</span>
-                  <button
-                    type="button"
-                    className="text-[10px] text-on-surface-variant transition-colors hover:text-on-surface"
-                    onClick={() => setOpenPanel(null)}
-                    aria-label="Close notifications"
-                  >
-                    Clear all
-                  </button>
+                  {notifications.length > 0 ? (
+                    <button
+                      type="button"
+                      className="text-[10px] text-on-surface-variant transition-colors hover:text-on-surface"
+                      onClick={clearNotifications}
+                      aria-label="Clear all notifications"
+                    >
+                      Clear all
+                    </button>
+                  ) : null}
                 </div>
-                <div className="py-1">
-                  {MOCK_NOTIFICATIONS.map((n) => (
-                    <div key={n.id} className="flex items-start gap-2.5 px-3 py-2">
-                      <MaterialIcon
-                        name={n.icon}
-                        className="mt-0.5 shrink-0 text-[14px] text-primary"
-                        aria-hidden
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-xs text-on-surface">{n.text}</div>
-                        <div className="text-[10px] text-on-surface-variant">{n.time}</div>
+                {notifications.length === 0 ? (
+                  <div className="flex flex-col items-center gap-1 px-3 py-5 text-center" data-testid="notifications-empty">
+                    <MaterialIcon
+                      name="notifications_none"
+                      className="text-[20px] text-on-surface-variant/40"
+                      aria-hidden
+                    />
+                    <p className="text-xs text-on-surface-variant">No notifications.</p>
+                  </div>
+                ) : (
+                  <div className="max-h-72 overflow-y-auto py-1">
+                    {notifications.map((n) => (
+                      <div key={n.id} className="flex items-start gap-2.5 px-3 py-2">
+                        <MaterialIcon
+                          name={n.icon}
+                          className="mt-0.5 shrink-0 text-[14px] text-primary"
+                          aria-hidden
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs text-on-surface">{n.text}</div>
+                          <div className="text-[10px] text-on-surface-variant">
+                            {formatRelativeTime(n.timestamp)}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </DropdownPanel>
             ) : null}
           </div>
@@ -892,7 +942,7 @@ export function Header() {
                   <MenuItem
                     label="Settings"
                     icon="settings"
-                    onClick={() => { toast("Settings coming soon."); setOpenPanel(null); }}
+                    onClick={() => { setSettingsOpen(true); setOpenPanel(null); }}
                   />
                 </div>
                 <MenuSeparator />

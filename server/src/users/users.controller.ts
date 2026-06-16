@@ -2,17 +2,17 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
   NotFoundException,
   Param,
   Patch,
-  Post,
+  UseGuards,
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import {
-  ApiCreatedResponse,
   ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -20,22 +20,31 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
+import type { User } from '@prisma/client';
 import { UsersService } from './users.service';
-import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { AuthUser } from '../modules/auth/types/auth-user.type';
+
+/** Public projection of a user — never exposes passwordHash. */
+function toPublicUser(user: User) {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
+}
 
 @SkipThrottle({ auth: true })
 @ApiTags('users')
+@UseGuards(JwtAuthGuard)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
-
-  @Get()
-  @ApiOperation({ summary: 'List all users' })
-  @ApiOkResponse({ description: 'Array of users' })
-  listUsers() {
-    return this.usersService.listUsers();
-  }
 
   @Get(':userId')
   @ApiOperation({ summary: 'Get a user by id' })
@@ -45,37 +54,40 @@ export class UsersController {
   async getUser(@Param('userId') userId: string) {
     const user = await this.usersService.findById(userId);
     if (user === null) throw new NotFoundException(`User ${userId} not found`);
-    return user;
-  }
-
-  @Post()
-  @ApiOperation({ summary: 'Create a user' })
-  @ApiCreatedResponse({ description: 'The created user' })
-  createUser(@Body() dto: CreateUserDto) {
-    return this.usersService.createUser(dto);
+    return toPublicUser(user);
   }
 
   @Patch(':userId')
-  @ApiOperation({ summary: 'Update a user' })
+  @ApiOperation({ summary: 'Update your own profile' })
   @ApiParam({ name: 'userId', description: 'User cuid' })
   @ApiOkResponse({ description: 'The updated user' })
   @ApiNotFoundResponse({ description: 'User not found' })
   async updateUser(
+    @CurrentUser() currentUser: AuthUser,
     @Param('userId') userId: string,
     @Body() dto: UpdateUserDto,
   ) {
+    if (currentUser.id !== userId) {
+      throw new ForbiddenException('You can only update your own profile');
+    }
     const user = await this.usersService.findById(userId);
     if (user === null) throw new NotFoundException(`User ${userId} not found`);
-    return this.usersService.updateUser(userId, dto);
+    return toPublicUser(await this.usersService.updateUser(userId, dto));
   }
 
   @Delete(':userId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete a user' })
+  @ApiOperation({ summary: 'Delete your own account' })
   @ApiParam({ name: 'userId', description: 'User cuid' })
   @ApiNoContentResponse({ description: 'User deleted' })
   @ApiNotFoundResponse({ description: 'User not found' })
-  async deleteUser(@Param('userId') userId: string) {
+  async deleteUser(
+    @CurrentUser() currentUser: AuthUser,
+    @Param('userId') userId: string,
+  ) {
+    if (currentUser.id !== userId) {
+      throw new ForbiddenException('You can only delete your own account');
+    }
     const user = await this.usersService.findById(userId);
     if (user === null) throw new NotFoundException(`User ${userId} not found`);
     await this.usersService.deleteUser(userId);

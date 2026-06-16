@@ -24,6 +24,37 @@ export class MailService {
   }
 
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
+    await this.send({
+      to,
+      subject: 'Reset your Meridian password',
+      html: buildResetEmailHtml(resetUrl),
+      text: buildResetEmailText(resetUrl),
+      devLogLabel: `DEV RESET URL: ${resetUrl}`,
+    });
+  }
+
+  async sendWorkspaceInviteEmail(
+    to: string,
+    inviterName: string,
+    workspaceName: string,
+    inviteUrl: string,
+  ): Promise<void> {
+    await this.send({
+      to,
+      subject: `${inviterName} invited you to "${workspaceName}" on Meridian`,
+      html: buildInviteEmailHtml(inviterName, workspaceName, inviteUrl),
+      text: buildInviteEmailText(inviterName, workspaceName, inviteUrl),
+      devLogLabel: `DEV INVITE URL for ${to}: ${inviteUrl}`,
+    });
+  }
+
+  private async send(message: {
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+    devLogLabel: string;
+  }): Promise<void> {
     if (this.resendApiKey) {
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
@@ -33,10 +64,10 @@ export class MailService {
         },
         body: JSON.stringify({
           from: this.mailFrom,
-          to: [to],
-          subject: 'Reset your Meridian password',
-          html: buildResetEmailHtml(resetUrl),
-          text: buildResetEmailText(resetUrl),
+          to: [message.to],
+          subject: message.subject,
+          html: message.html,
+          text: message.text,
         }),
       });
 
@@ -48,15 +79,15 @@ export class MailService {
     }
 
     if (this.isDev) {
-      // Dev fallback: print the reset URL clearly so the developer can test without email.
+      // Dev fallback: print the action URL clearly so the developer can test without email.
       // eslint-disable-next-line no-console
-      console.log(`\n${'─'.repeat(60)}\nDEV RESET URL: ${resetUrl}\n${'─'.repeat(60)}\n`);
+      console.log(`\n${'─'.repeat(60)}\n${message.devLogLabel}\n${'─'.repeat(60)}\n`);
       return;
     }
 
     // Production without a mail provider: fail internally so the error is logged
-    // and monitored, but do NOT propagate — the caller (AuthService.forgotPassword)
-    // always returns a generic success response to protect user enumeration.
+    // and monitored, but do NOT propagate user-facing details — callers decide
+    // whether delivery failure is fatal (password reset hides it entirely).
     throw new Error(
       'No mail provider configured. Set RESEND_API_KEY in your production environment.',
     );
@@ -79,6 +110,64 @@ function buildResetEmailText(resetUrl: string): string {
     '',
     '— The Meridian Team',
   ].join('\n');
+}
+
+function buildInviteEmailText(
+  inviterName: string,
+  workspaceName: string,
+  inviteUrl: string,
+): string {
+  return [
+    'Hi,',
+    '',
+    `${inviterName} invited you to collaborate on "${workspaceName}" in Meridian.`,
+    '',
+    `Accept the invite here:\n${inviteUrl}`,
+    '',
+    'If you were not expecting this invite, you can safely ignore this email.',
+    '',
+    '— The Meridian Team',
+  ].join('\n');
+}
+
+function buildInviteEmailHtml(
+  inviterName: string,
+  workspaceName: string,
+  inviteUrl: string,
+): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="font-family:system-ui,sans-serif;background:#0d0d0f;color:#e5e5ef;margin:0;padding:0">
+  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:40px auto">
+    <tr><td style="background:#1a1a24;border:1px solid #2e2e42;border-radius:12px;padding:40px">
+      <h1 style="font-size:20px;font-weight:600;margin:0 0 16px;color:#e5e5ef">You're invited to collaborate</h1>
+      <p style="color:#9a9ab8;margin:0 0 24px;line-height:1.6">
+        <strong style="color:#e5e5ef">${escapeHtml(inviterName)}</strong> invited you to join
+        <strong style="color:#e5e5ef">${escapeHtml(workspaceName)}</strong> on Meridian.
+      </p>
+      <a href="${inviteUrl}"
+         style="display:inline-block;background:#6d59f0;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600">
+        Accept Invite
+      </a>
+      <p style="color:#6b6b8a;font-size:13px;margin:24px 0 0;line-height:1.5">
+        If you were not expecting this invite, you can safely ignore this email.
+      </p>
+      <hr style="border:none;border-top:1px solid #2e2e42;margin:24px 0">
+      <p style="color:#6b6b8a;font-size:12px;margin:0">The Meridian Team</p>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function buildResetEmailHtml(resetUrl: string): string {

@@ -174,5 +174,32 @@ export class DocumentManagerService {
     for (const row of updates) {
       Y.applyUpdate(doc, row.update);
     }
+
+    // First collaborative open of this document: no Yjs history exists yet,
+    // so seed the Y.Doc from the REST-managed content column. The seed is
+    // persisted as the first update so later cold loads replay the exact same
+    // CRDT items that client edits reference. The server is the only party
+    // that seeds — clients must never insert initial content themselves.
+    if (snapshot === null && updates.length === 0) {
+      await this.seedFromContent(documentId, doc);
+    }
+  }
+
+  private async seedFromContent(documentId: string, doc: Y.Doc): Promise<void> {
+    const document = await this.prisma.document.findUnique({
+      where: { id: documentId },
+      select: { content: true },
+    });
+    const content = document?.content ?? '';
+    if (content.length === 0) return;
+
+    doc.getText('content').insert(0, content);
+    await this.prisma.documentUpdate.create({
+      data: {
+        documentId,
+        seq: 0,
+        update: Buffer.from(Y.encodeStateAsUpdate(doc)),
+      },
+    });
   }
 }
