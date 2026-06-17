@@ -120,6 +120,7 @@ export type WorkspaceState = {
   isExplorerOpen: boolean;
   isCollaborationPanelOpen: boolean;
   isSettingsOpen: boolean;
+  isVersionHistoryOpen: boolean;
   theme: WorkspaceTheme;
   cursorPosition: CursorPosition;
   saveStatus: SaveStatus;

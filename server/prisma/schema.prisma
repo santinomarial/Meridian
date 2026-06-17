@@ -40,6 +40,7 @@ model User {
   sessions            Session[]
   passwordResetTokens PasswordResetToken[]
   sentInvites         Invite[]             @relation("InviteSender")
+  documentVersions    DocumentVersion[]    @relation("VersionAuthor")
 }
 
 model Workspace {
@@ -53,6 +54,7 @@ model Workspace {
   documents Document[]
   members   WorkspaceMember[]
   invites   Invite[]
+  versions  DocumentVersion[]
 }
 
 model WorkspaceMember {
@@ -98,12 +100,37 @@ model Document {
   updatedAt   DateTime     @updatedAt
 
   workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  parent    Document?        @relation("DocumentTree", fields: [parentId], references: [id], onDelete: Cascade)
-  children  Document[]       @relation("DocumentTree")
+  parent    Document?         @relation("DocumentTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Document[]        @relation("DocumentTree")
   updates   DocumentUpdate[]
   snapshots Snapshot[]
+  versions  DocumentVersion[]
 
   @@unique([workspaceId, path])
+}
+
+// A point-in-time snapshot of a document's persisted content, captured on
+// meaningful saves and on restore.  Unlike DocumentUpdate/Snapshot (which hold
+// the Yjs CRDT history), a DocumentVersion stores plain text so it can be
+// listed, diffed, and restored independently of the realtime layer.
+model DocumentVersion {
+  id            String   @id @default(cuid())
+  documentId    String
+  workspaceId   String
+  // Nullable + SetNull so deleting the author never destroys version history.
+  createdById   String?
+  versionNumber Int
+  content       String
+  message       String?
+  createdAt     DateTime @default(now())
+
+  document  Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("VersionAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId, versionNumber])
+  @@index([documentId, createdAt])
 }
 
 model DocumentUpdate {

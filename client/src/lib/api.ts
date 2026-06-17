@@ -2,6 +2,8 @@ import type {
   AcceptInviteResponse,
   ApiAuthResponse,
   ApiDocument,
+  ApiDocumentVersionDetail,
+  ApiDocumentVersionSummary,
   ApiInvite,
   ApiInviteDetails,
   ApiUser,
@@ -16,6 +18,7 @@ import type {
   LoginPayload,
   RegisterPayload,
   ResetPasswordPayload,
+  RestoreVersionResponse,
   UpdateDocumentPayload,
   UpdateProfilePayload,
   UpdateWorkspacePayload,
@@ -25,6 +28,8 @@ export type {
   AcceptInviteResponse,
   ApiAuthResponse,
   ApiDocument,
+  ApiDocumentVersionDetail,
+  ApiDocumentVersionSummary,
   ApiInvite,
   ApiInviteDetails,
   ApiUser,
@@ -39,6 +44,7 @@ export type {
   LoginPayload,
   RegisterPayload,
   ResetPasswordPayload,
+  RestoreVersionResponse,
   UpdateDocumentPayload,
   UpdateProfilePayload,
   UpdateWorkspacePayload,
@@ -214,3 +220,28 @@ export const bulkCreateDocuments = (
   payload: BulkCreateDocumentsPayload,
 ): Promise<ApiDocument[]> =>
   request<ApiDocument[]>('POST', `/workspaces/${workspaceId}/documents/bulk`, payload);
+
+// ── Document versions ─────────────────────────────────────────────────────────
+
+export const getDocumentVersions = (
+  documentId: string,
+): Promise<ApiDocumentVersionSummary[]> =>
+  request<ApiDocumentVersionSummary[]>('GET', `/documents/${documentId}/versions`);
+
+export const getDocumentVersion = (
+  documentId: string,
+  versionId: string,
+): Promise<ApiDocumentVersionDetail> =>
+  request<ApiDocumentVersionDetail>(
+    'GET',
+    `/documents/${documentId}/versions/${versionId}`,
+  );
+
+export const restoreDocumentVersion = (
+  documentId: string,
+  versionId: string,
+): Promise<RestoreVersionResponse> =>
+  request<RestoreVersionResponse>(
+    'POST',
+    `/documents/${documentId}/versions/${versionId}/restore`,
+  );

@@ -38,6 +38,8 @@ type WorkspaceActions = {
   togglePanel: (panel: PanelKey) => void;
   closeAllOverlays: () => void;
   setSettingsOpen: (open: boolean) => void;
+  setVersionHistoryOpen: (open: boolean) => void;
+  markDocumentRestored: (fileId: string) => void;
   setTheme: (theme: WorkspaceTheme) => void;
   toggleTheme: () => void;
   setCursorPosition: (pos: CursorPosition) => void;
@@ -187,6 +189,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   isExplorerOpen: true,
   isCollaborationPanelOpen: true,
   isSettingsOpen: false,
+  isVersionHistoryOpen: false,
   theme: _initialTheme,
   cursorPosition: { line: 1, column: 1 },
   saveStatus: "saved",
@@ -287,6 +290,21 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   setSettingsOpen: (open) => set({ isSettingsOpen: open }),
+
+  setVersionHistoryOpen: (open) => set({ isVersionHistoryOpen: open }),
+
+  // Called when a restore has been applied (locally or via the document:restored
+  // socket event). The editor content itself is updated by the broadcast Yjs
+  // update; this only reconciles the dirty/save indicators so the tab reflects
+  // that the restored content is the persisted truth, not an unsaved edit.
+  markDocumentRestored: (fileId) => {
+    set((state) => ({
+      openTabs: state.openTabs.map((tab) =>
+        tab.fileId === fileId ? { ...tab, dirty: false } : tab,
+      ),
+      saveStatus: state.activeFileId === fileId ? "saved" : state.saveStatus,
+    }));
+  },
 
   setTheme: (theme) => {
     persistTheme(theme);

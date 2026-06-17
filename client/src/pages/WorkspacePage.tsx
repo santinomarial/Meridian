@@ -9,6 +9,7 @@ import { FileExplorer } from "../components/layout/FileExplorer";
 import { Header } from "../components/layout/Header";
 import { PanelOverlay } from "../components/layout/PanelOverlay";
 import { SettingsDialog } from "../components/layout/SettingsDialog";
+import { VersionHistoryDialog } from "../components/layout/VersionHistoryDialog";
 import { StatusBar } from "../components/layout/StatusBar";
 import { useBackendWorkspace } from "../hooks/useBackendWorkspace";
 import { useBreakpoint } from "../hooks/useBreakpoint";
@@ -195,6 +196,7 @@ export function WorkspacePage() {
       ) : null}
 
       <SettingsDialog />
+      <VersionHistoryDialog />
     </div>
   );
 }

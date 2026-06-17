@@ -11,6 +11,7 @@ Meridian is a TypeScript end-to-end collaborative browser IDE for engineering te
 - **Project / document tree** — hierarchical file and folder structure per workspace, fetched from the backend on load
 - **File operations** — create/rename/delete files and folders, open a local file from disk, and import a ZIP project — all synced to the backend
 - **Editor tabs** — multi-file editing with dirty-state tracking and Cmd+S / Ctrl+S save to backend
+- **Version history & restore** — every meaningful save snapshots the file; preview any past version, diff it against the current file in a Monaco side-by-side editor, and restore it (editors/owners) — see [Version history & restore](#version-history--restore)
 - **Live collaboration** — Socket.IO document rooms with Yjs CRDT merge; concurrent edits from multiple clients converge deterministically
 - **Presence & chat** — real cursors/selections via the Yjs awareness protocol and a per-workspace live chat over Socket.IO
 - **Share & invite** — backend-backed workspace invites: generate a shareable link or email an invite, accept it after sign-in to join with the assigned role
@@ -123,6 +124,49 @@ Design notes:
 - Invites **expire** after 7 days (`410 Gone` after that).
 - Invites are **safely reusable**: accepting is idempotent, so a single link can onboard a whole team. The first acceptance stamps `acceptedAt`.
 - The `/invite/:token` page shows a valid/expired/invalid state, and when unauthenticated it sends the user to sign in with a `?redirect=` back to the invite so acceptance completes in one flow.
+
+## Version history & restore
+
+Every file keeps a real, server-backed history of saved versions (`DocumentVersion` model). There are no local-only or fabricated entries — every item in the list is a row in the database.
+
+**When versions are created**
+
+- A version is recorded **only when a save meaningfully changes the content** — i.e. a `PATCH /documents/:id` whose `content` differs from what is currently persisted. Identical saves and metadata-only updates (rename/move) never create a version, so the history has no duplicates.
+- `versionNumber` increments per document; the first meaningful save becomes version 1.
+- The document update and the version insert happen in a single transaction, so they either both commit or both roll back.
+
+**Endpoints**
+
+- `GET /documents/:documentId/versions` — lightweight list (id, number, timestamp, author, message, content length), newest first.
+- `GET /documents/:documentId/versions/:versionId` — a single version with its full content.
+- `POST /documents/:documentId/versions/:versionId/restore` — restore the document to that version's content.
+
+**Restore behavior**
+
+- Rewrites the document content and records a **new** version capturing the restored content with the message `Restored from version X` (so a restore is itself an undoable point in history).
+- The new content is broadcast to everyone currently editing the file, and connected clients update live.
+
+**Permissions**
+
+- **Viewers** can list, preview, and diff versions, but **cannot restore** — the restore control is replaced with "Viewer access cannot restore versions."
+- **Editors and owners** can restore.
+- **Non-members** receive `404` for every version endpoint (ids are not enumerable across workspaces), consistent with the rest of the document API.
+
+**UI**
+
+- Open via **File → Version History** (enabled only for a file that exists on the backend). The dialog shows a loading state, an empty state when no versions exist, and the version list with number, timestamp, and author.
+- Select a version to preview it read-only, or toggle **Compare with current** to see a Monaco side-by-side diff (left: the selected version, right: the current file).
+- Restoring asks for confirmation, calls the backend, shows a "Restored version X" notification, marks the tab clean, and refreshes the list.
+
+**Collaboration / Yjs note**
+
+Live editing is driven by a Yjs CRDT, while versions store plain text. Restore reconciles both:
+
+- If the document is **open** (a live `Y.Doc` exists), the server replaces the canonical Y.Text inside a Yjs transaction and broadcasts the resulting incremental update — connected editors converge cleanly with no reload, no rebind, and no divergent CRDT items. The CRDT history is then collapsed into a single snapshot of the restored state.
+- If the document is **not open**, the Yjs history is dropped so the next collaborative open re-seeds the `Y.Doc` from the restored content column.
+- A `document:restored` event is emitted so clients reconcile their save/dirty indicators.
+
+Like the rest of the realtime persistence layer, this assumes a single server instance for the in-memory sequence counter; multi-instance restore would additionally publish the update and event over Redis (see [docs/architecture.md](docs/architecture.md)).
 
 ## Password reset & email
 

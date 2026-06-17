@@ -135,3 +135,38 @@ export interface AcceptInviteResponse {
 export interface BulkCreateDocumentsPayload {
   documents: CreateDocumentPayload[];
 }
+
+// ── Document versions ───────────────────────────────────────────────────────
+
+export interface ApiVersionAuthor {
+  id: string;
+  displayName: string;
+}
+
+/** Lightweight version metadata as returned by the list endpoint. */
+export interface ApiDocumentVersionSummary {
+  id: string;
+  versionNumber: number;
+  message: string | null;
+  createdAt: string;
+  contentLength: number;
+  createdBy: ApiVersionAuthor | null;
+}
+
+/** A single version including its full content. */
+export interface ApiDocumentVersionDetail {
+  id: string;
+  documentId: string;
+  versionNumber: number;
+  message: string | null;
+  createdAt: string;
+  content: string;
+  contentLength: number;
+  createdBy: ApiVersionAuthor | null;
+}
+
+export interface RestoreVersionResponse {
+  document: ApiDocument;
+  restoredFromVersion: number;
+  newVersionNumber: number;
+}

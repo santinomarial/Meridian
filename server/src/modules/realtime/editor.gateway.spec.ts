@@ -7,6 +7,7 @@ import { EditorGateway, extractSocketToken } from './editor.gateway';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
+import { DocumentRestoreService } from './document-restore.service';
 import { WsRateLimiter } from './ws-rate-limiter.service';
 import { RedisService } from '../../redis/redis.service';
 import { WorkspacesService } from '../../workspaces/workspaces.service';
@@ -68,6 +69,7 @@ function makeGateway(opts?: { wsLimit?: number; maxBytes?: number }) {
   const redis = mockDeep<RedisService>();
   const documentManager = mockDeep<DocumentManagerService>();
   const persistence = mockDeep<DocumentPersistenceService>();
+  const documentRestore = mockDeep<DocumentRestoreService>();
   const rateLimiter = new WsRateLimiter();
   const configService = mockDeep<ConfigService>();
   const logger = {
@@ -90,6 +92,7 @@ function makeGateway(opts?: { wsLimit?: number; maxBytes?: number }) {
     registry,
     documentManager,
     persistence,
+    documentRestore,
     redis,
     jwtService,
     prisma,

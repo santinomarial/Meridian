@@ -38,6 +38,7 @@ type MenuEntry = {
   sep?: true;
   danger?: boolean;
   requiresEdit?: true;
+  disabled?: boolean;
 };
 
 type InviteRole = "EDITOR" | "VIEWER";
@@ -105,15 +106,19 @@ function DropdownPanel({ children, className = "", ...rest }: HTMLAttributes<HTM
   );
 }
 
-function MenuItem({ label, icon, onClick, danger = false }: MenuEntry) {
+function MenuItem({ label, icon, onClick, danger = false, disabled = false }: MenuEntry) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={[
         "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors duration-75",
-        "hover:bg-surface-container-high focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary",
-        danger ? "text-error" : "text-on-surface",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary",
+        disabled
+          ? "cursor-not-allowed text-on-surface-variant/40"
+          : "hover:bg-surface-container-high",
+        disabled ? "" : danger ? "text-error" : "text-on-surface",
       ].join(" ")}
     >
       {icon !== undefined ? (
@@ -243,6 +248,11 @@ export function Header() {
   const overflowCount = Math.max(0, collaborators.length - MAX_VISIBLE_COLLABORATORS);
   const isBackendAvailable = backendStatus === "available";
 
+  // Version history needs a backend-persisted file; disable the menu entry when
+  // there is no active file or it only exists locally.
+  const canViewHistory =
+    isBackendAvailable && activeFileId !== null && !activeFileId.startsWith("local-");
+
   // Create a real invite when the share panel opens (and again when the role
   // changes). Offline demo mode falls back to a non-persistent /invite/demo link.
   useEffect(() => {
@@ -308,6 +318,20 @@ export function Header() {
     clearTabDirty,
     addNotification,
   ]);
+
+  // Version history is backed by real server-side DocumentVersion records, so
+  // it is only meaningful for a file that exists on the backend. The menu item
+  // is disabled otherwise (see canViewHistory) — this handler is the guard for
+  // the rare race where state changed between render and click.
+  const setVersionHistoryOpen = useWorkspaceStore((s) => s.setVersionHistoryOpen);
+  const handleVersionHistory = useCallback(() => {
+    setOpenPanel(null);
+    if (!isBackendAvailable || activeFileId === null || activeFileId.startsWith("local-")) {
+      toast("Version history is available once a file is saved to the backend.", "error");
+      return;
+    }
+    setVersionHistoryOpen(true);
+  }, [isBackendAvailable, activeFileId, setVersionHistoryOpen]);
 
   const handleSignOut = useCallback(async () => {
     setOpenPanel(null);
@@ -474,6 +498,12 @@ export function Header() {
         },
       },
       { label: "Save", icon: "save", onClick: handleSave, sep: true, requiresEdit: true },
+      {
+        label: "Version History",
+        icon: "history",
+        onClick: handleVersionHistory,
+        disabled: !canViewHistory,
+      },
       { label: "Sign out", icon: "logout", onClick: handleSignOut, sep: true, danger: true },
     ],
     Edit: [
@@ -630,6 +660,7 @@ export function Header() {
                             icon={entry.icon}
                             onClick={entry.onClick}
                             danger={entry.danger}
+                            disabled={entry.disabled}
                           />
                         </div>
                       ))}

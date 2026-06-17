@@ -1,9 +1,33 @@
-import { Injectable } from '@nestjs/common';
-import type { Document, Prisma } from '@prisma/client';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import type { Document, DocumentVersion, Prisma } from '@prisma/client';
 import { DocumentType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type { DocumentType };
+
+/** Lightweight version metadata returned by the list endpoint. */
+export interface VersionListItem {
+  id: string;
+  versionNumber: number;
+  message: string | null;
+  createdAt: Date;
+  contentLength: number;
+  createdBy: { id: string; displayName: string } | null;
+}
+
+/** Full version content returned by the detail endpoint. */
+export interface VersionDetail extends VersionListItem {
+  documentId: string;
+  content: string;
+}
+
+/** Result of a restore — includes the restored content for realtime sync. */
+export interface RestoreResult {
+  document: Document;
+  restoredFromVersion: number;
+  newVersionNumber: number;
+  content: string;
+}
 
 export interface CreateDocumentData {
   workspaceId: string;
@@ -157,17 +181,208 @@ export class DocumentsService {
     });
   }
 
+  /**
+   * Updates a document and, when the content meaningfully changes, records a
+   * new DocumentVersion in the same transaction so the update and the version
+   * either both commit or both roll back.
+   *
+   * A version is created only when `content` is provided AND differs from the
+   * currently-persisted content — identical saves (e.g. a Cmd+S with no edits,
+   * or a metadata-only rename) never produce duplicate versions.  The first
+   * meaningful save naturally becomes versionNumber 1, so no separate "initial
+   * version" bookkeeping is needed.
+   */
   async patchDocument(
     documentId: string,
     data: PatchDocumentData,
+    userId?: string,
   ): Promise<Document> {
-    return this.prisma.document.update({
-      where: { id: documentId },
-      data,
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const current = await tx.document.findUnique({
+        where: { id: documentId },
+        select: { content: true, workspaceId: true },
+      });
+      if (current === null) {
+        throw new NotFoundException(`Document ${documentId} not found`);
+      }
+
+      const updated = await tx.document.update({
+        where: { id: documentId },
+        data,
+      });
+
+      const contentChanged =
+        data.content !== undefined &&
+        data.content !== null &&
+        data.content !== current.content;
+
+      if (contentChanged) {
+        await this.createVersionTx(tx, {
+          documentId,
+          workspaceId: current.workspaceId,
+          content: data.content as string,
+          createdById: userId ?? null,
+        });
+      }
+
+      return updated;
     });
   }
 
   async deleteDocument(documentId: string): Promise<void> {
     await this.prisma.document.delete({ where: { id: documentId } });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Versions
+  // ---------------------------------------------------------------------------
+
+  /** Lists a document's versions, newest first, without full content payloads. */
+  async listVersions(documentId: string): Promise<VersionListItem[]> {
+    const versions = await this.prisma.documentVersion.findMany({
+      where: { documentId },
+      orderBy: { versionNumber: 'desc' },
+      select: {
+        id: true,
+        versionNumber: true,
+        message: true,
+        createdAt: true,
+        content: true,
+        createdBy: { select: { id: true, displayName: true } },
+      },
+    });
+
+    return versions.map((v) => ({
+      id: v.id,
+      versionNumber: v.versionNumber,
+      message: v.message,
+      createdAt: v.createdAt,
+      contentLength: v.content.length,
+      createdBy: v.createdBy,
+    }));
+  }
+
+  /** Returns a single version with full content, scoped to the document. */
+  async getVersion(
+    documentId: string,
+    versionId: string,
+  ): Promise<VersionDetail> {
+    const version = await this.prisma.documentVersion.findUnique({
+      where: { id: versionId },
+      include: { createdBy: { select: { id: true, displayName: true } } },
+    });
+    // Treat a missing version and a version belonging to a different document
+    // identically (404) so version ids are not cross-document enumerable.
+    if (version === null || version.documentId !== documentId) {
+      throw new NotFoundException(
+        `Version ${versionId} not found for document ${documentId}`,
+      );
+    }
+    return {
+      id: version.id,
+      documentId: version.documentId,
+      versionNumber: version.versionNumber,
+      message: version.message,
+      createdAt: version.createdAt,
+      content: version.content,
+      contentLength: version.content.length,
+      createdBy: version.createdBy,
+    };
+  }
+
+  /**
+   * Restores a document to a previous version's content.
+   *
+   * In one transaction: rewrites the document content and records a new
+   * version capturing the restored content with a "Restored from version X"
+   * message.  The realtime reconciliation (live Y.Doc + broadcast) is handled
+   * by the caller via DocumentRestoreService, after this transaction commits.
+   */
+  async restoreVersion(
+    documentId: string,
+    versionId: string,
+    userId?: string,
+  ): Promise<RestoreResult> {
+    // Validate the version belongs to this document before opening the
+    // transaction so a mismatch returns a clean 404.
+    const source = await this.findVersionForDocument(documentId, versionId);
+
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const document = await tx.document.update({
+        where: { id: documentId },
+        data: { content: source.content },
+      });
+
+      const newVersion = await this.createVersionTx(tx, {
+        documentId,
+        workspaceId: source.workspaceId,
+        content: source.content,
+        createdById: userId ?? null,
+        message: `Restored from version ${source.versionNumber}`,
+      });
+
+      return {
+        document,
+        restoredFromVersion: source.versionNumber,
+        newVersionNumber: newVersion.versionNumber,
+        content: source.content,
+      };
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Version helpers
+  // ---------------------------------------------------------------------------
+
+  private async findVersionForDocument(
+    documentId: string,
+    versionId: string,
+  ): Promise<DocumentVersion> {
+    const version = await this.prisma.documentVersion.findUnique({
+      where: { id: versionId },
+    });
+    // Treat a missing version and a version belonging to a different document
+    // identically (404) so version ids are not cross-document enumerable.
+    if (version === null || version.documentId !== documentId) {
+      throw new NotFoundException(
+        `Version ${versionId} not found for document ${documentId}`,
+      );
+    }
+    return version;
+  }
+
+  /**
+   * Creates the next version for a document inside an existing transaction.
+   * versionNumber is derived from the current max for the document, so numbers
+   * increment per-document and the @@unique([documentId, versionNumber])
+   * constraint rejects any concurrent duplicate.
+   */
+  private async createVersionTx(
+    tx: Prisma.TransactionClient,
+    params: {
+      documentId: string;
+      workspaceId: string;
+      content: string;
+      createdById: string | null;
+      message?: string;
+    },
+  ): Promise<DocumentVersion> {
+    const last = await tx.documentVersion.findFirst({
+      where: { documentId: params.documentId },
+      orderBy: { versionNumber: 'desc' },
+      select: { versionNumber: true },
+    });
+    const versionNumber = (last?.versionNumber ?? 0) + 1;
+
+    return tx.documentVersion.create({
+      data: {
+        documentId: params.documentId,
+        workspaceId: params.workspaceId,
+        createdById: params.createdById,
+        versionNumber,
+        content: params.content,
+        message: params.message ?? null,
+      },
+    });
   }
 }

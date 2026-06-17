@@ -4,6 +4,7 @@ import { EditorGateway } from './editor.gateway';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
+import { DocumentRestoreService } from './document-restore.service';
 import { WsRateLimiter } from './ws-rate-limiter.service';
 
 @Module({
@@ -13,8 +14,14 @@ import { WsRateLimiter } from './ws-rate-limiter.service';
     ConnectionRegistryService,
     DocumentManagerService,
     DocumentPersistenceService,
+    DocumentRestoreService,
     WsRateLimiter,
   ],
-  exports: [ConnectionRegistryService, DocumentManagerService, DocumentPersistenceService],
+  exports: [
+    ConnectionRegistryService,
+    DocumentManagerService,
+    DocumentPersistenceService,
+    DocumentRestoreService,
+  ],
 })
 export class RealtimeModule {}

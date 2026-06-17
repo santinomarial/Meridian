@@ -26,6 +26,7 @@ import { SkipThrottle } from '@nestjs/throttler';
 import type { Document } from '@prisma/client';
 import { DocumentsService } from './documents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { DocumentRestoreService } from '../modules/realtime/document-restore.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { BulkCreateDocumentsDto } from './dto/bulk-create-documents.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
@@ -41,6 +42,7 @@ export class DocumentsController {
   constructor(
     private readonly documentsService: DocumentsService,
     private readonly workspacesService: WorkspacesService,
+    private readonly documentRestore: DocumentRestoreService,
   ) {}
 
   @Get('workspaces/:workspaceId/documents')
@@ -123,7 +125,7 @@ export class DocumentsController {
     @Body() dto: UpdateDocumentDto,
   ) {
     await this.requireDocumentWriteAccess(user, documentId);
-    return this.documentsService.patchDocument(documentId, dto);
+    return this.documentsService.patchDocument(documentId, dto, user.id);
   }
 
   @Delete('documents/:documentId')
@@ -138,6 +140,72 @@ export class DocumentsController {
   ) {
     await this.requireDocumentWriteAccess(user, documentId);
     await this.documentsService.deleteDocument(documentId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Version history
+  // ---------------------------------------------------------------------------
+
+  @Get('documents/:documentId/versions')
+  @ApiOperation({ summary: 'List saved versions of a document (newest first)' })
+  @ApiParam({ name: 'documentId', description: 'Document cuid' })
+  @ApiOkResponse({ description: 'Lightweight version metadata, newest first' })
+  @ApiNotFoundResponse({ description: 'Document not found' })
+  async listVersions(
+    @CurrentUser() user: AuthUser,
+    @Param('documentId') documentId: string,
+  ) {
+    // Any workspace member (including viewers) may list versions.
+    await this.requireDocumentAccess(user, documentId);
+    return this.documentsService.listVersions(documentId);
+  }
+
+  @Get('documents/:documentId/versions/:versionId')
+  @ApiOperation({ summary: 'Get the full content of a single version' })
+  @ApiParam({ name: 'documentId', description: 'Document cuid' })
+  @ApiParam({ name: 'versionId', description: 'Version cuid' })
+  @ApiOkResponse({ description: 'The version with full content' })
+  @ApiNotFoundResponse({ description: 'Document or version not found' })
+  async getVersion(
+    @CurrentUser() user: AuthUser,
+    @Param('documentId') documentId: string,
+    @Param('versionId') versionId: string,
+  ) {
+    // Viewers may read version content; non-members get a 404 from the helper.
+    await this.requireDocumentAccess(user, documentId);
+    return this.documentsService.getVersion(documentId, versionId);
+  }
+
+  @Post('documents/:documentId/versions/:versionId/restore')
+  @ApiOperation({ summary: 'Restore a document to a previous version' })
+  @ApiParam({ name: 'documentId', description: 'Document cuid' })
+  @ApiParam({ name: 'versionId', description: 'Version cuid' })
+  @ApiOkResponse({ description: 'The restored document and version numbers' })
+  @ApiNotFoundResponse({ description: 'Document or version not found' })
+  async restoreVersion(
+    @CurrentUser() user: AuthUser,
+    @Param('documentId') documentId: string,
+    @Param('versionId') versionId: string,
+  ) {
+    // Restore mutates document content — editors and owners only.
+    await this.requireDocumentWriteAccess(user, documentId);
+
+    const result = await this.documentsService.restoreVersion(
+      documentId,
+      versionId,
+      user.id,
+    );
+
+    // Reconcile the realtime layer (live Y.Doc, persisted CRDT history, and
+    // connected clients) with the restored content.  See DocumentRestoreService
+    // for the synchronization strategy.
+    await this.documentRestore.applyRestore(documentId, result.content);
+
+    return {
+      document: result.document,
+      restoredFromVersion: result.restoredFromVersion,
+      newVersionNumber: result.newVersionNumber,
+    };
   }
 
   // Non-members receive 404 (not 403) so resource ids are not enumerable.

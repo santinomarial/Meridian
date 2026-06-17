@@ -26,6 +26,7 @@ import { ORIGIN_ID } from './origin';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
+import { DocumentRestoreService } from './document-restore.service';
 import { WsRateLimiter } from './ws-rate-limiter.service';
 import { JoinDocumentDto } from './dto/join-document.dto';
 import { JoinWorkspaceDto } from './dto/join-workspace.dto';
@@ -92,6 +93,7 @@ export class EditorGateway
     private readonly registry: ConnectionRegistryService,
     private readonly documentManager: DocumentManagerService,
     private readonly persistence: DocumentPersistenceService,
+    private readonly documentRestore: DocumentRestoreService,
     private readonly redis: RedisService,
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
@@ -114,6 +116,10 @@ export class EditorGateway
   // ---------------------------------------------------------------------------
 
   async afterInit(): Promise<void> {
+    // Give the restore service the Socket.IO server so HTTP version restores
+    // can broadcast the resulting Yjs update and the document:restored event.
+    this.documentRestore.registerServer(this.server);
+
     // Authenticate every socket before it connects.  The middleware runs
     // synchronously as part of the Socket.IO handshake; calling next(error)
     // rejects the connection before handleConnection is ever invoked.

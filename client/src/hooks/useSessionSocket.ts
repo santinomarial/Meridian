@@ -99,6 +99,14 @@ export function useSessionSocket(): void {
       Y.applyUpdate(getOrCreateDoc(documentId), bytes, "remote");
     };
 
+    // A document was restored to an earlier version on the server. The restored
+    // text arrives via the preceding yjs:update (applied above), which the
+    // Monaco binding reflects in the editor. This event then reconciles the
+    // dirty/save indicators so the tab is not left looking like an unsaved edit.
+    const onDocumentRestored = ({ documentId }: { documentId: string }): void => {
+      useWorkspaceStore.getState().markDocumentRestored(documentId);
+    };
+
     const onAwarenessUpdate = ({ documentId, update }: UpdatePayload): void => {
       const bytes = toUint8Array(update);
       if (bytes === null) return;
@@ -116,6 +124,7 @@ export function useSessionSocket(): void {
     socket.on("yjs:update", onYjsUpdate);
     socket.on("awareness:update", onAwarenessUpdate);
     socket.on("chat:message", onChatMessage);
+    socket.on("document:restored", onDocumentRestored);
 
     setConnectionStatus("connecting");
     if (socket.connected) {
@@ -134,6 +143,7 @@ export function useSessionSocket(): void {
       socket.off("yjs:update", onYjsUpdate);
       socket.off("awareness:update", onAwarenessUpdate);
       socket.off("chat:message", onChatMessage);
+      socket.off("document:restored", onDocumentRestored);
       socket.disconnect();
       setConnectionStatus("disconnected");
     };

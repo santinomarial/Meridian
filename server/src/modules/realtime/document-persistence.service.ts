@@ -99,6 +99,51 @@ export class DocumentPersistenceService {
     await Promise.all([...this.writeChain.values()]);
   }
 
+  /**
+   * Resets the persisted Yjs history for a document — used by version restore.
+   *
+   * Restore makes the plain-text `content` column authoritative again, so the
+   * old CRDT history (which still encodes the pre-restore text) must be
+   * discarded or a cold load would reconstruct the wrong document.
+   *
+   *  - When `fullState` is provided (the document is live in memory), it is
+   *    written as the sole Snapshot at seq 0 so cold loads rebuild exactly the
+   *    restored state, and the seq counter resumes at 1.
+   *  - When `fullState` is null (the document is not loaded), all rows are
+   *    deleted so the next collaborative open re-seeds from `content` via
+   *    DocumentManager.seedFromContent, and the seq counter is forgotten so it
+   *    is re-derived from the database.
+   *
+   * Like the seq counter itself, this is correct for a single-server
+   * deployment; horizontal scaling would need the same shared-counter work
+   * already noted above.
+   */
+  async resetDocument(
+    documentId: string,
+    fullState: Uint8Array | null,
+  ): Promise<void> {
+    // Let any in-flight writes settle first so the delete below can't race a
+    // create that would otherwise resurrect stale history.
+    await this.flushDocument(documentId);
+
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.documentUpdate.deleteMany({ where: { documentId } });
+      await tx.snapshot.deleteMany({ where: { documentId } });
+      if (fullState !== null) {
+        await tx.snapshot.create({
+          data: { documentId, state: Buffer.from(fullState), seq: 0 },
+        });
+      }
+    });
+
+    this.updateCountSinceSnapshot.delete(documentId);
+    if (fullState !== null) {
+      this.seqMap.set(documentId, 1);
+    } else {
+      this.seqMap.delete(documentId);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Private — write
   // ---------------------------------------------------------------------------

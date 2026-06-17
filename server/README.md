@@ -129,7 +129,10 @@ http://localhost:3000/docs
 | `GET` | `/workspaces/:id/documents` | Yes | List all documents in workspace |
 | `GET` | `/workspaces/:id/documents/tree` | Yes | Document tree (nested, with content) |
 | `GET` | `/documents/:id` | Yes | Get single document |
-| `PATCH` | `/documents/:id` | Yes | Update document (name, content, language) |
+| `PATCH` | `/documents/:id` | Yes | Update document (name, content, language); a meaningful content change records a `DocumentVersion` |
+| `GET` | `/documents/:id/versions` | Yes | List saved versions (lightweight, newest first); any member |
+| `GET` | `/documents/:id/versions/:versionId` | Yes | Get one version with full content; any member |
+| `POST` | `/documents/:id/versions/:versionId/restore` | Yes | Restore the document to a version (editor/owner) |
 
 ---
 
@@ -147,6 +150,7 @@ Managed by Prisma. Migration files live in `prisma/migrations/`.
 | `Document` | File or folder node; self-referential parent/child tree |
 | `DocumentUpdate` | Append-only binary Yjs update row (sequential `seq` per document) |
 | `Snapshot` | Compacted full Y.Doc state at a specific `seq` |
+| `DocumentVersion` | Plain-text point-in-time snapshot of a document's content for history/diff/restore; `versionNumber` unique per document |
 | `Session` | JWT session record with `jti`, `expiresAt`, and `revokedAt` |
 
 ### Migrations
@@ -245,6 +249,14 @@ When `DocumentManagerService.acquire(documentId)` is called for a document not c
 3. Load all `DocumentUpdate` rows with `seq > snapshot.seq`, ordered by `seq ASC`.
 4. Apply each delta in sequence.
 5. Return the reconstructed Y.Doc.
+
+### Version restore reset
+
+`POST /documents/:id/versions/:versionId/restore` makes the plain-text content authoritative again, so the CRDT history must be reconciled (`DocumentRestoreService`):
+
+- If the document is **live in memory**, the canonical `Y.Text` is replaced inside a Yjs transaction; the resulting incremental update is broadcast on `yjs:update` so connected editors converge with no reload. The history is then collapsed via `DocumentPersistenceService.resetDocument(id, fullState)` into a single `Snapshot` at `seq 0`, and the seq counter resumes at 1.
+- If the document is **not in memory**, `resetDocument(id, null)` deletes all `DocumentUpdate`/`Snapshot` rows so the next cold load re-seeds the Y.Doc from the restored `content` column.
+- A `document:restored` event is then emitted to the document room. Like the sequence counter above, this is correct for a single-process deployment.
 
 ### Document lifecycle
 
