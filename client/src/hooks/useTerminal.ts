@@ -10,14 +10,16 @@ type ExitPayload = { code: number | null };
 type StatusPayload = { status: "ready" | "running" };
 
 export interface UseTerminalReturn {
-  terminalRef: React.RefObject<HTMLDivElement | null>;
+  terminalRef: React.RefObject<HTMLDivElement>;
   start: () => void;
   stop: () => void;
   fit: () => void;
 }
 
 export function useTerminal(workspaceId: string | null): UseTerminalReturn {
-  const terminalRef = useRef<HTMLDivElement | null>(null);
+  // useRef<T>(null) resolves to RefObject<T> (not MutableRefObject<T | null>),
+  // which is what the JSX `ref` prop expects under @types/react 18.3.
+  const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const mountedRef = useRef(false);
