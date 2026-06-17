@@ -83,7 +83,9 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   const updateFileContent = useWorkspaceStore((state) => state.updateFileContent);
   const setCursorPosition = useWorkspaceStore((state) => state.setCursorPosition);
   const backendStatus = useWorkspaceStore((state) => state.backendStatus);
+  const userRole = useWorkspaceStore((state) => state.userRole);
   const isDemoMode = backendStatus === "unavailable";
+  const isViewer = userRole === "VIEWER";
 
   useYjsMonaco(mountedEditor, activeFileId, backendStatus === "available");
 
@@ -198,7 +200,7 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
         language={LANGUAGE_TO_MONACO[language]}
         theme={monacoTheme}
         value={content}
-        options={EDITOR_OPTIONS}
+        options={isViewer ? { ...EDITOR_OPTIONS, readOnly: true } : EDITOR_OPTIONS}
         loading={<EditorSkeleton />}
         beforeMount={registerMeridianMonacoThemes}
         onMount={handleMount}

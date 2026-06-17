@@ -174,4 +174,89 @@ describe('WorkspacesService', () => {
       expect(result).toBe(false);
     });
   });
+
+  describe('getMemberRole', () => {
+    it('returns the role when user is a member', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue(
+        { role: WorkspaceRole.EDITOR } as never,
+      );
+      expect(await service.getMemberRole('user-1', 'ws-1')).toBe(WorkspaceRole.EDITOR);
+    });
+
+    it('returns null when the user is not a member', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue(null);
+      expect(await service.getMemberRole('user-99', 'ws-1')).toBeNull();
+    });
+  });
+
+  describe('canEditWorkspace', () => {
+    it.each([
+      [WorkspaceRole.OWNER, true],
+      [WorkspaceRole.EDITOR, true],
+      [WorkspaceRole.VIEWER, false],
+    ])('returns %s for role %s', async (role, expected) => {
+      prisma.workspaceMember.findUnique.mockResolvedValue({ role } as never);
+      expect(await service.canEditWorkspace('user-1', 'ws-1')).toBe(expected);
+    });
+
+    it('returns false for non-member', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue(null);
+      expect(await service.canEditWorkspace('user-99', 'ws-1')).toBe(false);
+    });
+  });
+
+  describe('canManageWorkspace', () => {
+    it('returns true for OWNER', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue(
+        { role: WorkspaceRole.OWNER } as never,
+      );
+      expect(await service.canManageWorkspace('user-1', 'ws-1')).toBe(true);
+    });
+
+    it.each([WorkspaceRole.EDITOR, WorkspaceRole.VIEWER])(
+      'returns false for %s',
+      async (role) => {
+        prisma.workspaceMember.findUnique.mockResolvedValue({ role } as never);
+        expect(await service.canManageWorkspace('user-1', 'ws-1')).toBe(false);
+      },
+    );
+
+    it('returns false for non-member', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue(null);
+      expect(await service.canManageWorkspace('user-99', 'ws-1')).toBe(false);
+    });
+  });
+
+  describe('getDocumentAccessInfo', () => {
+    it('returns null when document does not exist', async () => {
+      prisma.document.findUnique.mockResolvedValue(null);
+      expect(await service.getDocumentAccessInfo('user-1', 'ghost')).toBeNull();
+      expect(prisma.workspaceMember.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('returns null when user is not a member', async () => {
+      prisma.document.findUnique.mockResolvedValue({ workspaceId: 'ws-1' } as never);
+      prisma.workspaceMember.findUnique.mockResolvedValue(null);
+      expect(await service.getDocumentAccessInfo('user-99', 'doc-1')).toBeNull();
+    });
+
+    it('returns workspaceId and role when authorized', async () => {
+      prisma.document.findUnique.mockResolvedValue({ workspaceId: 'ws-1' } as never);
+      prisma.workspaceMember.findUnique.mockResolvedValue(
+        { role: WorkspaceRole.VIEWER } as never,
+      );
+      const result = await service.getDocumentAccessInfo('user-1', 'doc-1');
+      expect(result).toEqual({ workspaceId: 'ws-1', role: WorkspaceRole.VIEWER });
+    });
+
+    it.each([WorkspaceRole.OWNER, WorkspaceRole.EDITOR, WorkspaceRole.VIEWER])(
+      'returns the correct role for %s members',
+      async (role) => {
+        prisma.document.findUnique.mockResolvedValue({ workspaceId: 'ws-1' } as never);
+        prisma.workspaceMember.findUnique.mockResolvedValue({ role } as never);
+        const result = await service.getDocumentAccessInfo('user-1', 'doc-1');
+        expect(result?.role).toBe(role);
+      },
+    );
+  });
 });

@@ -17,6 +17,7 @@ import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
+import { WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { WorkspacesService } from '../../workspaces/workspaces.service';
@@ -200,12 +201,13 @@ export class EditorGateway
 
     const user = client.data['user'] as AuthUser;
 
-    // Authorization: the socket user must be a member of the document's workspace.
-    const authorized = await this.workspaces.canUserAccessDocument(
+    // Authorization: the user must be a workspace member.  getDocumentAccessInfo
+    // returns the role in the same query so we can cache it for yjs:update checks.
+    const accessInfo = await this.workspaces.getDocumentAccessInfo(
       user.id,
       dto.documentId,
     );
-    if (!authorized) {
+    if (!accessInfo) {
       client.emit('error', {
         message: `Access denied to document ${dto.documentId}`,
       });
@@ -215,6 +217,12 @@ export class EditorGateway
       );
       return;
     }
+
+    // Cache the role so handleYjsUpdate can reject viewer writes without a DB hit.
+    const docRoles =
+      (client.data['documentRoles'] as Record<string, WorkspaceRole> | undefined) ?? {};
+    docRoles[dto.documentId] = accessInfo.role;
+    client.data['documentRoles'] = docRoles;
 
     const room = `document:${dto.documentId}`;
 
@@ -284,6 +292,10 @@ export class EditorGateway
     const room = `document:${dto.documentId}`;
 
     this.removeAwarenessForSocket(client, dto.documentId);
+
+    // Clean up cached role for this document.
+    const docRoles = client.data['documentRoles'] as Record<string, WorkspaceRole> | undefined;
+    if (docRoles !== undefined) delete docRoles[dto.documentId];
 
     await client.leave(room);
     this.registry.leave(client.id, dto.documentId);
@@ -420,6 +432,20 @@ export class EditorGateway
     @ConnectedSocket() client: Socket,
   ): void {
     if (!this.checkRateLimit(client, 'yjs:update')) return;
+
+    const user = client.data['user'] as AuthUser;
+
+    // Viewers may receive updates but must not persist or relay edits.
+    const docRoles =
+      (client.data['documentRoles'] as Record<string, WorkspaceRole> | undefined) ?? {};
+    if (docRoles[dto.documentId] === WorkspaceRole.VIEWER) {
+      this.logger.warn(
+        { socketId: client.id, userId: user.id, documentId: dto.documentId },
+        'Viewer yjs:update rejected',
+      );
+      client.emit('error', { message: 'Viewers cannot send document updates' });
+      return;
+    }
 
     const update = toUint8Array(dto.update);
 

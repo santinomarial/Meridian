@@ -45,6 +45,8 @@ type WorkspaceActions = {
   clearNotifications: () => void;
   setCollaborators: (collaborators: Collaborator[]) => void;
   setCurrentUser: (user: CurrentUser | null) => void;
+  setUserRole: (role: "OWNER" | "EDITOR" | "VIEWER" | null) => void;
+  setMemberRoles: (roles: Record<string, "OWNER" | "EDITOR" | "VIEWER">) => void;
   setDiagnosticCounts: (counts: DiagnosticCounts) => void;
   setSaveStatus: (status: SaveStatus) => void;
   setBackendStatus: (status: BackendStatus) => void;
@@ -186,6 +188,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   cursorPosition: { line: 1, column: 1 },
   saveStatus: "saved",
 
+  // ── Role state ────────────────────────────────────────────────────────────
+  userRole: null,
+  memberRoles: {},
+
   // ── Backend / socket state ────────────────────────────────────────────────
   backendStatus: "pending",
   connectionStatus: "disconnected",
@@ -311,6 +317,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   setCollaborators: (collaborators) => set({ collaborators }),
 
   setCurrentUser: (user) => set({ currentUser: user }),
+
+  setUserRole: (role) => set({ userRole: role }),
+
+  setMemberRoles: (roles) => set({ memberRoles: roles }),
 
   setDiagnosticCounts: (counts) => {
     const current = get().diagnosticCounts;

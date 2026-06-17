@@ -31,6 +31,7 @@ function getAwarenessUser(state: Record<string, unknown>): AwarenessUser | null 
 export function collaboratorsFromAwareness(
   awareness: Awareness,
   localUserId: string | null,
+  memberRoles?: Record<string, "OWNER" | "EDITOR" | "VIEWER">,
 ): Collaborator[] {
   const byUserId = new Map<string, Collaborator>();
 
@@ -40,13 +41,15 @@ export function collaboratorsFromAwareness(
     if (user === null) continue;
     if (localUserId !== null && user.id === localUserId) continue;
 
+    const role = memberRoles?.[user.id];
     byUserId.set(user.id, {
       id: user.id,
       name: user.name,
       color: user.color,
       status: "active",
       activity: "Editing this file",
-      isOwner: false,
+      isOwner: role === "OWNER",
+      role,
     });
   }
 

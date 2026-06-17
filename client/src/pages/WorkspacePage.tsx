@@ -38,6 +38,9 @@ export function WorkspacePage() {
   const clearTabDirty = useWorkspaceStore((state) => state.clearTabDirty);
   const addNotification = useWorkspaceStore((state) => state.addNotification);
 
+  const userRole = useWorkspaceStore((state) => state.userRole);
+  const isViewer = userRole === "VIEWER";
+
   const isWorkspaceReady = useWorkspaceReady();
 
   // Load workspace from backend (mock fallback on failure)
@@ -62,7 +65,7 @@ export function WorkspacePage() {
       if (!(e.metaKey || e.ctrlKey) || e.key !== "s") return;
       e.preventDefault();
 
-      if (backendStatus !== "available" || activeFileId === null) return;
+      if (isViewer || backendStatus !== "available" || activeFileId === null) return;
 
       const content = editorContentByFileId[activeFileId] ?? "";
       setSaveStatus("saving");
@@ -85,6 +88,7 @@ export function WorkspacePage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    isViewer,
     backendStatus,
     activeFileId,
     editorContentByFileId,
@@ -125,11 +129,22 @@ export function WorkspacePage() {
         </div>
       ) : null}
 
+      {isViewer ? (
+        <div
+          role="status"
+          className="flex items-center gap-2 bg-tertiary/10 px-4 py-1.5 text-[11px] text-tertiary"
+          data-testid="viewer-readonly-banner"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-tertiary" aria-hidden />
+          You have view-only access to this workspace.
+        </div>
+      ) : null}
+
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <ActivityBar />
 
         {!isCompact && isExplorerOpen ? (
-          <FileExplorer isLoading={!isWorkspaceReady} mode="inline" />
+          <FileExplorer isLoading={!isWorkspaceReady} mode="inline" readOnly={isViewer} />
         ) : null}
 
         <main
@@ -157,6 +172,7 @@ export function WorkspacePage() {
             isLoading={!isWorkspaceReady}
             mode="drawer"
             onClose={() => closePanel("explorer")}
+            readOnly={isViewer}
           />
         </PanelOverlay>
       ) : null}

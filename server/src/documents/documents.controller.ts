@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -11,6 +12,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { WorkspaceRole } from '@prisma/client';
 import {
   ApiCreatedResponse,
   ApiNoContentResponse,
@@ -77,7 +79,7 @@ export class DocumentsController {
     @Param('workspaceId') workspaceId: string,
     @Body() dto: CreateDocumentDto,
   ) {
-    await this.requireWorkspaceAccess(user, workspaceId);
+    await this.requireWorkspaceWriteAccess(user, workspaceId);
     return this.documentsService.createDocument({ workspaceId, ...dto });
   }
 
@@ -94,7 +96,7 @@ export class DocumentsController {
     @Param('workspaceId') workspaceId: string,
     @Body() dto: BulkCreateDocumentsDto,
   ) {
-    await this.requireWorkspaceAccess(user, workspaceId);
+    await this.requireWorkspaceWriteAccess(user, workspaceId);
     return this.documentsService.bulkCreateDocuments(workspaceId, dto.documents);
   }
 
@@ -120,7 +122,7 @@ export class DocumentsController {
     @Param('documentId') documentId: string,
     @Body() dto: UpdateDocumentDto,
   ) {
-    await this.requireDocumentAccess(user, documentId);
+    await this.requireDocumentWriteAccess(user, documentId);
     return this.documentsService.patchDocument(documentId, dto);
   }
 
@@ -134,11 +136,12 @@ export class DocumentsController {
     @CurrentUser() user: AuthUser,
     @Param('documentId') documentId: string,
   ) {
-    await this.requireDocumentAccess(user, documentId);
+    await this.requireDocumentWriteAccess(user, documentId);
     await this.documentsService.deleteDocument(documentId);
   }
 
   // Non-members receive 404 (not 403) so resource ids are not enumerable.
+  // Members without write permission receive 403.
 
   private async requireWorkspaceAccess(
     user: AuthUser,
@@ -155,6 +158,20 @@ export class DocumentsController {
       throw new NotFoundException(`Workspace ${workspaceId} not found`);
   }
 
+  private async requireWorkspaceWriteAccess(
+    user: AuthUser,
+    workspaceId: string,
+  ): Promise<void> {
+    const ws = await this.workspacesService.findById(workspaceId);
+    if (ws === null)
+      throw new NotFoundException(`Workspace ${workspaceId} not found`);
+    const role = await this.workspacesService.getMemberRole(user.id, workspaceId);
+    if (role === null)
+      throw new NotFoundException(`Workspace ${workspaceId} not found`);
+    if (role === WorkspaceRole.VIEWER)
+      throw new ForbiddenException('Viewers cannot modify documents');
+  }
+
   private async requireDocumentAccess(
     user: AuthUser,
     documentId: string,
@@ -168,6 +185,21 @@ export class DocumentsController {
     );
     if (!allowed)
       throw new NotFoundException(`Document ${documentId} not found`);
+    return doc;
+  }
+
+  private async requireDocumentWriteAccess(
+    user: AuthUser,
+    documentId: string,
+  ): Promise<Document> {
+    const doc = await this.documentsService.findById(documentId);
+    if (doc === null)
+      throw new NotFoundException(`Document ${documentId} not found`);
+    const role = await this.workspacesService.getMemberRole(user.id, doc.workspaceId);
+    if (role === null)
+      throw new NotFoundException(`Document ${documentId} not found`);
+    if (role === WorkspaceRole.VIEWER)
+      throw new ForbiddenException('Viewers cannot modify documents');
     return doc;
   }
 }

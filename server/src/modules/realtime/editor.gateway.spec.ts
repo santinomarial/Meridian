@@ -11,6 +11,7 @@ import { WsRateLimiter } from './ws-rate-limiter.service';
 import { RedisService } from '../../redis/redis.service';
 import { WorkspacesService } from '../../workspaces/workspaces.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { WorkspaceRole } from '@prisma/client';
 import type { JwtPayload } from '../auth/types/auth-user.type';
 
 // ---------------------------------------------------------------------------
@@ -255,7 +256,7 @@ describe('EditorGateway.handleJoinDocument', () => {
     const { gateway, workspaces } = makeGateway();
     const socket = makeAuthenticatedSocket();
 
-    workspaces.canUserAccessDocument.mockResolvedValue(false);
+    workspaces.getDocumentAccessInfo.mockResolvedValue(null);
 
     await gateway.handleJoinDocument({ documentId: 'doc-1' }, socket);
 
@@ -270,7 +271,10 @@ describe('EditorGateway.handleJoinDocument', () => {
     const { gateway, workspaces, documentManager } = makeGateway();
     const socket = makeAuthenticatedSocket();
 
-    workspaces.canUserAccessDocument.mockResolvedValue(true);
+    workspaces.getDocumentAccessInfo.mockResolvedValue({
+      workspaceId: 'ws-1',
+      role: WorkspaceRole.EDITOR,
+    });
 
     const { Doc } = await import('yjs');
     const doc = new Doc();
@@ -289,11 +293,14 @@ describe('EditorGateway.handleJoinDocument', () => {
     );
   });
 
-  it('owner (member with OWNER role) has access', async () => {
+  it('owner (member with OWNER role) has access and caches role', async () => {
     const { gateway, workspaces, documentManager } = makeGateway();
     const socket = makeAuthenticatedSocket();
 
-    workspaces.canUserAccessDocument.mockResolvedValue(true);
+    workspaces.getDocumentAccessInfo.mockResolvedValue({
+      workspaceId: 'ws-1',
+      role: WorkspaceRole.OWNER,
+    });
 
     const { Doc } = await import('yjs');
     const doc = new Doc();
@@ -304,15 +311,42 @@ describe('EditorGateway.handleJoinDocument', () => {
 
     await gateway.handleJoinDocument({ documentId: 'doc-1' }, socket);
 
-    expect(workspaces.canUserAccessDocument).toHaveBeenCalledWith('user-1', 'doc-1');
+    expect(workspaces.getDocumentAccessInfo).toHaveBeenCalledWith('user-1', 'doc-1');
     expect(socket.join).toHaveBeenCalled();
+    expect((socket.data['documentRoles'] as Record<string, WorkspaceRole>)['doc-1']).toBe(
+      WorkspaceRole.OWNER,
+    );
+  });
+
+  it('viewer (member with VIEWER role) can join', async () => {
+    const { gateway, workspaces, documentManager } = makeGateway();
+    const socket = makeAuthenticatedSocket();
+
+    workspaces.getDocumentAccessInfo.mockResolvedValue({
+      workspaceId: 'ws-1',
+      role: WorkspaceRole.VIEWER,
+    });
+
+    const { Doc } = await import('yjs');
+    const doc = new Doc();
+    documentManager.acquire.mockResolvedValue(doc);
+
+    const { Awareness } = await import('y-protocols/awareness');
+    documentManager.getAwareness.mockReturnValue(new Awareness(doc));
+
+    await gateway.handleJoinDocument({ documentId: 'doc-1' }, socket);
+
+    expect(socket.join).toHaveBeenCalledWith('document:doc-1');
+    expect((socket.data['documentRoles'] as Record<string, WorkspaceRole>)['doc-1']).toBe(
+      WorkspaceRole.VIEWER,
+    );
   });
 
   it('non-member is denied', async () => {
     const { gateway, workspaces } = makeGateway();
     const socket = makeAuthenticatedSocket();
 
-    workspaces.canUserAccessDocument.mockResolvedValue(false);
+    workspaces.getDocumentAccessInfo.mockResolvedValue(null);
 
     await gateway.handleJoinDocument({ documentId: 'doc-1' }, socket);
 
@@ -327,7 +361,10 @@ describe('EditorGateway.handleJoinDocument', () => {
     const { gateway, workspaces, documentManager } = makeGateway();
     const socket = makeAuthenticatedSocket();
 
-    workspaces.canUserAccessDocument.mockResolvedValue(true);
+    workspaces.getDocumentAccessInfo.mockResolvedValue({
+      workspaceId: 'ws-1',
+      role: WorkspaceRole.EDITOR,
+    });
 
     const { Doc } = await import('yjs');
     const doc = new Doc();
@@ -341,7 +378,67 @@ describe('EditorGateway.handleJoinDocument', () => {
       socket,
     );
 
-    expect(workspaces.canUserAccessDocument).toHaveBeenCalledWith('user-1', 'doc-1');
+    expect(workspaces.getDocumentAccessInfo).toHaveBeenCalledWith('user-1', 'doc-1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Viewer yjs:update rejection
+// ---------------------------------------------------------------------------
+
+describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
+  it('rejects a yjs:update from a VIEWER and emits error', () => {
+    const { gateway } = makeGateway();
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.VIEWER },
+      },
+    });
+    socket.to.mockReturnValue({ emit: jest.fn() } as never);
+
+    gateway.handleYjsUpdate({ documentId: 'doc-1', update: new Uint8Array(10) }, socket);
+
+    expect(socket.emit).toHaveBeenCalledWith(
+      'error',
+      expect.objectContaining({ message: expect.stringContaining('Viewers cannot') as string }),
+    );
+  });
+
+  it('allows a yjs:update from an EDITOR', () => {
+    const { gateway, documentManager } = makeGateway();
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+      },
+    });
+    socket.to.mockReturnValue({ emit: jest.fn() } as never);
+
+    documentManager.hasDocument.mockReturnValue(true);
+    documentManager.applyUpdate.mockImplementation(() => undefined);
+
+    gateway.handleYjsUpdate({ documentId: 'doc-1', update: new Uint8Array(10) }, socket);
+
+    expect(documentManager.applyUpdate).toHaveBeenCalled();
+  });
+
+  it('allows a yjs:update from an OWNER', () => {
+    const { gateway, documentManager } = makeGateway();
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.OWNER },
+      },
+    });
+    socket.to.mockReturnValue({ emit: jest.fn() } as never);
+
+    documentManager.hasDocument.mockReturnValue(true);
+    documentManager.applyUpdate.mockImplementation(() => undefined);
+
+    gateway.handleYjsUpdate({ documentId: 'doc-1', update: new Uint8Array(10) }, socket);
+
+    expect(documentManager.applyUpdate).toHaveBeenCalled();
   });
 });
 

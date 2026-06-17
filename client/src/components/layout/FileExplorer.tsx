@@ -43,6 +43,7 @@ type FileTreeNodeProps = {
   focusedId: string | null;
   renamingId: string | null;
   renameValue: string;
+  readOnly: boolean;
   onToggleFolder: (id: string) => void;
   onOpenFile: (id: string) => void;
   onFocusItem: (id: string) => void;
@@ -60,6 +61,7 @@ function FileTreeNode({
   focusedId,
   renamingId,
   renameValue,
+  readOnly,
   onToggleFolder,
   onOpenFile,
   onFocusItem,
@@ -78,7 +80,7 @@ function FileTreeNode({
     if (isRenaming) renameInputRef.current?.focus();
   }, [isRenaming]);
 
-  const sharedActionButtons = (
+  const sharedActionButtons = readOnly ? null : (
     <div
       className="absolute right-0.5 top-1/2 flex -translate-y-1/2 items-center gap-px opacity-0 group-hover:opacity-100"
       // Stop propagation so clicking these buttons doesn't open/toggle the parent row.
@@ -173,6 +175,7 @@ function FileTreeNode({
                 focusedId={focusedId}
                 renamingId={renamingId}
                 renameValue={renameValue}
+                readOnly={readOnly}
                 onToggleFolder={onToggleFolder}
                 onOpenFile={onOpenFile}
                 onFocusItem={onFocusItem}
@@ -258,11 +261,12 @@ type FileExplorerProps = {
   isLoading?: boolean;
   mode?: "inline" | "drawer";
   onClose?: () => void;
+  readOnly?: boolean;
 };
 
 type NamingTarget = "file" | "folder";
 
-export function FileExplorer({ isLoading = false, mode = "inline", onClose }: FileExplorerProps) {
+export function FileExplorer({ isLoading = false, mode = "inline", onClose, readOnly = false }: FileExplorerProps) {
   const files = useWorkspaceStore((s) => s.files);
   const activeFileId = useWorkspaceStore((s) => s.activeFileId);
   const toggleFolder = useWorkspaceStore((s) => s.toggleFolder);
@@ -478,54 +482,58 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
       <div className={panelHeaderClass}>
         <span className={panelSectionLabel}>Explorer</span>
         <div className="flex items-center">
-          {/* New File */}
-          <button
-            type="button"
-            className={iconButtonMutedClass}
-            aria-label="New file"
-            title="New File"
-            onClick={() => startNaming("file")}
-            disabled={isImporting}
-            data-testid="new-file-button"
-          >
-            <MaterialIcon name="note_add" className="text-[16px]" aria-hidden />
-          </button>
-          {/* New Folder */}
-          <button
-            type="button"
-            className={iconButtonMutedClass}
-            aria-label="New folder"
-            title="New Folder"
-            onClick={() => startNaming("folder")}
-            disabled={isImporting}
-            data-testid="new-folder-button"
-          >
-            <MaterialIcon name="create_new_folder" className="text-[16px]" aria-hidden />
-          </button>
-          {/* Open local file */}
-          <button
-            type="button"
-            className={iconButtonMutedClass}
-            aria-label="Open file from computer"
-            title="Open File"
-            disabled={isImporting}
-            onClick={() => filePickerRef.current?.click()}
-            data-testid="open-file-button"
-          >
-            <MaterialIcon name="upload_file" className="text-[16px]" aria-hidden />
-          </button>
-          {/* Import ZIP */}
-          <button
-            type="button"
-            className={iconButtonMutedClass}
-            aria-label="Import ZIP archive"
-            title="Import ZIP"
-            disabled={isImporting}
-            onClick={() => zipPickerRef.current?.click()}
-            data-testid="import-zip-button"
-          >
-            <MaterialIcon name="folder_zip" className="text-[16px]" aria-hidden />
-          </button>
+          {!readOnly && (
+            <>
+              {/* New File */}
+              <button
+                type="button"
+                className={iconButtonMutedClass}
+                aria-label="New file"
+                title="New File"
+                onClick={() => startNaming("file")}
+                disabled={isImporting}
+                data-testid="new-file-button"
+              >
+                <MaterialIcon name="note_add" className="text-[16px]" aria-hidden />
+              </button>
+              {/* New Folder */}
+              <button
+                type="button"
+                className={iconButtonMutedClass}
+                aria-label="New folder"
+                title="New Folder"
+                onClick={() => startNaming("folder")}
+                disabled={isImporting}
+                data-testid="new-folder-button"
+              >
+                <MaterialIcon name="create_new_folder" className="text-[16px]" aria-hidden />
+              </button>
+              {/* Open local file */}
+              <button
+                type="button"
+                className={iconButtonMutedClass}
+                aria-label="Open file from computer"
+                title="Open File"
+                disabled={isImporting}
+                onClick={() => filePickerRef.current?.click()}
+                data-testid="open-file-button"
+              >
+                <MaterialIcon name="upload_file" className="text-[16px]" aria-hidden />
+              </button>
+              {/* Import ZIP */}
+              <button
+                type="button"
+                className={iconButtonMutedClass}
+                aria-label="Import ZIP archive"
+                title="Import ZIP"
+                disabled={isImporting}
+                onClick={() => zipPickerRef.current?.click()}
+                data-testid="import-zip-button"
+              >
+                <MaterialIcon name="folder_zip" className="text-[16px]" aria-hidden />
+              </button>
+            </>
+          )}
           {mode === "drawer" && onClose ? (
             <button type="button" onClick={onClose} className={iconButtonMutedClass} aria-label="Close explorer">
               <MaterialIcon name="close" className="text-[16px]" aria-hidden />
@@ -600,6 +608,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose }: Fi
               focusedId={focusedId}
               renamingId={renamingId}
               renameValue={renameValue}
+              readOnly={readOnly}
               onToggleFolder={toggleFolder}
               onOpenFile={handleOpenFile}
               onFocusItem={setFocusedId}

@@ -52,6 +52,7 @@ export type Collaborator = {
   status: "active" | "idle";
   activity: string;
   isOwner: boolean;
+  role?: "OWNER" | "EDITOR" | "VIEWER";
 };
 
 export type ChatMessage = {
@@ -101,6 +102,8 @@ export type CurrentUser = {
 export type WorkspaceState = {
   workspaceId: string | null;
   currentUser: CurrentUser | null;
+  userRole: "OWNER" | "EDITOR" | "VIEWER" | null;
+  memberRoles: Record<string, "OWNER" | "EDITOR" | "VIEWER">;
   files: FileNode[];
   activeFileId: string | null;
   openTabs: OpenTab[];

@@ -37,6 +37,7 @@ type MenuEntry = {
   onClick: () => void;
   sep?: true;
   danger?: boolean;
+  requiresEdit?: true;
 };
 
 type InviteRole = "EDITOR" | "VIEWER";
@@ -135,6 +136,9 @@ export function Header() {
   const navigate = useNavigate();
 
   // ── Store ──────────────────────────────────────────────────────────────────
+  const userRole = useWorkspaceStore((s) => s.userRole);
+  const isViewer = userRole === "VIEWER";
+  const isOwner = userRole === "OWNER";
   const collaborators = useWorkspaceStore((s) => s.collaborators);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const currentUser = useWorkspaceStore((s) => s.currentUser);
@@ -448,11 +452,12 @@ export function Header() {
 
   const navMenuContent: Record<NavItem, MenuEntry[]> = {
     File: [
-      { label: "New File", icon: "note_add", onClick: handleNewFile },
-      { label: "New Folder", icon: "create_new_folder", onClick: handleNewFolder },
+      { label: "New File", icon: "note_add", onClick: handleNewFile, requiresEdit: true },
+      { label: "New Folder", icon: "create_new_folder", onClick: handleNewFolder, requiresEdit: true },
       {
         label: "Open File...",
         icon: "upload_file",
+        requiresEdit: true,
         onClick: () => {
           setOpenPanel(null);
           fileInputRef.current?.click();
@@ -461,28 +466,32 @@ export function Header() {
       {
         label: "Import ZIP...",
         icon: "folder_zip",
+        requiresEdit: true,
         onClick: () => {
           setOpenPanel(null);
           zipInputRef.current?.click();
         },
       },
-      { label: "Save", icon: "save", onClick: handleSave, sep: true },
+      { label: "Save", icon: "save", onClick: handleSave, sep: true, requiresEdit: true },
       { label: "Sign out", icon: "logout", onClick: handleSignOut, sep: true, danger: true },
     ],
     Edit: [
       {
         label: "Undo",
         icon: "undo",
+        requiresEdit: true,
         onClick: () => runEditorAction("undo", "Use Cmd+Z in the editor."),
       },
       {
         label: "Redo",
         icon: "redo",
+        requiresEdit: true,
         onClick: () => runEditorAction("redo", "Use Shift+Cmd+Z in the editor."),
       },
       {
         label: "Format Document",
         icon: "auto_fix_high",
+        requiresEdit: true,
         onClick: () =>
           runEditorAction("editor.action.formatDocument", "Use Shift+Alt+F in the editor."),
       },
@@ -587,7 +596,9 @@ export function Header() {
             {NAV_ITEMS.map((item) => {
               const panelKey = `${item.toLowerCase()}-menu` as OpenPanel;
               const isOpen = openPanel === panelKey;
-              const entries = navMenuContent[item];
+              const entries = navMenuContent[item].filter(
+                    (e) => !isViewer || e.requiresEdit !== true,
+                  );
               return (
                 <div key={item} className="relative">
                   <button
@@ -728,8 +739,8 @@ export function Header() {
           Live Session
         </button>
 
-        {/* Share / Invite */}
-        <div ref={shareRef} className="relative">
+        {/* Share / Invite — owners only */}
+        {isOwner ? <div ref={shareRef} className="relative">
           <button
             type="button"
             aria-label="Share workspace — invite collaborators"
@@ -829,7 +840,7 @@ export function Header() {
               </div>
             </DropdownPanel>
           ) : null}
-        </div>
+        </div> : null}
 
         {/* Right icon cluster */}
         <div className="flex items-center gap-px border-l meridian-crisp-border pl-2">

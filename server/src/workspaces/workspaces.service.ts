@@ -109,4 +109,48 @@ export class WorkspacesService {
     if (doc === null) return false;
     return this.canUserAccessWorkspace(userId, doc.workspaceId);
   }
+
+  async getMemberRole(
+    userId: string,
+    workspaceId: string,
+  ): Promise<WorkspaceRole | null> {
+    const member = await this.prisma.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      select: { role: true },
+    });
+    return member?.role ?? null;
+  }
+
+  async canEditWorkspace(userId: string, workspaceId: string): Promise<boolean> {
+    const role = await this.getMemberRole(userId, workspaceId);
+    return role === WorkspaceRole.EDITOR || role === WorkspaceRole.OWNER;
+  }
+
+  async canManageWorkspace(userId: string, workspaceId: string): Promise<boolean> {
+    const role = await this.getMemberRole(userId, workspaceId);
+    return role === WorkspaceRole.OWNER;
+  }
+
+  /**
+   * Returns workspace id and the user's role for a given document, or null if
+   * the document doesn't exist or the user isn't a member.  Used by the
+   * realtime gateway to authorise joinDocument in one round-trip and cache the
+   * role for subsequent update-permission checks.
+   */
+  async getDocumentAccessInfo(
+    userId: string,
+    documentId: string,
+  ): Promise<{ workspaceId: string; role: WorkspaceRole } | null> {
+    const doc = await this.prisma.document.findUnique({
+      where: { id: documentId },
+      select: { workspaceId: true },
+    });
+    if (doc === null) return null;
+    const member = await this.prisma.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId: doc.workspaceId, userId } },
+      select: { role: true },
+    });
+    if (member === null) return null;
+    return { workspaceId: doc.workspaceId, role: member.role };
+  }
 }

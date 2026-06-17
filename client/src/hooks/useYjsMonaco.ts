@@ -107,10 +107,10 @@ export function useYjsMonaco(
 
     // Project awareness into UI state: collaborator list + cursor styles.
     const syncPresence = (): void => {
-      const localUserId = useWorkspaceStore.getState().currentUser?.id ?? null;
+      const { currentUser: cu, memberRoles } = useWorkspaceStore.getState();
       useWorkspaceStore
         .getState()
-        .setCollaborators(collaboratorsFromAwareness(awareness, localUserId));
+        .setCollaborators(collaboratorsFromAwareness(awareness, cu?.id ?? null, memberRoles));
       syncRemoteSelectionStyles(awareness);
     };
     awareness.on("change", syncPresence);

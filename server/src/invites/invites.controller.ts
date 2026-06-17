@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -9,6 +10,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { WorkspaceRole } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import {
   ApiCreatedResponse,
@@ -73,12 +75,11 @@ export class InvitesController {
     @Body() dto: CreateInviteDto,
   ): Promise<InviteResponse> {
     const ws = await this.workspacesService.findById(workspaceId);
-    const isMember =
-      ws !== null &&
-      (await this.workspacesService.canUserAccessWorkspace(user.id, workspaceId));
-    if (ws === null || !isMember) {
-      throw new NotFoundException(`Workspace ${workspaceId} not found`);
-    }
+    if (ws === null) throw new NotFoundException(`Workspace ${workspaceId} not found`);
+    const role = await this.workspacesService.getMemberRole(user.id, workspaceId);
+    if (role === null) throw new NotFoundException(`Workspace ${workspaceId} not found`);
+    if (role !== WorkspaceRole.OWNER)
+      throw new ForbiddenException('Only workspace owners can create invites');
 
     const invite = await this.invitesService.createInvite({
       workspaceId,

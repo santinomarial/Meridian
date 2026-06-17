@@ -62,7 +62,19 @@ function CollaboratorRow({ collaborator }: { collaborator: Collaborator }) {
       <div className="min-w-0 flex-1 leading-tight">
         <div className="flex items-center gap-1">
           <span className="truncate text-[12px] font-semibold text-on-surface">{collaborator.name}</span>
-          {collaborator.isOwner ? (
+          {collaborator.role === "OWNER" ? (
+            <span className="shrink-0 rounded bg-primary/12 px-1 py-px text-[8px] font-bold uppercase text-primary">
+              Owner
+            </span>
+          ) : collaborator.role === "EDITOR" ? (
+            <span className="shrink-0 rounded bg-secondary/12 px-1 py-px text-[8px] font-bold uppercase text-secondary">
+              Editor
+            </span>
+          ) : collaborator.role === "VIEWER" ? (
+            <span className="shrink-0 rounded bg-outline/20 px-1 py-px text-[8px] font-bold uppercase text-on-surface-variant">
+              Viewer
+            </span>
+          ) : collaborator.isOwner ? (
             <span className="shrink-0 rounded bg-primary/12 px-1 py-px text-[8px] font-bold uppercase text-primary">
               Owner
             </span>

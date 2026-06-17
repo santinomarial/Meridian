@@ -12,6 +12,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { WorkspaceRole } from '@prisma/client';
 import {
   ApiCreatedResponse,
   ApiNoContentResponse,
@@ -80,7 +81,7 @@ export class WorkspacesController {
     @Param('workspaceId') workspaceId: string,
     @Body() dto: UpdateWorkspaceDto,
   ) {
-    await this.requireMemberWorkspace(user, workspaceId);
+    await this.requireOwnerAccess(user, workspaceId);
     return this.workspacesService.updateWorkspace(workspaceId, dto);
   }
 
@@ -126,7 +127,7 @@ export class WorkspacesController {
     @Param('workspaceId') workspaceId: string,
     @Body() dto: AddMemberDto,
   ) {
-    await this.requireMemberWorkspace(user, workspaceId);
+    await this.requireOwnerAccess(user, workspaceId);
     return this.workspacesService.addMember(workspaceId, dto.userId, dto.role);
   }
 
@@ -142,7 +143,7 @@ export class WorkspacesController {
     @Param('memberId') memberId: string,
     @Body() dto: UpdateMemberDto,
   ) {
-    await this.requireMemberWorkspace(user, workspaceId);
+    await this.requireOwnerAccess(user, workspaceId);
     const member = await this.workspacesService.findMember(memberId);
     if (member === null || member.workspaceId !== workspaceId)
       throw new NotFoundException(`Member ${memberId} not found`);
@@ -161,7 +162,7 @@ export class WorkspacesController {
     @Param('workspaceId') workspaceId: string,
     @Param('memberId') memberId: string,
   ) {
-    await this.requireMemberWorkspace(user, workspaceId);
+    await this.requireOwnerAccess(user, workspaceId);
     const member = await this.workspacesService.findMember(memberId);
     if (member === null || member.workspaceId !== workspaceId)
       throw new NotFoundException(`Member ${memberId} not found`);
@@ -185,6 +186,25 @@ export class WorkspacesController {
     );
     if (!isMember)
       throw new NotFoundException(`Workspace ${workspaceId} not found`);
+    return ws;
+  }
+
+  /**
+   * Loads a workspace and verifies the current user is an OWNER.
+   * Non-members receive 404; members without owner role receive 403.
+   */
+  private async requireOwnerAccess(
+    user: AuthUser,
+    workspaceId: string,
+  ): Promise<Workspace> {
+    const ws = await this.workspacesService.findById(workspaceId);
+    if (ws === null)
+      throw new NotFoundException(`Workspace ${workspaceId} not found`);
+    const role = await this.workspacesService.getMemberRole(user.id, workspaceId);
+    if (role === null)
+      throw new NotFoundException(`Workspace ${workspaceId} not found`);
+    if (role !== WorkspaceRole.OWNER)
+      throw new ForbiddenException('Only workspace owners can perform this action');
     return ws;
   }
 }

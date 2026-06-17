@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { createWorkspace, getCurrentUser, getDocumentTree, getWorkspaces } from "../lib/api";
+import { createWorkspace, getCurrentUser, getDocumentTree, getWorkspaces, getWorkspaceMembers } from "../lib/api";
 import { getLanguageFromFilename, toLanguageMode } from "../lib/language";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import type { ApiDocument } from "../lib/api";
@@ -111,6 +111,23 @@ export function useBackendWorkspace(): void {
         }
 
         useWorkspaceStore.getState().setWorkspaceId(workspace.id);
+
+        // Fetch members to populate role state for permission enforcement.
+        if (currentUser !== null) {
+          try {
+            const members = await getWorkspaceMembers(workspace.id);
+            if (!cancelled) {
+              const memberRoles = Object.fromEntries(
+                members.map((m) => [m.userId, m.role] as const),
+              ) as Record<string, "OWNER" | "EDITOR" | "VIEWER">;
+              const myRole = members.find((m) => m.userId === currentUser.id)?.role ?? null;
+              useWorkspaceStore.getState().setMemberRoles(memberRoles);
+              useWorkspaceStore.getState().setUserRole(myRole);
+            }
+          } catch {
+            // non-fatal — permissions degrade gracefully
+          }
+        }
 
         const tree = await getDocumentTree(workspace.id);
         if (cancelled) return;
