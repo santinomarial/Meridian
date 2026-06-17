@@ -149,6 +149,7 @@ export function Header() {
   const togglePanel = useWorkspaceStore((s) => s.togglePanel);
   const isExplorerOpen = useWorkspaceStore((s) => s.isExplorerOpen);
   const isCollaborationPanelOpen = useWorkspaceStore((s) => s.isCollaborationPanelOpen);
+  const toggleTerminal = useWorkspaceStore((s) => s.toggleTerminal);
   const activeFileId = useWorkspaceStore((s) => s.activeFileId);
   const openTabs = useWorkspaceStore((s) => s.openTabs);
   const editorContentByFileId = useWorkspaceStore((s) => s.editorContentByFileId);
@@ -524,6 +525,11 @@ export function Header() {
         label: "Toggle Collaboration",
         icon: "group",
         onClick: () => { togglePanel("collaboration"); setOpenPanel(null); },
+      },
+      {
+        label: "Toggle Terminal",
+        icon: "terminal",
+        onClick: () => { toggleTerminal(); setOpenPanel(null); },
       },
       {
         label: "Toggle Theme",

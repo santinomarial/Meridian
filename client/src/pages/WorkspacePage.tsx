@@ -17,6 +17,7 @@ import { useSessionSocket } from "../hooks/useSessionSocket";
 import { useWorkspaceReady } from "../hooks/useWorkspaceReady";
 import { updateDocument } from "../lib/api";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
+import { TerminalPanel } from "../components/layout/TerminalPanel";
 import type { PanelKey } from "../types";
 
 export function WorkspacePage() {
@@ -159,6 +160,8 @@ export function WorkspacePage() {
           <CollaborationPanel isLoading={!isWorkspaceReady} mode="inline" />
         ) : null}
       </div>
+
+      <TerminalPanel />
 
       <StatusBar />
 

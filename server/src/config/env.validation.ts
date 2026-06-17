@@ -21,6 +21,11 @@ const envSchema = z.object({
   AUTH_LIMIT: z.coerce.number().int().positive().default(10),
   WS_MESSAGE_LIMIT_PER_SECOND: z.coerce.number().int().positive().default(50),
   WS_MAX_YJS_UPDATE_BYTES: z.coerce.number().int().positive().default(1_048_576),
+  // Terminal
+  ENABLE_TERMINAL: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
   // Mail / password-reset
   RESEND_API_KEY: z.string().optional(),
   MAIL_FROM: z.string().default('Meridian <no-reply@meridian.local>'),

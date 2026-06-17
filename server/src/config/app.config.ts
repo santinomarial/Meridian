@@ -24,6 +24,7 @@ export const appConfig = registerAs(APP_CONFIG_KEY, (): AppConfig => {
     authLimit: env.AUTH_LIMIT,
     wsMessageLimitPerSecond: env.WS_MESSAGE_LIMIT_PER_SECOND,
     wsMaxYjsUpdateBytes: env.WS_MAX_YJS_UPDATE_BYTES,
+    enableTerminal: env.ENABLE_TERMINAL,
     resendApiKey: env.RESEND_API_KEY,
     mailFrom: env.MAIL_FROM,
     forgotPasswordTtlMinutes: env.FORGOT_PASSWORD_TTL_MINUTES,

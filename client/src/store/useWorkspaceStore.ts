@@ -15,6 +15,7 @@ import type {
   OpenTab,
   PanelKey,
   SaveStatus,
+  TerminalStatus,
   WorkspaceState as WorkspaceData,
   WorkspaceTheme,
 } from "../types";
@@ -47,6 +48,8 @@ type WorkspaceActions = {
   setCurrentUser: (user: CurrentUser | null) => void;
   setUserRole: (role: "OWNER" | "EDITOR" | "VIEWER" | null) => void;
   setMemberRoles: (roles: Record<string, "OWNER" | "EDITOR" | "VIEWER">) => void;
+  toggleTerminal: () => void;
+  setTerminalStatus: (status: TerminalStatus) => void;
   setDiagnosticCounts: (counts: DiagnosticCounts) => void;
   setSaveStatus: (status: SaveStatus) => void;
   setBackendStatus: (status: BackendStatus) => void;
@@ -192,6 +195,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   userRole: null,
   memberRoles: {},
 
+  // ── Terminal state ────────────────────────────────────────────────────────
+  isTerminalOpen: false,
+  terminalStatus: "idle" as TerminalStatus,
+
   // ── Backend / socket state ────────────────────────────────────────────────
   backendStatus: "pending",
   connectionStatus: "disconnected",
@@ -321,6 +328,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   setUserRole: (role) => set({ userRole: role }),
 
   setMemberRoles: (roles) => set({ memberRoles: roles }),
+
+  toggleTerminal: () => set((state) => ({ isTerminalOpen: !state.isTerminalOpen })),
+
+  setTerminalStatus: (status) => set({ terminalStatus: status }),
 
   setDiagnosticCounts: (counts) => {
     const current = get().diagnosticCounts;

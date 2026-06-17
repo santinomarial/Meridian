@@ -84,6 +84,8 @@ export type SaveStatus = "saved" | "saving" | "unsaved" | "error";
 
 export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 
+export type TerminalStatus = "idle" | "ready" | "running" | "error" | "disabled";
+
 export type BackendStatus = "pending" | "available" | "unavailable";
 
 export type PanelKey = "explorer" | "collaboration";
@@ -104,6 +106,8 @@ export type WorkspaceState = {
   currentUser: CurrentUser | null;
   userRole: "OWNER" | "EDITOR" | "VIEWER" | null;
   memberRoles: Record<string, "OWNER" | "EDITOR" | "VIEWER">;
+  isTerminalOpen: boolean;
+  terminalStatus: TerminalStatus;
   files: FileNode[];
   activeFileId: string | null;
   openTabs: OpenTab[];

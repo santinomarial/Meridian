@@ -17,6 +17,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
 import { DocumentsModule } from './documents/documents.module';
 import { InvitesModule } from './invites/invites.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { TerminalModule } from './modules/terminal/terminal.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { E2eController } from './e2e/e2e.controller';
@@ -70,6 +71,7 @@ import { E2eController } from './e2e/e2e.controller';
     DocumentsModule,
     InvitesModule,
     RealtimeModule,
+    TerminalModule,
   ],
   controllers: [AppController, E2eController],
   providers: [
