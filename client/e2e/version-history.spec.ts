@@ -53,7 +53,8 @@ async function createAndOpenFile(page: Page): Promise<string> {
 
 async function openVersionHistory(page: Page): Promise<void> {
   await page.getByTestId("top-menu-file").click();
-  await page.getByRole("button", { name: "Version History" }).click();
+  // File menu entries are ARIA menuitems (the dropdown is role="menu").
+  await page.getByRole("menuitem", { name: "Version History" }).click();
   await expect(page.getByTestId("version-history-dialog")).toBeVisible({ timeout: 10_000 });
 }
 

@@ -106,10 +106,18 @@ function DropdownPanel({ children, className = "", ...rest }: HTMLAttributes<HTM
   );
 }
 
-function MenuItem({ label, icon, onClick, danger = false, disabled = false }: MenuEntry) {
+function MenuItem({
+  label,
+  icon,
+  onClick,
+  danger = false,
+  disabled = false,
+  role,
+}: MenuEntry & { role?: "menuitem" }) {
   return (
     <button
       type="button"
+      role={role}
       onClick={onClick}
       disabled={disabled}
       className={[
@@ -661,6 +669,7 @@ export function Header() {
                             onClick={entry.onClick}
                             danger={entry.danger}
                             disabled={entry.disabled}
+                            role="menuitem"
                           />
                         </div>
                       ))}

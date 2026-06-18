@@ -13,48 +13,17 @@
  * terminal feature.
  */
 import { test, expect, type Page } from "@playwright/test";
-import { isBackendAvailable, uniqueEmail, signUpViaUI } from "./helpers/auth.js";
+import { isBackendAvailable } from "./helpers/auth.js";
+import {
+  acceptInvite,
+  freshWorkspace,
+  getOwnerInviteLink,
+} from "./helpers/workspace.js";
 
-const STRONG_PASSWORD = "Test@1234!";
-
-async function freshWorkspace(page: Page, displayName: string): Promise<void> {
-  await page.goto("/");
-  await signUpViaUI(page, uniqueEmail(), STRONG_PASSWORD, displayName);
-  await page.waitForURL("/workspace", { timeout: 20_000 });
-  await page.waitForSelector(
-    '[data-testid="workspace-root"][data-backend-status="available"]',
-    { timeout: 20_000 },
-  );
-}
-
-async function getInviteLink(page: Page, role: "EDITOR" | "VIEWER"): Promise<string> {
-  await page.getByTestId("share-button").click();
-  if (role === "VIEWER") {
-    await page.getByLabel("Invite role").selectOption("VIEWER");
-  }
-  const linkDisplay = page.getByTestId("invite-link-display");
-  await expect(linkDisplay).toBeVisible();
-  await expect(linkDisplay).not.toContainText("/invite/demo", { timeout: 10_000 });
-  const inviteLink = ((await linkDisplay.textContent()) ?? "").trim();
-  expect(inviteLink).toMatch(/\/invite\/.+/);
-  await page.keyboard.press("Escape");
-  return inviteLink;
-}
-
-async function acceptInvite(page: Page, inviteLink: string): Promise<void> {
-  await page.goto(inviteLink);
-  await page
-    .getByRole("button", { name: "Accept & Open Workspace" })
-    .click({ timeout: 10_000 });
-  await page.waitForURL("/workspace", { timeout: 15_000 });
-  await page.waitForSelector(
-    '[data-testid="workspace-root"][data-backend-status="available"]',
-    { timeout: 20_000 },
-  );
-}
-
-/** Opens the terminal panel via the ActivityBar button. */
+/** Opens the terminal panel via the ActivityBar button (available to all roles). */
 async function openTerminalPanel(page: Page): Promise<void> {
+  // The ActivityBar toggle is a plain button; when no menu is open it is the
+  // only "Toggle Terminal" control in the DOM.
   await page.getByRole("button", { name: "Toggle Terminal" }).click();
   await expect(page.getByTestId("terminal-panel")).toBeVisible({ timeout: 5_000 });
 }
@@ -96,9 +65,12 @@ test.describe("terminal (backend required)", () => {
     const displayName = `TermUser-${Date.now()}`;
     await freshWorkspace(page, displayName);
 
-    // Open via Header → View menu
-    await page.getByRole("button", { name: "View" }).click();
-    await page.getByRole("button", { name: "Toggle Terminal" }).click();
+    // Open via Header → View menu. The nav trigger is a button named exactly
+    // "View" (distinct from the "View collaborators" avatar button); the menu
+    // entries are ARIA menuitems, which also distinguishes the in-menu
+    // "Toggle Terminal" from the ActivityBar button of the same name.
+    await page.getByRole("button", { name: "View", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Toggle Terminal" }).click();
     await expect(page.getByTestId("terminal-panel")).toBeVisible({ timeout: 5_000 });
   });
 
@@ -114,17 +86,20 @@ test.describe("terminal (backend required)", () => {
 
     try {
       await freshWorkspace(owner, `TermOwner-${Date.now()}`);
-      const inviteLink = await getInviteLink(owner, "VIEWER");
+      const inviteLink = await getOwnerInviteLink(owner, "VIEWER");
 
-      await viewer.goto("/");
-      await signUpViaUI(viewer, uniqueEmail(), STRONG_PASSWORD, `TermViewer-${Date.now()}`);
+      // Sign the viewer up fully (session + workspace ready) before accepting,
+      // so the invite page lands on the authenticated accept screen.
+      await freshWorkspace(viewer, `TermViewer-${Date.now()}`);
       await acceptInvite(viewer, inviteLink);
 
       await openTerminalPanel(viewer);
 
-      // Viewer should see a message about needing editor access, not a start button
+      // Viewer should see a message about needing editor access, not a start
+      // button. Scope to the terminal panel so we don't also match the global
+      // "view-only access" workspace banner.
       await expect(
-        viewer.getByText(/view-only|editor access/i),
+        viewer.getByTestId("terminal-panel").getByText(/terminal requires editor access/i),
       ).toBeVisible({ timeout: 5_000 });
 
       // The Start button must not be present for viewers
@@ -178,10 +153,10 @@ test.describe("terminal (backend required)", () => {
 
     try {
       await freshWorkspace(owner, `TermOwner-${Date.now()}`);
-      const inviteLink = await getInviteLink(owner, "EDITOR");
+      const inviteLink = await getOwnerInviteLink(owner, "EDITOR");
 
-      await editor.goto("/");
-      await signUpViaUI(editor, uniqueEmail(), STRONG_PASSWORD, `TermEditor-${Date.now()}`);
+      // Sign the editor up fully before accepting (see viewer test above).
+      await freshWorkspace(editor, `TermEditor-${Date.now()}`);
       await acceptInvite(editor, inviteLink);
 
       await openTerminalPanel(editor);
@@ -192,7 +167,7 @@ test.describe("terminal (backend required)", () => {
       ).toBeVisible({ timeout: 5_000 });
 
       await expect(
-        editor.getByText(/view-only|editor access/i),
+        editor.getByTestId("terminal-panel").getByText(/terminal requires editor access/i),
       ).not.toBeVisible();
     } finally {
       await ownerCtx.close();

@@ -7,8 +7,7 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { isBackendAvailable, uniqueEmail, signUpViaUI } from "./helpers/auth.js";
-
-const STRONG_PASSWORD = "Test@1234!";
+import { STRONG_PASSWORD, freshWorkspace } from "./helpers/workspace.js";
 
 /** Navigate to the workspace in demo mode (no auth required). */
 async function openDemoWorkspace(page: Page): Promise<void> {
@@ -71,33 +70,18 @@ test.describe("theme toggle", () => {
 });
 
 // ── Share dialog ──────────────────────────────────────────────────────────────
+//
+// Share is owner-gated: it appears only when the backend is available, the
+// workspace is loaded, and the current user is an owner. Demo/offline mode
+// establishes no real ownership, so the control is honestly absent there — it
+// is never faked. The real dialog is covered against a backend owner below.
 
 test.describe("share / invite dialog", () => {
-  test("clicking Share opens the invite dialog", async ({ page }) => {
+  test("demo mode does not expose a Share button (owner-gated, not faked)", async ({ page }) => {
     await openDemoWorkspace(page);
-    await page.getByTestId("share-button").click();
-    await expect(page.getByTestId("share-dialog")).toBeVisible();
-  });
-
-  test("share dialog shows an invite link", async ({ page }) => {
-    await openDemoWorkspace(page);
-    await page.getByTestId("share-button").click();
-    const linkDisplay = page.getByTestId("invite-link-display");
-    await expect(linkDisplay).toBeVisible();
-    const linkText = await linkDisplay.textContent();
-    expect(linkText).toMatch(/\/invite\//);
-  });
-
-  test("copy invite link button shows 'Copied!' feedback", async ({ page, context }) => {
-    // Grant clipboard-write permission so the copy actually succeeds.
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await openDemoWorkspace(page);
-    await page.getByTestId("share-button").click();
-
-    const copyBtn = page.getByTestId("copy-invite-link");
-    await copyBtn.click();
-    // Button text changes to "Copied!" for 2 seconds
-    await expect(copyBtn).toHaveText("Copied!", { timeout: 3_000 });
+    // No Share control and no share dialog in demo mode — the honest state.
+    await expect(page.getByTestId("share-button")).toHaveCount(0);
+    await expect(page.getByTestId("share-dialog")).toHaveCount(0);
   });
 
   test("invite route /invite/demo loads without crashing", async ({ page }) => {
@@ -109,14 +93,54 @@ test.describe("share / invite dialog", () => {
     await expect(page.locator("body")).not.toContainText("Cannot GET");
   });
 
-  test("closing share dialog by clicking outside dismisses it", async ({ page }) => {
-    await openDemoWorkspace(page);
-    await page.getByTestId("share-button").click();
-    await expect(page.getByTestId("share-dialog")).toBeVisible();
+  test.describe("backend owner (backend required)", () => {
+    let backendAvailable = false;
 
-    // Click somewhere neutral (the workspace root, outside the dialog)
-    await page.mouse.click(50, 200);
-    await expect(page.getByTestId("share-dialog")).toBeHidden({ timeout: 3_000 });
+    test.beforeAll(async () => {
+      backendAvailable = await isBackendAvailable();
+    });
+
+    test.beforeEach(() => {
+      test.skip(!backendAvailable, "Backend not available — skipping owner share tests");
+    });
+
+    test("owner: clicking Share opens the real invite dialog", async ({ page }) => {
+      await freshWorkspace(page);
+      await page.getByTestId("share-button").click();
+      await expect(page.getByTestId("share-dialog")).toBeVisible();
+    });
+
+    test("owner: share dialog shows a real backend invite link", async ({ page }) => {
+      await freshWorkspace(page);
+      await page.getByTestId("share-button").click();
+      const linkDisplay = page.getByTestId("invite-link-display");
+      await expect(linkDisplay).toBeVisible();
+      // A real, persisted invite token — not the /invite/demo fallback.
+      await expect(linkDisplay).not.toContainText("/invite/demo", { timeout: 10_000 });
+      expect((await linkDisplay.textContent()) ?? "").toMatch(/\/invite\/.+/);
+    });
+
+    test("owner: copy invite link button shows 'Copied!' feedback", async ({ page, context }) => {
+      // Grant clipboard-write permission so the copy actually succeeds.
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      await freshWorkspace(page);
+      await page.getByTestId("share-button").click();
+
+      const copyBtn = page.getByTestId("copy-invite-link");
+      await copyBtn.click();
+      // Button text changes to "Copied!" for 2 seconds.
+      await expect(copyBtn).toHaveText("Copied!", { timeout: 3_000 });
+    });
+
+    test("owner: closing share dialog by clicking outside dismisses it", async ({ page }) => {
+      await freshWorkspace(page);
+      await page.getByTestId("share-button").click();
+      await expect(page.getByTestId("share-dialog")).toBeVisible();
+
+      // Click somewhere neutral (outside the dialog).
+      await page.mouse.click(50, 200);
+      await expect(page.getByTestId("share-dialog")).toBeHidden({ timeout: 3_000 });
+    });
   });
 });
 
@@ -175,9 +199,10 @@ test.describe("collaboration panel", () => {
         .isVisible()
         .catch(() => false);
       if (!panelVisible) {
-        // Open via View menu
-        await page.getByRole("button", { name: "View" }).click();
-        await page.getByRole("button", { name: "Toggle Collaboration" }).click();
+        // Open via View menu (exact name avoids the "View collaborators" button;
+        // menu entries are ARIA menuitems).
+        await page.getByRole("button", { name: "View", exact: true }).click();
+        await page.getByRole("menuitem", { name: "Toggle Collaboration" }).click();
       }
 
       await expect(noCollabEl).toBeVisible({ timeout: 8_000 });

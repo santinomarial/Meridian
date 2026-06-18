@@ -109,11 +109,12 @@ test.describe("file import (backend required)", () => {
     await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({
       timeout: 10_000,
     });
-    // Editor should contain the file content from the fixture
-    const editorLines = await page
-      .locator(".monaco-editor .view-lines")
-      .textContent();
-    expect(editorLines).toContain("hello");
+    // Editor should contain the file content from the fixture. Use a retrying
+    // assertion (not a one-shot textContent read) so a slow Monaco worker init
+    // doesn't flake the check before the text has rendered.
+    await expect(page.locator(".monaco-editor .view-lines")).toContainText("hello", {
+      timeout: 10_000,
+    });
   });
 
   // ── Open local file via Header "File" menu ────────────────────────────────────
@@ -130,7 +131,8 @@ test.describe("file import (backend required)", () => {
     // Playwright intercepts as a filechooser event.
     const [fileChooser] = await Promise.all([
       page.waitForEvent("filechooser"),
-      page.getByRole("button", { name: "Open File..." }).click(),
+      // File menu entries are ARIA menuitems (the dropdown is role="menu").
+      page.getByRole("menuitem", { name: "Open File..." }).click(),
     ]);
 
     await fileChooser.setFiles({
