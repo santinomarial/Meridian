@@ -5,11 +5,13 @@ import type { PinoLogger } from 'nestjs-pino';
 import type { Socket } from 'socket.io';
 import type { AuthUser } from '../auth/types/auth-user.type';
 import type { WorkspacesService } from '../../workspaces/workspaces.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { TerminalGateway } from './terminal.gateway';
 import { TerminalService } from './terminal.service';
 import type { TerminalStartDto } from './dto/terminal-start.dto';
 import type { TerminalInputDto } from './dto/terminal-input.dto';
 import type { TerminalResizeDto } from './dto/terminal-resize.dto';
+import type { TerminalRunFileDto } from './dto/terminal-run-file.dto';
 import type { TerminalSession } from './terminal.service';
 
 // ---------------------------------------------------------------------------
@@ -45,9 +47,11 @@ function makeGateway(enableTerminal: boolean): {
   gateway: TerminalGateway;
   terminalService: DeepMockProxy<TerminalService>;
   workspaces: DeepMockProxy<WorkspacesService>;
+  prisma: DeepMockProxy<PrismaService>;
 } {
   const terminalService = mockDeep<TerminalService>();
   const workspaces = mockDeep<WorkspacesService>();
+  const prisma = mockDeep<PrismaService>();
   const configService = mockDeep<ConfigService>();
   const logger = mockDeep<PinoLogger>();
 
@@ -56,11 +60,12 @@ function makeGateway(enableTerminal: boolean): {
   const gateway = new TerminalGateway(
     terminalService,
     workspaces,
+    prisma,
     configService,
     logger,
   );
 
-  return { gateway, terminalService, workspaces };
+  return { gateway, terminalService, workspaces, prisma };
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +139,7 @@ describe('TerminalGateway', () => {
       const { gateway, workspaces, terminalService } = makeGateway(true);
       workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
       terminalService.hasSession.mockReturnValue(false);
-      terminalService.createSession.mockReturnValue({} as TerminalSession);
+      terminalService.createSession.mockResolvedValue({} as TerminalSession);
       const { socket, emitted } = makeSocket();
 
       await gateway.handleStart(dto, socket);
@@ -152,7 +157,7 @@ describe('TerminalGateway', () => {
       const { gateway, workspaces, terminalService } = makeGateway(true);
       workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.OWNER);
       terminalService.hasSession.mockReturnValue(false);
-      terminalService.createSession.mockReturnValue({} as TerminalSession);
+      terminalService.createSession.mockResolvedValue({} as TerminalSession);
       const { socket, emitted } = makeSocket();
 
       await gateway.handleStart(dto, socket);
@@ -221,16 +226,17 @@ describe('TerminalGateway', () => {
       const { gateway, terminalService } = makeGateway(false);
       const { socket } = makeSocket();
       gateway.handleResize(dto, socket);
-      expect(terminalService.getSession).not.toHaveBeenCalled();
+      expect(terminalService.resizeSession).not.toHaveBeenCalled();
     });
 
-    it('does nothing when no session exists', () => {
+    it('forwards the new size to the PTY via resizeSession', () => {
       const { gateway, terminalService } = makeGateway(true);
-      terminalService.getSession.mockReturnValue(undefined);
       const { socket, emitted } = makeSocket();
 
-      gateway.handleResize(dto, socket);
+      gateway.handleResize({ cols: 120, rows: 40 }, socket);
 
+      expect(terminalService.resizeSession).toHaveBeenCalledWith('socket-1', 120, 40);
+      // Resize never emits to the socket directly.
       expect(emitted).toHaveLength(0);
     });
   });
@@ -281,6 +287,100 @@ describe('TerminalGateway', () => {
 
       expect(() => gateway.handleDisconnect(socket)).not.toThrow();
       expect(terminalService.killSession).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── terminal:run-file ────────────────────────────────────────────────────────
+
+  describe('handleRunFile', () => {
+    const dto: TerminalRunFileDto = { workspaceId: 'ws-1', documentId: 'doc-1' };
+
+    function fileDoc(overrides: Partial<{ workspaceId: string; type: string; path: string }> = {}) {
+      return {
+        workspaceId: overrides.workspaceId ?? 'ws-1',
+        type: overrides.type ?? 'FILE',
+        path: overrides.path ?? 'main.py',
+      };
+    }
+
+    it('emits error when feature is disabled', async () => {
+      const { gateway } = makeGateway(false);
+      const { socket, emitted } = makeSocket();
+      await gateway.handleRunFile(dto, socket);
+      expect(emitted).toContainEqual([
+        'terminal:error',
+        { message: 'Terminal feature is disabled on this server' },
+      ]);
+    });
+
+    it('rejects a viewer', async () => {
+      const { gateway, workspaces } = makeGateway(true);
+      workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.VIEWER);
+      const { socket, emitted } = makeSocket();
+      await gateway.handleRunFile(dto, socket);
+      expect(emitted).toContainEqual(['terminal:error', { message: 'Viewers cannot run files' }]);
+    });
+
+    it('rejects a non-member', async () => {
+      const { gateway, workspaces } = makeGateway(true);
+      workspaces.getMemberRole.mockResolvedValue(null);
+      const { socket, emitted } = makeSocket();
+      await gateway.handleRunFile(dto, socket);
+      expect(emitted).toContainEqual([
+        'terminal:error',
+        { message: 'Not a member of this workspace' },
+      ]);
+    });
+
+    it('rejects a document from another workspace', async () => {
+      const { gateway, workspaces, prisma } = makeGateway(true);
+      workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
+      prisma.document.findUnique.mockResolvedValue(fileDoc({ workspaceId: 'other' }) as never);
+      const { socket, emitted } = makeSocket();
+      await gateway.handleRunFile(dto, socket);
+      expect(emitted).toContainEqual([
+        'terminal:error',
+        { message: 'File not found in this workspace' },
+      ]);
+    });
+
+    it('rejects an unsupported file type', async () => {
+      const { gateway, workspaces, prisma } = makeGateway(true);
+      workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
+      prisma.document.findUnique.mockResolvedValue(fileDoc({ path: 'notes.md' }) as never);
+      const { socket, emitted } = makeSocket();
+      await gateway.handleRunFile(dto, socket);
+      expect(emitted).toContainEqual([
+        'terminal:error',
+        { message: 'This file type is not executable' },
+      ]);
+    });
+
+    it('runs a python file in an existing session by writing the command to the PTY', async () => {
+      const { gateway, workspaces, prisma, terminalService } = makeGateway(true);
+      workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
+      prisma.document.findUnique.mockResolvedValue(fileDoc({ path: 'main.py' }) as never);
+      terminalService.hasSession.mockReturnValue(true);
+      const { socket } = makeSocket();
+
+      await gateway.handleRunFile(dto, socket);
+
+      expect(terminalService.createSession).not.toHaveBeenCalled();
+      expect(terminalService.writeToSession).toHaveBeenCalledWith('socket-1', `python3 'main.py'\n`);
+    });
+
+    it('starts a session first if none exists, then runs', async () => {
+      const { gateway, workspaces, prisma, terminalService } = makeGateway(true);
+      workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.OWNER);
+      prisma.document.findUnique.mockResolvedValue(fileDoc({ path: 'src/app.js' }) as never);
+      terminalService.hasSession.mockReturnValue(false);
+      terminalService.createSession.mockResolvedValue({} as TerminalSession);
+      const { socket } = makeSocket();
+
+      await gateway.handleRunFile(dto, socket);
+
+      expect(terminalService.createSession).toHaveBeenCalledWith('socket-1', 'user-1', 'ws-1', socket);
+      expect(terminalService.writeToSession).toHaveBeenCalledWith('socket-1', `node 'src/app.js'\n`);
     });
   });
 });

@@ -218,6 +218,11 @@ test.describe("command palette (backend required)", () => {
 
       await expect(command(viewer, "save-file")).toHaveAttribute("data-disabled", "true");
 
+      // Run Active File is disabled for a viewer, with a clear reason.
+      const runCmd = command(viewer, "run-active-file");
+      await expect(runCmd).toHaveAttribute("data-disabled", "true");
+      await expect(runCmd).toContainText("Requires editor access");
+
       // Share is owner-only — absent for a viewer.
       await expect(command(viewer, "share-workspace")).toHaveCount(0);
 

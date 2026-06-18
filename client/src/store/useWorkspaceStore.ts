@@ -16,6 +16,7 @@ import type {
   PanelKey,
   SaveStatus,
   TerminalStatus,
+  TerminalSyncStatus,
   WorkspaceState as WorkspaceData,
   WorkspaceTheme,
 } from "../types";
@@ -54,7 +55,10 @@ type WorkspaceActions = {
   setUserRole: (role: "OWNER" | "EDITOR" | "VIEWER" | null) => void;
   setMemberRoles: (roles: Record<string, "OWNER" | "EDITOR" | "VIEWER">) => void;
   toggleTerminal: () => void;
+  setTerminalOpen: (open: boolean) => void;
   setTerminalStatus: (status: TerminalStatus) => void;
+  setTerminalSyncStatus: (status: TerminalSyncStatus | null) => void;
+  setWorkspaceName: (name: string | null) => void;
   setDiagnosticCounts: (counts: DiagnosticCounts) => void;
   setSaveStatus: (status: SaveStatus) => void;
   setBackendStatus: (status: BackendStatus) => void;
@@ -177,6 +181,7 @@ const INITIAL_OPEN_TABS: OpenTab[] = [
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // ── Data state ────────────────────────────────────────────────────────────
   workspaceId: null,
+  workspaceName: null,
   currentUser: null,
   files: mockFiles,
   activeFileId: "file-auth",
@@ -206,6 +211,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // ── Terminal state ────────────────────────────────────────────────────────
   isTerminalOpen: false,
   terminalStatus: "idle" as TerminalStatus,
+  terminalSyncStatus: null,
 
   // ── Backend / socket state ────────────────────────────────────────────────
   backendStatus: "pending",
@@ -361,7 +367,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   toggleTerminal: () => set((state) => ({ isTerminalOpen: !state.isTerminalOpen })),
 
+  setTerminalOpen: (open) => set({ isTerminalOpen: open }),
+
   setTerminalStatus: (status) => set({ terminalStatus: status }),
+
+  setTerminalSyncStatus: (status) => set({ terminalSyncStatus: status }),
+
+  setWorkspaceName: (name) => set({ workspaceName: name }),
 
   setDiagnosticCounts: (counts) => {
     const current = get().diagnosticCounts;

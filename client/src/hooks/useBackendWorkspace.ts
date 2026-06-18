@@ -111,6 +111,7 @@ export function useBackendWorkspace(): void {
         }
 
         useWorkspaceStore.getState().setWorkspaceId(workspace.id);
+        useWorkspaceStore.getState().setWorkspaceName(workspace.name);
 
         // Fetch members to populate role state for permission enforcement.
         if (currentUser !== null) {

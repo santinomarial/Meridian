@@ -1,19 +1,45 @@
 import { useEffect, useRef, useCallback } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { getSocket } from "../lib/socket";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
+import type { WorkspaceTheme } from "../types";
 
 type OutputPayload = { data: string };
 type ErrorPayload = { message: string };
 type ExitPayload = { code: number | null };
 type StatusPayload = { status: "ready" | "running" };
+type SyncPayload = { status: "synced" | "syncing" | "failed" };
+
+// Readable xterm palettes for each app theme. The background is kept in sync
+// with the app surface so the terminal never stays black in light mode.
+const DARK_TERMINAL_THEME: ITheme = {
+  background: "#1e1e1e",
+  foreground: "#d4d4d4",
+  cursor: "#aeafad",
+  cursorAccent: "#1e1e1e",
+  selectionBackground: "#264f78",
+};
+
+const LIGHT_TERMINAL_THEME: ITheme = {
+  background: "#ffffff",
+  foreground: "#1f2328",
+  cursor: "#1f2328",
+  cursorAccent: "#ffffff",
+  selectionBackground: "#add6ff",
+};
+
+function themeFor(appTheme: WorkspaceTheme): ITheme {
+  return appTheme === "light" ? LIGHT_TERMINAL_THEME : DARK_TERMINAL_THEME;
+}
 
 export interface UseTerminalReturn {
   terminalRef: React.RefObject<HTMLDivElement>;
   start: () => void;
   stop: () => void;
   fit: () => void;
+  focus: () => void;
+  clear: () => void;
 }
 
 export function useTerminal(workspaceId: string | null): UseTerminalReturn {
@@ -22,58 +48,92 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const mountedRef = useRef(false);
 
   const setTerminalStatus = useWorkspaceStore((s) => s.setTerminalStatus);
+  const setTerminalSyncStatus = useWorkspaceStore((s) => s.setTerminalSyncStatus);
   const isTerminalOpen = useWorkspaceStore((s) => s.isTerminalOpen);
+  const appTheme = useWorkspaceStore((s) => s.theme);
 
-  // Initialize xterm when the container div is first rendered.
-  useEffect(() => {
-    const container = terminalRef.current;
-    if (container === null || mountedRef.current) return;
-    mountedRef.current = true;
-
-    const term = new Terminal({
-      cursorBlink: true,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      fontSize: 13,
-      theme: {
-        background: "#1e1e1e",
-        foreground: "#d4d4d4",
-        cursor: "#aeafad",
-        selectionBackground: "#264f78",
-      },
-      convertEol: true,
-    });
-
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(container);
-    fitAddon.fit();
-
-    xtermRef.current = term;
-    fitAddonRef.current = fitAddon;
-
-    // Forward keystrokes to the server.
-    term.onData((data) => {
-      getSocket().emit("terminal:input", { data });
-    });
-
-    return (): void => {
-      term.dispose();
-      xtermRef.current = null;
-      fitAddonRef.current = null;
-      mountedRef.current = false;
-    };
+  const focus = useCallback((): void => {
+    xtermRef.current?.focus();
   }, []);
 
-  // Re-fit when the panel becomes visible.
-  useEffect(() => {
-    if (isTerminalOpen) {
-      // RAF ensures the DOM has painted before measuring.
-      requestAnimationFrame(() => fitAddonRef.current?.fit());
+  const clear = useCallback((): void => {
+    xtermRef.current?.clear();
+  }, []);
+
+  const fit = useCallback((): void => {
+    if (fitAddonRef.current === null || xtermRef.current === null) return;
+    try {
+      fitAddonRef.current.fit();
+    } catch {
+      // Container not laid out yet — a later fit() will succeed.
+      return;
     }
-  }, [isTerminalOpen]);
+    const term = xtermRef.current;
+    getSocket().emit("terminal:resize", { cols: term.cols, rows: term.rows });
+  }, []);
+
+  // Lazily create xterm the first time the panel is shown, then re-fit and
+  // focus on every open. Creating it only while visible guarantees the
+  // container has real dimensions so FitAddon measures correctly. The instance
+  // persists across open/close (we never recreate it on theme/status changes),
+  // so scrollback survives and keystrokes are never lost to a remount.
+  useEffect(() => {
+    if (!isTerminalOpen) return;
+    const container = terminalRef.current;
+    if (container === null) return;
+
+    if (xtermRef.current === null) {
+      const term = new Terminal({
+        cursorBlink: true,
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        fontSize: 13,
+        // Seed with the current app theme; a dedicated effect keeps it in sync.
+        theme: themeFor(useWorkspaceStore.getState().theme),
+        // The PTY (server side) owns echo and newline translation, so we send
+        // raw keystrokes and let the shell handle them like a real terminal.
+        convertEol: false,
+      });
+
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(container);
+
+      // Forward every keystroke to the server PTY's stdin.
+      term.onData((data) => {
+        getSocket().emit("terminal:input", { data });
+      });
+
+      xtermRef.current = term;
+      fitAddonRef.current = fitAddon;
+    }
+
+    // After the panel has painted, size the terminal to the container and
+    // give it focus so the user can type immediately.
+    const raf = requestAnimationFrame(() => {
+      fit();
+      focus();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [isTerminalOpen, fit, focus]);
+
+  // Keep the terminal palette in sync with the app theme live, without
+  // recreating the terminal (scrollback and session are preserved).
+  useEffect(() => {
+    if (xtermRef.current !== null) {
+      xtermRef.current.options.theme = themeFor(appTheme);
+    }
+  }, [appTheme]);
+
+  // Dispose xterm only when the hook itself unmounts (workspace teardown).
+  useEffect(() => {
+    return () => {
+      xtermRef.current?.dispose();
+      xtermRef.current = null;
+      fitAddonRef.current = null;
+    };
+  }, []);
 
   // Wire socket events while the workspaceId is known.
   useEffect(() => {
@@ -98,44 +158,39 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
 
     const onStatus = ({ status }: StatusPayload): void => {
       setTerminalStatus(status === "running" ? "running" : "ready");
+      // The shell is live — make sure keystrokes land in it.
+      focus();
+    };
+
+    const onSync = ({ status }: SyncPayload): void => {
+      setTerminalSyncStatus(status);
     };
 
     socket.on("terminal:output", onOutput);
     socket.on("terminal:error", onError);
     socket.on("terminal:exit", onExit);
     socket.on("terminal:status", onStatus);
+    socket.on("terminal:sync", onSync);
 
     return (): void => {
       socket.off("terminal:output", onOutput);
       socket.off("terminal:error", onError);
       socket.off("terminal:exit", onExit);
       socket.off("terminal:status", onStatus);
+      socket.off("terminal:sync", onSync);
     };
-  }, [workspaceId, setTerminalStatus]);
+  }, [workspaceId, setTerminalStatus, setTerminalSyncStatus, focus]);
 
   const start = useCallback((): void => {
     if (workspaceId === null) return;
-    setTerminalStatus("idle");
-    xtermRef.current?.clear();
     getSocket().emit("terminal:start", { workspaceId });
-  }, [workspaceId, setTerminalStatus]);
+    focus();
+  }, [workspaceId, focus]);
 
   const stop = useCallback((): void => {
     getSocket().emit("terminal:stop");
     setTerminalStatus("idle");
   }, [setTerminalStatus]);
 
-  const fit = useCallback((): void => {
-    if (fitAddonRef.current === null) return;
-    fitAddonRef.current.fit();
-    const term = xtermRef.current;
-    if (term !== null) {
-      getSocket().emit("terminal:resize", {
-        cols: term.cols,
-        rows: term.rows,
-      });
-    }
-  }, []);
-
-  return { terminalRef, start, stop, fit };
+  return { terminalRef, start, stop, fit, focus, clear };
 }

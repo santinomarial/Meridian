@@ -24,9 +24,11 @@ import {
 } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import type { Document } from '@prisma/client';
+import { DocumentType } from '@prisma/client';
 import { DocumentsService } from './documents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { DocumentRestoreService } from '../modules/realtime/document-restore.service';
+import { TerminalSandboxService } from '../modules/terminal/terminal-sandbox.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { BulkCreateDocumentsDto } from './dto/bulk-create-documents.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
@@ -43,6 +45,7 @@ export class DocumentsController {
     private readonly documentsService: DocumentsService,
     private readonly workspacesService: WorkspacesService,
     private readonly documentRestore: DocumentRestoreService,
+    private readonly sandbox: TerminalSandboxService,
   ) {}
 
   @Get('workspaces/:workspaceId/documents')
@@ -82,7 +85,14 @@ export class DocumentsController {
     @Body() dto: CreateDocumentDto,
   ) {
     await this.requireWorkspaceWriteAccess(user, workspaceId);
-    return this.documentsService.createDocument({ workspaceId, ...dto });
+    const doc = await this.documentsService.createDocument({ workspaceId, ...dto });
+    // Project the new node into any active terminal sandbox (best-effort).
+    if (doc.type === DocumentType.FOLDER) {
+      await this.sandbox.syncMkdir(workspaceId, doc.path);
+    } else {
+      await this.sandbox.syncWriteFile(workspaceId, doc.path, doc.content ?? '');
+    }
+    return doc;
   }
 
   @Post('workspaces/:workspaceId/documents/bulk')
@@ -99,7 +109,15 @@ export class DocumentsController {
     @Body() dto: BulkCreateDocumentsDto,
   ) {
     await this.requireWorkspaceWriteAccess(user, workspaceId);
-    return this.documentsService.bulkCreateDocuments(workspaceId, dto.documents);
+    const docs = await this.documentsService.bulkCreateDocuments(workspaceId, dto.documents);
+    for (const doc of docs) {
+      if (doc.type === DocumentType.FOLDER) {
+        await this.sandbox.syncMkdir(workspaceId, doc.path);
+      } else {
+        await this.sandbox.syncWriteFile(workspaceId, doc.path, doc.content ?? '');
+      }
+    }
+    return docs;
   }
 
   @Get('documents/:documentId')
@@ -124,8 +142,18 @@ export class DocumentsController {
     @Param('documentId') documentId: string,
     @Body() dto: UpdateDocumentDto,
   ) {
-    await this.requireDocumentWriteAccess(user, documentId);
-    return this.documentsService.patchDocument(documentId, dto, user.id);
+    const before = await this.requireDocumentWriteAccess(user, documentId);
+    const updated = await this.documentsService.patchDocument(documentId, dto, user.id);
+
+    // Mirror the change into any active terminal sandbox (best-effort). Order
+    // matters: rename the file/folder first, then write fresh content.
+    if (updated.path !== before.path) {
+      await this.sandbox.syncRename(updated.workspaceId, before.path, updated.path);
+    }
+    if (updated.type === DocumentType.FILE && dto.content !== undefined && dto.content !== null) {
+      await this.sandbox.syncWriteFile(updated.workspaceId, updated.path, dto.content);
+    }
+    return updated;
   }
 
   @Delete('documents/:documentId')
@@ -138,8 +166,10 @@ export class DocumentsController {
     @CurrentUser() user: AuthUser,
     @Param('documentId') documentId: string,
   ) {
-    await this.requireDocumentWriteAccess(user, documentId);
+    const doc = await this.requireDocumentWriteAccess(user, documentId);
     await this.documentsService.deleteDocument(documentId);
+    // Remove the file/folder from any active terminal sandbox (best-effort).
+    await this.sandbox.syncDelete(doc.workspaceId, doc.path);
   }
 
   // ---------------------------------------------------------------------------
@@ -200,6 +230,13 @@ export class DocumentsController {
     // connected clients) with the restored content.  See DocumentRestoreService
     // for the synchronization strategy.
     await this.documentRestore.applyRestore(documentId, result.content);
+
+    // Mirror the restored content into any active terminal sandbox.
+    await this.sandbox.syncWriteFile(
+      result.document.workspaceId,
+      result.document.path,
+      result.content,
+    );
 
     return {
       document: result.document,

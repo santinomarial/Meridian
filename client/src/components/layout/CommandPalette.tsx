@@ -5,6 +5,7 @@ import { toast } from "../ui/Toast";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useFileOperations } from "../../hooks/useFileOperations";
 import { useSaveActiveFile } from "../../hooks/useSaveActiveFile";
+import { useRunActiveFile } from "../../hooks/useRunActiveFile";
 import { logout } from "../../lib/api";
 import { flattenFileTree, searchFiles, commandMatches } from "../../lib/commandPalette";
 
@@ -59,6 +60,7 @@ function CommandPaletteBody() {
 
   const { createFile, createFolder } = useFileOperations();
   const { saveActiveFile, canSaveActiveFile } = useSaveActiveFile();
+  const { runActiveFile, canRun, disabledReason: runDisabledReason } = useRunActiveFile();
 
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -138,6 +140,20 @@ function CommandPaletteBody() {
         void saveActiveFile().then((ok) => {
           toast(ok ? "Saved." : "Save failed.", ok ? "success" : "error");
         });
+      },
+    });
+
+    // Run Active File — saves, opens the terminal, and runs the file in the
+    // workspace sandbox. Editor/owner only; honest disabled reasons otherwise.
+    list.push({
+      id: "run-active-file",
+      title: "Run Active File",
+      icon: "play_arrow",
+      keywords: "execute run python node script",
+      disabled: !canRun,
+      disabledReason: runDisabledReason,
+      run: () => {
+        void runActiveFile();
       },
     });
 
@@ -247,6 +263,9 @@ function CommandPaletteBody() {
     activeFileId,
     backendStatus,
     canSaveActiveFile,
+    canRun,
+    runDisabledReason,
+    runActiveFile,
     canViewHistory,
     hasActiveBackendFile,
     workspaceId,

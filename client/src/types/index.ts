@@ -86,6 +86,8 @@ export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 
 export type TerminalStatus = "idle" | "ready" | "running" | "error" | "disabled";
 
+export type TerminalSyncStatus = "synced" | "syncing" | "failed";
+
 export type BackendStatus = "pending" | "available" | "unavailable";
 
 export type PanelKey = "explorer" | "collaboration";
@@ -103,10 +105,12 @@ export type CurrentUser = {
 
 export type WorkspaceState = {
   workspaceId: string | null;
+  workspaceName: string | null;
   currentUser: CurrentUser | null;
   userRole: "OWNER" | "EDITOR" | "VIEWER" | null;
   memberRoles: Record<string, "OWNER" | "EDITOR" | "VIEWER">;
   isTerminalOpen: boolean;
+  terminalSyncStatus: TerminalSyncStatus | null;
   terminalStatus: TerminalStatus;
   files: FileNode[];
   activeFileId: string | null;

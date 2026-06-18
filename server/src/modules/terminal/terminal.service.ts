@@ -1,25 +1,32 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { spawn, type ChildProcess } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as os from 'os';
+import * as pty from 'node-pty';
+import type { IPty, IDisposable } from 'node-pty';
 import type { Socket } from 'socket.io';
+import { TerminalSandboxService } from './terminal-sandbox.service';
 
 // 30-minute idle timeout; 4-hour absolute lifetime
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_LIFETIME_MS = 4 * 60 * 60 * 1000;
 
-// Allowed characters in workspace/user ids used as path segments
-const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
+const DEFAULT_COLS = 80;
+const DEFAULT_ROWS = 24;
 
 export interface TerminalSession {
-  process: ChildProcess;
+  pty: IPty;
   workspaceId: string;
   userId: string;
   sandboxDir: string;
   startedAt: number;
   idleTimer: NodeJS.Timeout;
   lifetimeTimer: NodeJS.Timeout;
+  disposables: IDisposable[];
+}
+
+export interface CreateSessionOptions {
+  cols?: number;
+  rows?: number;
 }
 
 @Injectable()
@@ -28,35 +35,28 @@ export class TerminalService implements OnModuleDestroy {
   private readonly sessions = new Map<string, TerminalSession>();
 
   constructor(
+    private readonly sandbox: TerminalSandboxService,
     @InjectPinoLogger(TerminalService.name)
     private readonly logger: PinoLogger,
   ) {}
 
-  sandboxBaseDir(): string {
-    return path.join(process.cwd(), '.terminal-sandboxes');
-  }
-
-  getSandboxDir(workspaceId: string, userId: string): string {
-    if (!SAFE_ID_RE.test(workspaceId) || !SAFE_ID_RE.test(userId)) {
-      throw new Error('Invalid workspaceId or userId for sandbox path');
-    }
-    return path.join(this.sandboxBaseDir(), workspaceId, userId);
-  }
-
-  private ensureSandboxDir(dir: string): void {
-    fs.mkdirSync(dir, { recursive: true });
+  /** The shell to launch — the user's login shell, or a sane default. */
+  private resolveShell(): string {
+    return process.env['SHELL'] ?? (os.platform() === 'win32' ? 'powershell.exe' : '/bin/bash');
   }
 
   /**
-   * Returns a minimal, safe environment for the shell.
-   * Secrets (DATABASE_URL, JWT_SECRET, etc.) are never forwarded.
+   * Returns a minimal, safe environment for the shell. Secrets (DATABASE_URL,
+   * JWT_SECRET, etc.) are never forwarded. HOME points at the sandbox so `~`
+   * and shell rc lookups stay inside the sandbox rather than the server user's
+   * real home directory.
    */
-  private safeEnv(): Record<string, string> {
+  private safeEnv(sandboxDir: string): Record<string, string> {
     const env: Record<string, string> = {
-      HOME: process.env['HOME'] ?? '/tmp',
+      HOME: sandboxDir,
       PATH: process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
       TERM: 'xterm-256color',
-      SHELL: process.env['SHELL'] ?? '/bin/sh',
+      SHELL: this.resolveShell(),
       LANG: process.env['LANG'] ?? 'en_US.UTF-8',
     };
     // Carry over USER/LOGNAME if present (display only, not secret)
@@ -74,27 +74,39 @@ export class TerminalService implements OnModuleDestroy {
   }
 
   /**
-   * Spawns a shell in the workspace sandbox directory.
+   * Spawns an interactive PTY shell in the workspace sandbox directory.
+   *
+   * A real pseudo-terminal (node-pty) is used rather than piped child_process
+   * stdio, so the shell behaves like a genuine terminal: it prints its prompt,
+   * echoes typed characters, and supports line editing (Backspace, ArrowLeft/
+   * Right) and resize — exactly what an interactive client like xterm.js needs.
+   *
    * Emits terminal:output and terminal:exit to the socket.
    */
-  createSession(
+  async createSession(
     socketId: string,
     userId: string,
     workspaceId: string,
     socket: Socket,
-  ): TerminalSession {
+    options: CreateSessionOptions = {},
+  ): Promise<TerminalSession> {
     if (this.sessions.has(socketId)) {
       this.killSession(socketId);
     }
 
-    const sandboxDir = this.getSandboxDir(workspaceId, userId);
-    this.ensureSandboxDir(sandboxDir);
+    // Project the workspace's DB-backed documents onto disk before spawning so
+    // `ls`/`pwd` immediately reflect the editor's files.
+    const sandboxDir = await this.sandbox.materialize(workspaceId, userId);
 
-    const shell = process.env['SHELL'] ?? '/bin/sh';
-    const child = spawn(shell, ['-i'], {
+    const shell = this.resolveShell();
+    // No explicit args: attached to a PTY, the shell detects a TTY and starts
+    // interactively on its own (prompt + echo + line editing).
+    const child = pty.spawn(shell, [], {
+      name: 'xterm-256color',
+      cols: options.cols ?? DEFAULT_COLS,
+      rows: options.rows ?? DEFAULT_ROWS,
       cwd: sandboxDir,
-      env: this.safeEnv(),
-      stdio: ['pipe', 'pipe', 'pipe'],
+      env: this.safeEnv(sandboxDir),
     });
 
     const resetIdle = (): void => {
@@ -109,31 +121,21 @@ export class TerminalService implements OnModuleDestroy {
       }, IDLE_TIMEOUT_MS);
     };
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      socket.emit('terminal:output', { data: chunk.toString('utf8') });
+    // node-pty merges stdout and stderr into a single data stream.
+    const dataDisposable = child.onData((chunk: string) => {
+      socket.emit('terminal:output', { data: chunk });
       resetIdle();
     });
 
-    child.stderr.on('data', (chunk: Buffer) => {
-      socket.emit('terminal:output', { data: chunk.toString('utf8') });
-      resetIdle();
-    });
-
-    child.on('exit', (code) => {
-      this.logger.info({ socketId, code }, 'Terminal process exited');
+    const exitDisposable = child.onExit(({ exitCode }) => {
+      this.logger.info({ socketId, code: exitCode }, 'Terminal process exited');
+      this.cleanupTimers(socketId);
       this.sessions.delete(socketId);
-      socket.emit('terminal:exit', { code });
-    });
-
-    child.on('error', (err) => {
-      this.logger.error({ socketId, err }, 'Terminal process error');
-      socket.emit('terminal:error', { message: `Shell error: ${err.message}` });
-      this.sessions.delete(socketId);
-      socket.emit('terminal:exit', { code: null });
+      socket.emit('terminal:exit', { code: exitCode });
     });
 
     const session: TerminalSession = {
-      process: child,
+      pty: child,
       workspaceId,
       userId,
       sandboxDir,
@@ -147,24 +149,54 @@ export class TerminalService implements OnModuleDestroy {
         this.killSession(socketId);
         socket.emit('terminal:exit', { code: null });
       }, MAX_LIFETIME_MS),
+      disposables: [dataDisposable, exitDisposable],
     };
 
     this.sessions.set(socketId, session);
     resetIdle(); // start the real idle timer
 
+    // Register the sandbox so subsequent editor edits sync into it, and tell
+    // the client a welcome banner + that the projection is in sync.
+    this.sandbox.registerActive(socketId, workspaceId, userId, sandboxDir, socket);
+    socket.emit('terminal:output', {
+      data: `\x1b[2m[Meridian] terminal started in workspace sandbox: ${sandboxDir}\x1b[0m\r\n`,
+    });
+    socket.emit('terminal:sync', { status: 'synced' });
+
     this.logger.info({ socketId, userId, workspaceId, sandboxDir }, 'Terminal session started');
     return session;
   }
 
+  /** Writes user keystrokes to the PTY. Returns false if there is no session. */
   writeToSession(socketId: string, data: string): boolean {
     const session = this.sessions.get(socketId);
     if (!session) return false;
     try {
-      session.process.stdin?.write(data);
+      session.pty.write(data);
       return true;
     } catch {
       return false;
     }
+  }
+
+  /** Resizes the PTY so full-screen programs and line wrapping stay correct. */
+  resizeSession(socketId: string, cols: number, rows: number): boolean {
+    const session = this.sessions.get(socketId);
+    if (!session) return false;
+    try {
+      session.pty.resize(cols, rows);
+      return true;
+    } catch {
+      // Non-fatal: the shell may have already exited.
+      return false;
+    }
+  }
+
+  private cleanupTimers(socketId: string): void {
+    const session = this.sessions.get(socketId);
+    if (!session) return;
+    clearTimeout(session.idleTimer);
+    clearTimeout(session.lifetimeTimer);
   }
 
   killSession(socketId: string): void {
@@ -173,19 +205,23 @@ export class TerminalService implements OnModuleDestroy {
 
     clearTimeout(session.idleTimer);
     clearTimeout(session.lifetimeTimer);
+    for (const d of session.disposables) {
+      try { d.dispose(); } catch { /* already disposed */ }
+    }
 
     try {
-      session.process.stdin?.end();
-      session.process.kill('SIGTERM');
-      // Force-kill after 3s if SIGTERM doesn't stop it
+      session.pty.kill();
+      // Force-kill after 3s if a graceful kill doesn't stop it.
+      const child = session.pty;
       setTimeout(() => {
-        try { session.process.kill('SIGKILL'); } catch { /* already dead */ }
+        try { child.kill('SIGKILL'); } catch { /* already dead */ }
       }, 3000).unref();
     } catch {
       // Already exited
     }
 
     this.sessions.delete(socketId);
+    this.sandbox.unregister(socketId);
     this.logger.info({ socketId }, 'Terminal session killed');
   }
 

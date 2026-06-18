@@ -12,6 +12,7 @@ Meridian is a TypeScript end-to-end collaborative browser IDE for engineering te
 - **File operations** — create/rename/delete files and folders, open a local file from disk, and import a ZIP project — all synced to the backend
 - **Editor tabs** — multi-file editing with dirty-state tracking and Cmd+S / Ctrl+S save to backend
 - **Command palette** — press Cmd+K / Ctrl+K to fuzzily search files and run real, permission-aware workspace commands — see [Command palette](#command-palette)
+- **Integrated terminal** — opt-in (`ENABLE_TERMINAL=true`) PTY-backed terminal that materializes the workspace's files into a sandbox so you can run them (incl. "Run Active File"), with live sync as you edit — see [Integrated terminal](#integrated-terminal)
 - **Version history & restore** — every meaningful save snapshots the file; preview any past version, diff it against the current file in a Monaco side-by-side editor, and restore it (editors/owners) — see [Version history & restore](#version-history--restore)
 - **Live collaboration** — Socket.IO document rooms with Yjs CRDT merge; concurrent edits from multiple clients converge deterministically
 - **Presence & chat** — real cursors/selections via the Yjs awareness protocol and a per-workspace live chat over Socket.IO
@@ -138,7 +139,7 @@ Behavior:
 
 **File search** — searches the current workspace file tree by name and full path (case-insensitive, prefix/name matches ranked first). Selecting a file opens it in the editor. With no workspace loaded, no file results appear.
 
-**Commands** — every entry maps to the same real action used elsewhere in the UI (no duplicated or placeholder logic): New File, New Folder, Save Active File, Open Version History, Toggle Terminal, Toggle Theme, Toggle Explorer, Toggle Collaboration Panel, Share Workspace, Open Settings, and Sign Out.
+**Commands** — every entry maps to the same real action used elsewhere in the UI (no duplicated or placeholder logic): New File, New Folder, Save Active File, Run Active File, Open Version History, Toggle Terminal, Toggle Theme, Toggle Explorer, Toggle Collaboration Panel, Share Workspace, Open Settings, and Sign Out.
 
 **Permission-aware** — commands reflect your role and workspace state rather than failing after the fact:
 
@@ -147,12 +148,45 @@ Behavior:
 | New File / New Folder / Save Active File | Disabled for **viewers** ("Requires editor access"); Save also needs an open file and a backend |
 | Open Version History | Available to everyone, but needs an open, saved file ("Open a file first" / "Save the file first") |
 | Toggle Terminal | Disabled with a reason when there is no workspace, the user is a viewer ("Requires editor access"), or the terminal is disabled on the server |
+| Run Active File | Editor/owner only; disabled with a reason when there is no open file, the file type is not executable, or the terminal is disabled — see [Integrated terminal](#integrated-terminal) |
 | Share Workspace | Shown **only to owners** |
 | Toggle Theme / Explorer / Collaboration, Settings, Sign Out | Available to everyone |
 
 Disabled commands show a short reason and cannot be executed (they are `aria-disabled` and skipped by keyboard navigation). Nothing in the palette is fake or a dead control — every visible entry either works or is honestly disabled for your role/state.
 
 Accessibility: the palette is a `role="dialog"` with `aria-modal`, the input is a labelled `combobox` driving an `aria-activedescendant`, and results are a `listbox` of `option`s.
+
+## Integrated terminal
+
+Meridian has a real, interactive PTY-backed terminal (xterm.js on the client, [`node-pty`](https://github.com/microsoft/node-pty) on the server) that operates on the current workspace's files.
+
+**Enabling it** — the terminal is **off by default**. Set `ENABLE_TERMINAL=true` on the server to enable it. When disabled, `terminal:start`/`terminal:run-file` return a clear "Terminal feature is disabled on this server" message and the UI shows an honest disabled state — nothing is faked.
+
+**Workspace sandbox model** — when the terminal starts, the workspace's DB-backed documents are *materialized* into a per-user, per-workspace sandbox directory (under the OS temp dir), preserving folder structure, and the shell's working directory is that sandbox root. A welcome banner names the sandbox path, and `pwd`/`ls` reflect the editor's files.
+
+- **The database is the source of truth.** The sandbox is a disposable runtime *projection* of the workspace used only for terminal execution.
+- While the terminal is open, editor operations are synced into the sandbox best-effort: **save** rewrites the file, **create** writes the file/folder, **rename** moves it, **delete** removes it, and **version restore** rewrites the restored content. A failed sync warns in the terminal ("Could not sync workspace file to terminal sandbox") and via a sync-status badge — it never corrupts the database.
+- Sync is one-way (DB → sandbox). Files you create *inside* the terminal are not imported back into the workspace.
+
+**Run Active File** — from the Command Palette (Cmd/Ctrl+K) or **File → Run Active File**. It saves the file if dirty, ensures the sandbox is synced, opens the terminal, and runs the file in it so the command and its real output appear naturally. Supported types:
+
+| Extension | Command |
+|---|---|
+| `.py` | `python3 <file>` |
+| `.js` | `node <file>` |
+| `.ts` | `npx tsx <file>` (honest error if `tsx` isn't installed) |
+| `.sh` | `bash <file>` |
+
+Other types (`.json`, `.md`, `.txt`, images/binaries) are not executable and the action is disabled with the reason "This file type is not executable". Run is editor/owner only (viewers see "Requires editor access"); it is also disabled with a reason when no file is open or the terminal is disabled.
+
+**Security** — secrets (`DATABASE_URL`, `JWT_SECRET`, …) are never put in the shell environment; `HOME` points at the sandbox; all materialization/sync paths are validated to stay inside the sandbox root (absolute paths, `..` traversal, control characters, and symlinked-ancestor escapes are rejected); run-file validates auth, workspace membership, editor/owner role, that the document belongs to the workspace, and a safe (single-quoted) path. Start/input/run are all gated by `ENABLE_TERMINAL` and by role.
+
+**Known limitations**
+
+- The sandbox is a projection of DB-backed workspace files; it is **not** the database.
+- Runtime availability (`python3`, `node`, `tsx`, `bash`) depends on what is installed on the **server machine** — a missing runtime surfaces the shell's real error, not a fake message.
+- This is **not** container/Docker isolation. The shell runs as the server's OS user with that user's filesystem permissions; sandboxing is limited to working directory, `HOME`, environment scrubbing, and sandbox-confined file sync. Do not run the server as root, and run it as an unprivileged user in untrusted multi-tenant settings.
+- The database remains the source of truth; the sandbox can be deleted at any time and is rebuilt on the next terminal start.
 
 ## Version history & restore
 
@@ -253,7 +287,6 @@ This flag is **only** for automated tests and changes nothing in normal dev/prod
 These were deliberately left out (and are therefore hidden from the UI rather than faked):
 
 - **Git integration** — there is no branch selector or source-control panel; Meridian persists documents, not Git history.
-- **Integrated terminal / build / debug console** — no PTY backend, so the bottom terminal/output/debug panel was removed.
 - **AI assistant** — no model is wired up, so the AI sidebar was removed.
 - **GitHub OAuth** — sign-in is email/password only.
 - **Changing your login email** — the settings panel shows email read-only.

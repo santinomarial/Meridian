@@ -12,6 +12,7 @@ import {
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useFileOperations } from "../../hooks/useFileOperations";
 import { useSaveActiveFile } from "../../hooks/useSaveActiveFile";
+import { useRunActiveFile } from "../../hooks/useRunActiveFile";
 import { createInvite, logout } from "../../lib/api";
 import { getActiveEditor } from "../../lib/editorRegistry";
 import type { Collaborator } from "../../types";
@@ -177,6 +178,7 @@ export function Header() {
   // ── File operations ────────────────────────────────────────────────────────
   const { createFile, createFolder, openLocalFile, importZip } = useFileOperations();
   const { saveActiveFile } = useSaveActiveFile();
+  const { runActiveFile, canRun: canRunActiveFile } = useRunActiveFile();
 
   // ── Local state ────────────────────────────────────────────────────────────
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
@@ -333,6 +335,11 @@ export function Header() {
     }
     setVersionHistoryOpen(true);
   }, [isBackendAvailable, activeFileId, setVersionHistoryOpen]);
+
+  const handleRunActiveFile = useCallback(() => {
+    setOpenPanel(null);
+    void runActiveFile();
+  }, [runActiveFile]);
 
   const handleSignOut = useCallback(async () => {
     setOpenPanel(null);
@@ -499,6 +506,13 @@ export function Header() {
         },
       },
       { label: "Save", icon: "save", onClick: handleSave, sep: true, requiresEdit: true },
+      {
+        label: "Run Active File",
+        icon: "play_arrow",
+        onClick: handleRunActiveFile,
+        requiresEdit: true,
+        disabled: !canRunActiveFile,
+      },
       {
         label: "Version History",
         icon: "history",
