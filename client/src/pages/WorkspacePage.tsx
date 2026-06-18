@@ -10,13 +10,14 @@ import { Header } from "../components/layout/Header";
 import { PanelOverlay } from "../components/layout/PanelOverlay";
 import { SettingsDialog } from "../components/layout/SettingsDialog";
 import { VersionHistoryDialog } from "../components/layout/VersionHistoryDialog";
+import { CommandPalette } from "../components/layout/CommandPalette";
 import { StatusBar } from "../components/layout/StatusBar";
 import { useBackendWorkspace } from "../hooks/useBackendWorkspace";
 import { useBreakpoint } from "../hooks/useBreakpoint";
 import { useEscapeClose } from "../hooks/useEscapeClose";
+import { useSaveActiveFile } from "../hooks/useSaveActiveFile";
 import { useSessionSocket } from "../hooks/useSessionSocket";
 import { useWorkspaceReady } from "../hooks/useWorkspaceReady";
-import { updateDocument } from "../lib/api";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { TerminalPanel } from "../components/layout/TerminalPanel";
 import type { PanelKey } from "../types";
@@ -34,14 +35,10 @@ export function WorkspacePage() {
   const togglePanel = useWorkspaceStore((state) => state.togglePanel);
   const closeAllOverlays = useWorkspaceStore((state) => state.closeAllOverlays);
   const backendStatus = useWorkspaceStore((state) => state.backendStatus);
-  const activeFileId = useWorkspaceStore((state) => state.activeFileId);
-  const editorContentByFileId = useWorkspaceStore((state) => state.editorContentByFileId);
-  const setSaveStatus = useWorkspaceStore((state) => state.setSaveStatus);
-  const clearTabDirty = useWorkspaceStore((state) => state.clearTabDirty);
-  const addNotification = useWorkspaceStore((state) => state.addNotification);
-
   const userRole = useWorkspaceStore((state) => state.userRole);
   const isViewer = userRole === "VIEWER";
+
+  const { saveActiveFile } = useSaveActiveFile();
 
   const isWorkspaceReady = useWorkspaceReady();
 
@@ -61,43 +58,34 @@ export function WorkspacePage() {
     }
   }, []);
 
-  // Cmd+S / Ctrl+S — save active document to backend when available
+  // Cmd+S / Ctrl+S — save active document. The hook handles the no-op cases
+  // (viewer, no active file, backend unavailable) and the canonical save flow.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (!(e.metaKey || e.ctrlKey) || e.key !== "s") return;
       e.preventDefault();
-
-      if (isViewer || backendStatus !== "available" || activeFileId === null) return;
-
-      const content = editorContentByFileId[activeFileId] ?? "";
-      setSaveStatus("saving");
-
-      const tabName =
-        useWorkspaceStore.getState().openTabs.find((t) => t.fileId === activeFileId)?.name ??
-        "file";
-
-      updateDocument(activeFileId, { content })
-        .then(() => {
-          setSaveStatus("saved");
-          clearTabDirty(activeFileId);
-          addNotification({ icon: "save", text: `Saved ${tabName}` });
-        })
-        .catch(() => {
-          setSaveStatus("error");
-        });
+      void saveActiveFile();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    isViewer,
-    backendStatus,
-    activeFileId,
-    editorContentByFileId,
-    setSaveStatus,
-    clearTabDirty,
-    addNotification,
-  ]);
+  }, [saveActiveFile]);
+
+  // Cmd+K / Ctrl+K — toggle the command palette. Runs in the capture phase so
+  // it fires before Monaco/xterm key handling and is honored even when the
+  // editor or terminal is focused. Only the K combo is intercepted, so other
+  // shortcuts (including Cmd+S) are untouched.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
+      e.preventDefault();
+      e.stopPropagation();
+      useWorkspaceStore.getState().toggleCommandPalette();
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, []);
 
   const hasOpenOverlay = isCompact && (isExplorerOpen || isCollaborationPanelOpen);
 
@@ -197,6 +185,7 @@ export function WorkspacePage() {
 
       <SettingsDialog />
       <VersionHistoryDialog />
+      <CommandPalette />
     </div>
   );
 }

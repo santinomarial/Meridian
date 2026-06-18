@@ -121,6 +121,10 @@ export type WorkspaceState = {
   isCollaborationPanelOpen: boolean;
   isSettingsOpen: boolean;
   isVersionHistoryOpen: boolean;
+  isCommandPaletteOpen: boolean;
+  // Transient one-shot intent: set by the command palette to ask the Header to
+  // open its owner-only Share panel, then immediately cleared once consumed.
+  shareRequested: boolean;
   theme: WorkspaceTheme;
   cursorPosition: CursorPosition;
   saveStatus: SaveStatus;

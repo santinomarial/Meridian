@@ -39,6 +39,9 @@ type WorkspaceActions = {
   closeAllOverlays: () => void;
   setSettingsOpen: (open: boolean) => void;
   setVersionHistoryOpen: (open: boolean) => void;
+  setCommandPaletteOpen: (open: boolean) => void;
+  toggleCommandPalette: () => void;
+  setShareRequested: (requested: boolean) => void;
   markDocumentRestored: (fileId: string) => void;
   setTheme: (theme: WorkspaceTheme) => void;
   toggleTheme: () => void;
@@ -190,6 +193,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   isCollaborationPanelOpen: true,
   isSettingsOpen: false,
   isVersionHistoryOpen: false,
+  isCommandPaletteOpen: false,
+  shareRequested: false,
   theme: _initialTheme,
   cursorPosition: { line: 1, column: 1 },
   saveStatus: "saved",
@@ -292,6 +297,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   setSettingsOpen: (open) => set({ isSettingsOpen: open }),
 
   setVersionHistoryOpen: (open) => set({ isVersionHistoryOpen: open }),
+
+  setCommandPaletteOpen: (open) => set({ isCommandPaletteOpen: open }),
+
+  toggleCommandPalette: () =>
+    set((state) => ({ isCommandPaletteOpen: !state.isCommandPaletteOpen })),
+
+  setShareRequested: (requested) => set({ shareRequested: requested }),
 
   // Called when a restore has been applied (locally or via the document:restored
   // socket event). The editor content itself is updated by the broadcast Yjs

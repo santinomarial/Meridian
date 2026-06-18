@@ -11,7 +11,8 @@ import {
 } from "../ui/styles";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useFileOperations } from "../../hooks/useFileOperations";
-import { createInvite, logout, updateDocument } from "../../lib/api";
+import { useSaveActiveFile } from "../../hooks/useSaveActiveFile";
+import { createInvite, logout } from "../../lib/api";
 import { getActiveEditor } from "../../lib/editorRegistry";
 import type { Collaborator } from "../../types";
 
@@ -165,16 +166,17 @@ export function Header() {
   const toggleTerminal = useWorkspaceStore((s) => s.toggleTerminal);
   const activeFileId = useWorkspaceStore((s) => s.activeFileId);
   const openTabs = useWorkspaceStore((s) => s.openTabs);
-  const editorContentByFileId = useWorkspaceStore((s) => s.editorContentByFileId);
-  const setSaveStatus = useWorkspaceStore((s) => s.setSaveStatus);
-  const clearTabDirty = useWorkspaceStore((s) => s.clearTabDirty);
   const notifications = useWorkspaceStore((s) => s.notifications);
   const clearNotifications = useWorkspaceStore((s) => s.clearNotifications);
   const addNotification = useWorkspaceStore((s) => s.addNotification);
   const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
+  const toggleCommandPalette = useWorkspaceStore((s) => s.toggleCommandPalette);
+  const shareRequested = useWorkspaceStore((s) => s.shareRequested);
+  const setShareRequested = useWorkspaceStore((s) => s.setShareRequested);
 
   // ── File operations ────────────────────────────────────────────────────────
   const { createFile, createFolder, openLocalFile, importZip } = useFileOperations();
+  const { saveActiveFile } = useSaveActiveFile();
 
   // ── Local state ────────────────────────────────────────────────────────────
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
@@ -251,6 +253,15 @@ export function Header() {
     }
   }, [openPanel]);
 
+  // Consume the command palette's one-shot "open Share" intent. Only owners
+  // render the share panel, so non-owners simply clear the flag. Reusing the
+  // real share panel keeps a single source of truth for the invite flow.
+  useEffect(() => {
+    if (!shareRequested) return;
+    if (isOwner) setOpenPanel("share");
+    setShareRequested(false);
+  }, [shareRequested, isOwner, setShareRequested]);
+
   // ── Computed ───────────────────────────────────────────────────────────────
   const visibleCollaborators = collaborators.slice(0, MAX_VISIBLE_COLLABORATORS);
   const overflowCount = Math.max(0, collaborators.length - MAX_VISIBLE_COLLABORATORS);
@@ -304,28 +315,10 @@ export function Header() {
       toast("Nothing to save — open a file or connect the backend.", "error");
       return;
     }
-    const content = editorContentByFileId[activeFileId] ?? "";
-    const tabName = openTabs.find((t) => t.fileId === activeFileId)?.name ?? "file";
-    setSaveStatus("saving");
-    try {
-      await updateDocument(activeFileId, { content });
-      setSaveStatus("saved");
-      clearTabDirty(activeFileId);
-      addNotification({ icon: "save", text: `Saved ${tabName}` });
-      toast("Saved.", "success");
-    } catch {
-      setSaveStatus("error");
-      toast("Save failed — try Cmd+S.", "error");
-    }
-  }, [
-    isBackendAvailable,
-    activeFileId,
-    editorContentByFileId,
-    openTabs,
-    setSaveStatus,
-    clearTabDirty,
-    addNotification,
-  ]);
+    // Shared save path (same as Cmd+S and the command palette).
+    const ok = await saveActiveFile();
+    toast(ok ? "Saved." : "Save failed — try Cmd+S.", ok ? "success" : "error");
+  }, [isBackendAvailable, activeFileId, saveActiveFile]);
 
   // Version history is backed by real server-side DocumentVersion records, so
   // it is only meaningful for a file that exists on the backend. The menu item
@@ -576,6 +569,11 @@ export function Header() {
       },
     ],
     Go: [
+      {
+        label: "Command Palette",
+        icon: "bolt",
+        onClick: () => { setOpenPanel(null); toggleCommandPalette(); },
+      },
       {
         label: "Go to Workspace",
         icon: "code",

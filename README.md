@@ -11,6 +11,7 @@ Meridian is a TypeScript end-to-end collaborative browser IDE for engineering te
 - **Project / document tree** — hierarchical file and folder structure per workspace, fetched from the backend on load
 - **File operations** — create/rename/delete files and folders, open a local file from disk, and import a ZIP project — all synced to the backend
 - **Editor tabs** — multi-file editing with dirty-state tracking and Cmd+S / Ctrl+S save to backend
+- **Command palette** — press Cmd+K / Ctrl+K to fuzzily search files and run real, permission-aware workspace commands — see [Command palette](#command-palette)
 - **Version history & restore** — every meaningful save snapshots the file; preview any past version, diff it against the current file in a Monaco side-by-side editor, and restore it (editors/owners) — see [Version history & restore](#version-history--restore)
 - **Live collaboration** — Socket.IO document rooms with Yjs CRDT merge; concurrent edits from multiple clients converge deterministically
 - **Presence & chat** — real cursors/selections via the Yjs awareness protocol and a per-workspace live chat over Socket.IO
@@ -124,6 +125,34 @@ Design notes:
 - Invites **expire** after 7 days (`410 Gone` after that).
 - Invites are **safely reusable**: accepting is idempotent, so a single link can onboard a whole team. The first acceptance stamps `acceptedAt`.
 - The `/invite/:token` page shows a valid/expired/invalid state, and when unauthenticated it sends the user to sign in with a `?redirect=` back to the invite so acceptance completes in one flow.
+
+## Command palette
+
+Press **Cmd+K** (macOS) / **Ctrl+K** (Windows/Linux) anywhere in the workspace to open the command palette. It is also reachable from **Go → Command Palette** in the header.
+
+Behavior:
+
+- Opens with Cmd+K / Ctrl+K (handled globally, so it works even when the editor or terminal is focused), closes with Esc.
+- The search input autofocuses; **↑/↓** move through results, **Enter** runs the highlighted one, and clicking runs it.
+- Results are grouped into **Files** and **Commands**. Typing filters both (files by name/path, commands by name/keywords); an empty query lists every available command. The empty state reads "No matching files or commands."
+
+**File search** — searches the current workspace file tree by name and full path (case-insensitive, prefix/name matches ranked first). Selecting a file opens it in the editor. With no workspace loaded, no file results appear.
+
+**Commands** — every entry maps to the same real action used elsewhere in the UI (no duplicated or placeholder logic): New File, New Folder, Save Active File, Open Version History, Toggle Terminal, Toggle Theme, Toggle Explorer, Toggle Collaboration Panel, Share Workspace, Open Settings, and Sign Out.
+
+**Permission-aware** — commands reflect your role and workspace state rather than failing after the fact:
+
+| Command | Availability |
+|---|---|
+| New File / New Folder / Save Active File | Disabled for **viewers** ("Requires editor access"); Save also needs an open file and a backend |
+| Open Version History | Available to everyone, but needs an open, saved file ("Open a file first" / "Save the file first") |
+| Toggle Terminal | Disabled with a reason when there is no workspace, the user is a viewer ("Requires editor access"), or the terminal is disabled on the server |
+| Share Workspace | Shown **only to owners** |
+| Toggle Theme / Explorer / Collaboration, Settings, Sign Out | Available to everyone |
+
+Disabled commands show a short reason and cannot be executed (they are `aria-disabled` and skipped by keyboard navigation). Nothing in the palette is fake or a dead control — every visible entry either works or is honestly disabled for your role/state.
+
+Accessibility: the palette is a `role="dialog"` with `aria-modal`, the input is a labelled `combobox` driving an `aria-activedescendant`, and results are a `listbox` of `option`s.
 
 ## Version history & restore
 
