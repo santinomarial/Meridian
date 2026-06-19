@@ -9,7 +9,7 @@ Meridian is a TypeScript end-to-end collaborative browser IDE for engineering te
 - **Browser IDE workspace** — file explorer, editor tabs, activity bar, status bar, and a collapsible collaboration side panel
 - **Monaco editor** — VS Code's editor engine with syntax highlighting, bracket pair colorization, and multi-language support
 - **Project / document tree** — hierarchical file and folder structure per workspace, fetched from the backend on load
-- **File operations** — create/rename/delete files and folders, open a local file from disk, and import a ZIP project — all synced to the backend
+- **File operations** — create/rename/delete files and folders, open a local file from disk, and import/export a ZIP project — all synced to the backend; see [Workspace ZIP export](#workspace-zip-export)
 - **Editor tabs** — multi-file editing with dirty-state tracking and Cmd+S / Ctrl+S save to backend
 - **Command palette** — press Cmd+K / Ctrl+K to fuzzily search files and run real, permission-aware workspace commands — see [Command palette](#command-palette)
 - **Integrated terminal** — opt-in (`ENABLE_TERMINAL=true`) PTY-backed terminal that materializes the workspace's files into a sandbox so you can run them (incl. "Run Active File"), with live sync as you edit — see [Integrated terminal](#integrated-terminal)
@@ -155,6 +155,21 @@ Behavior:
 Disabled commands show a short reason and cannot be executed (they are `aria-disabled` and skipped by keyboard navigation). Nothing in the palette is fake or a dead control — every visible entry either works or is honestly disabled for your role/state.
 
 Accessibility: the palette is a `role="dialog"` with `aria-modal`, the input is a labelled `combobox` driving an `aria-activedescendant`, and results are a `listbox` of `option`s.
+
+## Workspace ZIP export
+
+The inverse of ZIP import: download the current workspace as a `.zip` via **File → Export Workspace as ZIP** or the command palette ("Export Workspace as ZIP"). The browser downloads `<workspace-name>.zip` (filename sanitized from the workspace name).
+
+- **Endpoint** — `GET /workspaces/:workspaceId/export` returns `Content-Type: application/zip` with `Content-Disposition: attachment; filename="<safe-name>.zip"`.
+- **Permissions** — any workspace member can export, including **viewers** (it is read-only). Non-members get a `404` (the workspace's existence isn't leaked). No role gating beyond membership.
+- **Source of truth** — the archive is built **from the database**: every folder/file document with its latest saved content and preserved structure. Document paths are normalized to safe POSIX relative paths; absolute paths, `..` traversal, and control characters are rejected (such documents are skipped).
+- **Included** — your workspace's files and folders (including empty folders), with the latest **saved** content.
+- **Excluded** — terminal sandbox internals (they are never DB-backed, so they can't appear), and build artifacts such as `.meridian-build/`. No server files, env, or secrets are ever included.
+
+**Limitations**
+
+- Export reflects the **latest saved** DB content, not unsaved editor changes — save (Cmd/Ctrl+S) before exporting to include in-progress edits.
+- The ZIP is assembled in memory (via `jszip`) before being sent. This is fine at Meridian's current scale (per-file content is small and capped); a very large workspace would warrant a streaming archiver.
 
 ## Integrated terminal
 

@@ -13,6 +13,7 @@ import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useFileOperations } from "../../hooks/useFileOperations";
 import { useSaveActiveFile } from "../../hooks/useSaveActiveFile";
 import { useRunActiveFile } from "../../hooks/useRunActiveFile";
+import { useExportWorkspace } from "../../hooks/useExportWorkspace";
 import { createInvite, logout } from "../../lib/api";
 import { getActiveEditor } from "../../lib/editorRegistry";
 import type { Collaborator } from "../../types";
@@ -179,6 +180,7 @@ export function Header() {
   const { createFile, createFolder, openLocalFile, importZip } = useFileOperations();
   const { saveActiveFile } = useSaveActiveFile();
   const { runActiveFile, canRun: canRunActiveFile } = useRunActiveFile();
+  const { exportWorkspace, canExport } = useExportWorkspace();
 
   // ── Local state ────────────────────────────────────────────────────────────
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
@@ -340,6 +342,11 @@ export function Header() {
     setOpenPanel(null);
     void runActiveFile();
   }, [runActiveFile]);
+
+  const handleExportWorkspace = useCallback(() => {
+    setOpenPanel(null);
+    void exportWorkspace();
+  }, [exportWorkspace]);
 
   const handleSignOut = useCallback(async () => {
     setOpenPanel(null);
@@ -504,6 +511,13 @@ export function Header() {
           setOpenPanel(null);
           zipInputRef.current?.click();
         },
+      },
+      {
+        // Available to every member (incl. viewers); not requiresEdit.
+        label: "Export Workspace as ZIP",
+        icon: "download",
+        onClick: handleExportWorkspace,
+        disabled: !canExport,
       },
       { label: "Save", icon: "save", onClick: handleSave, sep: true, requiresEdit: true },
       {

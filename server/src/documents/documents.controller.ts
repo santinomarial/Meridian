@@ -10,6 +10,7 @@ import {
   Param,
   Patch,
   Post,
+  StreamableFile,
   UseGuards,
 } from '@nestjs/common';
 import { WorkspaceRole } from '@prisma/client';
@@ -72,6 +73,27 @@ export class DocumentsController {
   ) {
     await this.requireWorkspaceAccess(user, workspaceId);
     return this.documentsService.getTree(workspaceId);
+  }
+
+  @Get('workspaces/:workspaceId/export')
+  @ApiOperation({ summary: 'Export the workspace files/folders as a ZIP' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace cuid' })
+  @ApiOkResponse({ description: 'application/zip attachment of the workspace' })
+  @ApiNotFoundResponse({ description: 'Workspace not found' })
+  async exportWorkspace(
+    @CurrentUser() user: AuthUser,
+    @Param('workspaceId') workspaceId: string,
+  ): Promise<StreamableFile> {
+    // Any member (including viewers) may export; non-members get a 404 so a
+    // private workspace's existence isn't leaked.
+    await this.requireWorkspaceAccess(user, workspaceId);
+
+    const { buffer, filename } = await this.documentsService.exportWorkspaceZip(workspaceId);
+    return new StreamableFile(buffer, {
+      type: 'application/zip',
+      disposition: `attachment; filename="${filename}"`,
+      length: buffer.length,
+    });
   }
 
   @Post('workspaces/:workspaceId/documents')

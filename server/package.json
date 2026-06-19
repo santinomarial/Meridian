@@ -35,6 +35,7 @@
     "class-validator": "^0.15.1",
     "cookie-parser": "^1.4.7",
     "ioredis": "^5.11.0",
+    "jszip": "^3.10.1",
     "nestjs-pino": "^4.6.1",
     "node-pty": "^1.1.0",
     "pino-http": "^11.0.0",

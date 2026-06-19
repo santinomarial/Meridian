@@ -245,3 +245,32 @@ export const restoreDocumentVersion = (
     'POST',
     `/documents/${documentId}/versions/${versionId}/restore`,
   );
+
+// ── Workspace export ────────────────────────────────────────────────────────
+
+/** Parses a filename out of a Content-Disposition header, if present. */
+function filenameFromDisposition(header: string | null): string | null {
+  if (header === null) return null;
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * Downloads a workspace as a ZIP. Returns the raw blob plus the server-provided
+ * filename (from Content-Disposition) so the caller can trigger the download.
+ */
+export const exportWorkspaceZip = async (
+  workspaceId: string,
+): Promise<{ blob: Blob; filename: string }> => {
+  const res = await fetch(`${API_URL}/workspaces/${workspaceId}/export`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    throw new ApiError(res.status, `Export failed: HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const filename =
+    filenameFromDisposition(res.headers.get('content-disposition')) ?? 'workspace.zip';
+  return { blob, filename };
+};

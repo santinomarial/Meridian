@@ -1,10 +1,13 @@
 import { NotFoundException } from '@nestjs/common';
 import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
+import JSZip from 'jszip';
 import type { Document, DocumentVersion } from '@prisma/client';
 import { DocumentType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   DocumentsService,
+  sanitizeZipFilenameStem,
+  isExcludedExportPath,
   type CreateDocumentData,
   type UpdateDocumentData,
 } from './documents.service';
@@ -393,6 +396,95 @@ describe('DocumentsService', () => {
         service.restoreVersion('doc-1', 'v-1', 'user-9'),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.document.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Export ──────────────────────────────────────────────────────────────────
+
+  describe('exportWorkspaceZip', () => {
+    type ExportDoc = { type: DocumentType; path: string; content: string | null };
+
+    function setExportDocs(name: string | null, docs: ExportDoc[]): void {
+      prisma.workspace.findUnique.mockResolvedValue(
+        name === null ? null : ({ name } as never),
+      );
+      prisma.document.findMany.mockResolvedValue(docs as never);
+    }
+
+    it('builds a zip with expected paths/contents and preserves nested folders', async () => {
+      setExportDocs('My Project', [
+        { type: DocumentType.FOLDER, path: 'src', content: null },
+        { type: DocumentType.FILE, path: 'src/main.py', content: 'print("hello export")' },
+        { type: DocumentType.FILE, path: 'README.md', content: '# Hello' },
+      ]);
+
+      const { buffer, filename } = await service.exportWorkspaceZip('ws-1');
+
+      expect(filename).toBe('My Project.zip');
+      const zip = await JSZip.loadAsync(buffer);
+      expect(zip.file('src/main.py')).not.toBeNull();
+      expect(await zip.file('src/main.py')!.async('string')).toBe('print("hello export")');
+      expect(await zip.file('README.md')!.async('string')).toBe('# Hello');
+      // The folder entry is preserved.
+      const folderEntry = zip.files['src/'];
+      expect(folderEntry).toBeDefined();
+      expect(folderEntry!.dir).toBe(true);
+    });
+
+    it('excludes .meridian-build/ and terminal artifacts', async () => {
+      setExportDocs('w', [
+        { type: DocumentType.FILE, path: 'app.js', content: 'ok' },
+        { type: DocumentType.FILE, path: '.meridian-build/out.js', content: 'nope' },
+        { type: DocumentType.FOLDER, path: '.terminal-sandboxes', content: null },
+        { type: DocumentType.FILE, path: '.terminal-sandboxes/x.txt', content: 'nope' },
+      ]);
+
+      const { buffer } = await service.exportWorkspaceZip('ws-1');
+      const zip = await JSZip.loadAsync(buffer);
+
+      expect(zip.file('app.js')).not.toBeNull();
+      expect(zip.file('.meridian-build/out.js')).toBeNull();
+      expect(Object.keys(zip.files).some((k) => k.startsWith('.meridian-build'))).toBe(false);
+      expect(Object.keys(zip.files).some((k) => k.startsWith('.terminal-sandboxes'))).toBe(false);
+    });
+
+    it('skips documents with unsafe (traversal/absolute) paths', async () => {
+      setExportDocs('w', [
+        { type: DocumentType.FILE, path: 'safe.txt', content: 'ok' },
+        { type: DocumentType.FILE, path: '../escape.txt', content: 'pwned' },
+        { type: DocumentType.FILE, path: '/etc/passwd', content: 'pwned' },
+      ]);
+
+      const { buffer } = await service.exportWorkspaceZip('ws-1');
+      const zip = await JSZip.loadAsync(buffer);
+
+      expect(zip.file('safe.txt')).not.toBeNull();
+      expect(Object.keys(zip.files).every((k) => !k.includes('..'))).toBe(true);
+      expect(Object.keys(zip.files).every((k) => !k.startsWith('/'))).toBe(true);
+    });
+
+    it('falls back to a safe filename when the workspace name is empty/unsafe', async () => {
+      setExportDocs('...', []);
+      expect((await service.exportWorkspaceZip('ws-1')).filename).toBe('workspace.zip');
+
+      setExportDocs(null, []);
+      expect((await service.exportWorkspaceZip('ws-1')).filename).toBe('workspace.zip');
+    });
+  });
+
+  describe('export helpers', () => {
+    it('sanitizeZipFilenameStem strips unsafe chars and falls back to "workspace"', () => {
+      expect(sanitizeZipFilenameStem('My Project')).toBe('My Project');
+      expect(sanitizeZipFilenameStem('a/b\\c')).toBe('a_b_c');
+      expect(sanitizeZipFilenameStem('')).toBe('workspace');
+      expect(sanitizeZipFilenameStem('   ')).toBe('workspace');
+    });
+
+    it('isExcludedExportPath flags build/sandbox artifacts only', () => {
+      expect(isExcludedExportPath('.meridian-build/out.js')).toBe(true);
+      expect(isExcludedExportPath('.terminal-sandboxes/x')).toBe(true);
+      expect(isExcludedExportPath('src/main.py')).toBe(false);
+      expect(isExcludedExportPath('build/out.js')).toBe(false);
     });
   });
 });

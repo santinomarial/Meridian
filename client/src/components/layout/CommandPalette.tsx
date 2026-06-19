@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useFileOperations } from "../../hooks/useFileOperations";
 import { useSaveActiveFile } from "../../hooks/useSaveActiveFile";
 import { useRunActiveFile } from "../../hooks/useRunActiveFile";
+import { useExportWorkspace } from "../../hooks/useExportWorkspace";
 import { logout } from "../../lib/api";
 import { flattenFileTree, searchFiles, commandMatches } from "../../lib/commandPalette";
 
@@ -61,6 +62,11 @@ function CommandPaletteBody() {
   const { createFile, createFolder } = useFileOperations();
   const { saveActiveFile, canSaveActiveFile } = useSaveActiveFile();
   const { runActiveFile, canRun, disabledReason: runDisabledReason } = useRunActiveFile();
+  const {
+    exportWorkspace,
+    canExport,
+    disabledReason: exportDisabledReason,
+  } = useExportWorkspace();
 
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -175,6 +181,20 @@ function CommandPaletteBody() {
       run: () => setVersionHistoryOpen(true),
     });
 
+    // Export Workspace as ZIP — available to any member (incl. viewers) when a
+    // workspace is loaded. Builds the ZIP from the latest saved DB content.
+    list.push({
+      id: "export-workspace",
+      title: "Export Workspace as ZIP",
+      icon: "download",
+      keywords: "download archive zip backup save",
+      disabled: !canExport,
+      disabledReason: exportDisabledReason,
+      run: () => {
+        void exportWorkspace();
+      },
+    });
+
     // Toggle Terminal — terminal use needs editor access and a workspace.
     const terminalReason =
       workspaceId === null
@@ -266,6 +286,9 @@ function CommandPaletteBody() {
     canRun,
     runDisabledReason,
     runActiveFile,
+    canExport,
+    exportDisabledReason,
+    exportWorkspace,
     canViewHistory,
     hasActiveBackendFile,
     workspaceId,

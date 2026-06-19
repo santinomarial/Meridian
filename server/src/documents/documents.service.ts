@@ -1,9 +1,42 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Document, DocumentVersion, Prisma } from '@prisma/client';
 import { DocumentType } from '@prisma/client';
+import JSZip from 'jszip';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertSafeRelPath } from '../modules/terminal/path-safety';
 
 export type { DocumentType };
+
+// First-path-segment prefixes that are runtime/build artifacts, never part of
+// a real workspace export even if a document somehow lives under them.
+const EXPORT_EXCLUDED_SEGMENTS = new Set(['.meridian-build', '.terminal-sandboxes']);
+
+/** Result of building a workspace export. */
+export interface WorkspaceExport {
+  buffer: Buffer;
+  filename: string;
+}
+
+/** True when a (already-normalized) relative path is an excluded artifact. */
+export function isExcludedExportPath(relPath: string): boolean {
+  const firstSegment = relPath.split('/')[0];
+  return firstSegment !== undefined && EXPORT_EXCLUDED_SEGMENTS.has(firstSegment);
+}
+
+/**
+ * Turns a workspace name into a safe download filename stem (no extension).
+ * Strips characters that are unsafe in filenames / Content-Disposition and
+ * falls back to "workspace" when nothing usable remains.
+ */
+export function sanitizeZipFilenameStem(name: string | null | undefined): string {
+  const cleaned = (name ?? '')
+    .replace(/[^A-Za-z0-9._ -]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+    .slice(0, 100)
+    .trim();
+  return cleaned.length > 0 ? cleaned : 'workspace';
+}
 
 /** Lightweight version metadata returned by the list endpoint. */
 export interface VersionListItem {
@@ -136,6 +169,62 @@ export class DocumentsService {
       where: { workspaceId },
       orderBy: { path: 'asc' },
     });
+  }
+
+  /**
+   * Builds a ZIP of a workspace from the database (the source of truth):
+   * every folder/file document, with its latest saved content and preserved
+   * structure. Runtime/build artifacts (e.g. `.meridian-build/`) are excluded,
+   * and the terminal sandbox is never touched (it isn't DB-backed).
+   *
+   * Path safety: each document path is normalized to a POSIX relative path and
+   * rejected if it is absolute, contains `..`, or has control characters —
+   * such documents are skipped rather than allowed to escape the archive.
+   *
+   * Limitation: the archive is assembled in memory before sending. That is fine
+   * at Meridian's current scale (per-file content is small and capped); a very
+   * large workspace would warrant a streaming archiver instead.
+   */
+  async exportWorkspaceZip(workspaceId: string): Promise<WorkspaceExport> {
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { name: true },
+    });
+
+    const docs = await this.prisma.document.findMany({
+      where: { workspaceId },
+      orderBy: { path: 'asc' },
+      select: { type: true, path: true, content: true },
+    });
+
+    const zip = new JSZip();
+    const seenFiles = new Set<string>();
+
+    for (const doc of docs) {
+      let relPath: string;
+      try {
+        relPath = assertSafeRelPath(doc.path);
+      } catch {
+        // Skip any document whose path is unsafe rather than risk traversal.
+        continue;
+      }
+      if (isExcludedExportPath(relPath)) continue;
+
+      if (doc.type === DocumentType.FOLDER) {
+        // Preserve (possibly empty) folders.
+        zip.folder(relPath);
+      } else {
+        if (seenFiles.has(relPath)) continue; // first writer wins; no clobber
+        seenFiles.add(relPath);
+        zip.file(relPath, doc.content ?? '');
+      }
+    }
+
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+    return {
+      buffer,
+      filename: `${sanitizeZipFilenameStem(workspace?.name)}.zip`,
+    };
   }
 
   async getTree(workspaceId: string): Promise<DocumentNode[]> {

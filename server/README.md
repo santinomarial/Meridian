@@ -128,6 +128,7 @@ http://localhost:3000/docs
 | `GET` | `/workspaces/:id` | Yes | Get workspace details |
 | `GET` | `/workspaces/:id/documents` | Yes | List all documents in workspace |
 | `GET` | `/workspaces/:id/documents/tree` | Yes | Document tree (nested, with content) |
+| `GET` | `/workspaces/:id/export` | Yes | Export the workspace files/folders as a `.zip` (any member, incl. viewers); built from DB content |
 | `GET` | `/documents/:id` | Yes | Get single document |
 | `PATCH` | `/documents/:id` | Yes | Update document (name, content, language); a meaningful content change records a `DocumentVersion` |
 | `GET` | `/documents/:id/versions` | Yes | List saved versions (lightweight, newest first); any member |
