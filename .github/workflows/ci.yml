@@ -37,9 +37,9 @@ jobs:
       - run: npm run build
       - run: npm test
 
-  # ── Client: typecheck + production build ───────────────────────────────────
+  # ── Client: typecheck + unit tests + production build ──────────────────────
   client:
-    name: Client (typecheck + build)
+    name: Client (typecheck + unit tests + build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -55,7 +55,60 @@ jobs:
       # `tsc -b` is the real typecheck; the root tsconfig has files:[] so
       # `tsc --noEmit` alone compiles nothing.
       - run: npx tsc -b
+      - run: npm test # vitest unit tests for pure logic (no backend needed)
       - run: npm run build
+
+  # ── Server integration: real request lifecycle against Postgres + Redis ────
+  # supertest drives the booted AppModule (ValidationPipe, JwtAuthGuard, the
+  # throttler, the exception filter, real Prisma) — no port is bound.
+  server-integration:
+    name: Server (HTTP integration)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: meridian
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/meridian?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-test-secret-at-least-16-chars
+      CLIENT_ORIGIN: http://localhost:5173
+      # Deliberately NOT setting E2E_TEST: integration tests exercise the real
+      # throttler and reject the test-only endpoints.
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npm run test:integration
 
   # ── End-to-end: real backend (Postgres + Redis + terminal) + Playwright ────
   e2e:

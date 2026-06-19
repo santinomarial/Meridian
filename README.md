@@ -270,12 +270,26 @@ The client reads `VITE_API_URL` (defaults to `http://localhost:3000`).
 
 ## Testing
 
+Meridian has four test layers:
+
+| Layer | Where | Runner | Needs a backend? |
+|---|---|---|---|
+| **Server unit** | `server/src/**/*.spec.ts` | Jest (Prisma mocked) | No |
+| **Server HTTP integration** | `server/test/**/*.e2e-spec.ts` | Jest + supertest | Yes — real Postgres + Redis |
+| **Client unit** | `client/src/**/*.test.ts` | Vitest | No |
+| **End-to-end** | `client/e2e/**/*.spec.ts` | Playwright | Yes — full stack |
+
 ```bash
-# Server unit tests
+# Server unit tests (fast, no database)
 cd server && npm test
 
-# Client type-check and build
-cd client && npx tsc --noEmit && npm run build
+# Server HTTP integration tests — exercise the real request pipeline
+# (ValidationPipe, JwtAuthGuard, throttler, exception filter, real Prisma)
+# via supertest. Run against a migrated database (Postgres + Redis up):
+cd server && npm run test:integration
+
+# Client unit tests (pure logic) + type-check + build
+cd client && npm test && npx tsc -b && npm run build
 
 # End-to-end (Playwright)
 cd client && npx playwright install chromium   # first run only
@@ -285,14 +299,15 @@ cd server && E2E_TEST=true npm run start:dev
 cd client && MERIDIAN_BACKEND_URL=http://localhost:3000 npm run test:e2e
 ```
 
-Tests that require a backend skip automatically when none is reachable; the remaining demo/offline tests run against the frontend alone.
+The HTTP integration tests boot the real `AppModule` (no listening port — supertest drives `app.getHttpServer()`), create throwaway users under an `int-*` email prefix, and clean only those rows up afterward, so they are safe to run against a shared dev database. E2E tests that require a backend skip automatically when none is reachable; the remaining demo/offline tests run against the frontend alone.
 
 ### Continuous integration
 
 `.github/workflows/ci.yml` runs on every push to `main` and on pull requests:
 
 - **server** — `prisma generate` → `npm run build` → `npm test` (unit tests mock Prisma, so no database is needed).
-- **client** — `tsc -b` (typecheck) → `npm run build`.
+- **server-integration** — spins up Postgres + Redis, `prisma migrate deploy`, then `npm run test:integration` (supertest against the booted app; `E2E_TEST` deliberately unset so the real throttler runs).
+- **client** — `tsc -b` (typecheck) → `npm test` (Vitest unit tests) → `npm run build`.
 - **e2e** — spins up Postgres + Redis services, applies migrations, starts the backend with `E2E_TEST=true ENABLE_TERMINAL=true`, then runs the full Playwright suite (Playwright launches the Vite dev server itself). The Playwright report is uploaded as an artifact on failure.
 - **lint** — `npm run lint` (ESLint); blocking.
 
