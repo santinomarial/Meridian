@@ -341,6 +341,8 @@ function CommandPaletteBody() {
 
   // Reset the highlight whenever the result set changes.
   useEffect(() => {
+    // Intentional reset-on-dependency-change.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedIndex(0);
   }, [query]);
 

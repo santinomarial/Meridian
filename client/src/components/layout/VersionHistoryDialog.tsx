@@ -97,6 +97,8 @@ function VersionHistoryDialogBody() {
   }, [activeFileId]);
 
   useEffect(() => {
+    // Data fetch on open / active-file change; loadVersions sets loading state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadVersions();
   }, [loadVersions]);
 

@@ -64,7 +64,6 @@ test.describe("version history (backend required)", () => {
   test.beforeAll(async () => {
     backendAvailable = await isBackendAvailable();
     if (!backendAvailable) {
-      // eslint-disable-next-line no-console
       console.log("⚠  Backend not available — skipping version history tests.");
     }
   });

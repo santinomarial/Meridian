@@ -43,7 +43,6 @@ test.describe("command palette (backend required)", () => {
   test.beforeAll(async () => {
     backendAvailable = await isBackendAvailable();
     if (!backendAvailable) {
-      // eslint-disable-next-line no-console
       console.log("⚠  Backend not available — skipping command palette tests.");
     }
   });

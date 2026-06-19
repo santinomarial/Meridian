@@ -136,6 +136,10 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   useEffect(() => {
     remoteCursorControllerRef.current?.dispose();
     remoteCursorControllerRef.current = null;
+    // Reset the mounted-editor state when switching files so collaboration
+    // hooks don't act on the previous (about-to-remount) Monaco instance. This
+    // must sit beside the controller disposal, which can only run in an effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMountedEditor(null);
     editorRef.current = null;
   }, [activeFileId]);

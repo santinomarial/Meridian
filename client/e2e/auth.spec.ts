@@ -159,7 +159,6 @@ test.describe("backend required — auth", () => {
   test.beforeAll(async () => {
     backendAvailable = await isBackendAvailable();
     if (!backendAvailable) {
-      // eslint-disable-next-line no-console
       console.log("⚠  Backend not available — skipping backend auth tests.");
     }
   });

@@ -18,6 +18,9 @@ function broadcast(): void {
   listeners.forEach((l) => l(snapshot));
 }
 
+// The imperative `toast()` API is intentionally co-located with its
+// <ToastContainer>; only affects Fast Refresh DX, not runtime behavior.
+// eslint-disable-next-line react-refresh/only-export-components
 export function toast(message: string, kind: ToastKind = "info"): void {
   const id = crypto.randomUUID();
   _queue = [..._queue, { id, message, kind }];

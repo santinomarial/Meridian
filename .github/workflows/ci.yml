@@ -153,14 +153,10 @@ jobs:
           path: client/playwright-report
           retention-days: 7
 
-  # ── Lint (advisory) ────────────────────────────────────────────────────────
-  # Non-blocking: there is pre-existing ESLint debt (mostly
-  # react-hooks/set-state-in-effect). This surfaces it on every PR without
-  # blocking merges. Flip `continue-on-error` to false once the debt is paid.
+  # ── Lint ─────────────────────────────────────────────────────────────────
   lint:
-    name: Lint (advisory)
+    name: Lint
     runs-on: ubuntu-latest
-    continue-on-error: true
     defaults:
       run:
         working-directory: client

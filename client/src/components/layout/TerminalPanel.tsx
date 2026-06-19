@@ -40,16 +40,14 @@ export function TerminalPanel() {
 
   const { terminalRef, start, stop, fit, focus, clear } = useTerminal(workspaceId);
 
-  // Re-fit whenever the panel opens or the window/panel size changes.
-  const fitRef = useRef(fit);
-  fitRef.current = fit;
-
+  // Re-fit whenever the panel opens or the window/panel size changes. `fit` is
+  // a stable useCallback, so depending on it never re-registers the listener.
   useEffect(() => {
     if (!isTerminalOpen) return;
-    const handler = (): void => fitRef.current();
+    const handler = (): void => fit();
     window.addEventListener("resize", handler);
     return () => window.removeEventListener("resize", handler);
-  }, [isTerminalOpen]);
+  }, [isTerminalOpen, fit]);
 
   // Auto-start a shell when an editor/owner opens the panel, so the terminal is
   // immediately interactive (VS Code-style) without a manual Start click.

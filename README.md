@@ -294,7 +294,7 @@ Tests that require a backend skip automatically when none is reachable; the rema
 - **server** — `prisma generate` → `npm run build` → `npm test` (unit tests mock Prisma, so no database is needed).
 - **client** — `tsc -b` (typecheck) → `npm run build`.
 - **e2e** — spins up Postgres + Redis services, applies migrations, starts the backend with `E2E_TEST=true ENABLE_TERMINAL=true`, then runs the full Playwright suite (Playwright launches the Vite dev server itself). The Playwright report is uploaded as an artifact on failure.
-- **lint** — `npm run lint`, currently **advisory** (`continue-on-error`) because of pre-existing ESLint debt; flip it to blocking once that is paid down.
+- **lint** — `npm run lint` (ESLint); blocking.
 
 ### `E2E_TEST=true` behavior
 

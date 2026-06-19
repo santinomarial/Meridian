@@ -251,6 +251,8 @@ export function Header() {
   // Reset invite state when share panel closes
   useEffect(() => {
     if (openPanel !== "share") {
+      // Intentional reset of local form state when the panel closes.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setInviteEmail("");
       setInviteStatus("idle");
       setCopyStatus("idle");
@@ -262,6 +264,9 @@ export function Header() {
   // real share panel keeps a single source of truth for the invite flow.
   useEffect(() => {
     if (!shareRequested) return;
+    // One-shot intent handoff from the command palette; opens the real share
+    // panel and immediately clears the flag. Both writes belong in the effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isOwner) setOpenPanel("share");
     setShareRequested(false);
   }, [shareRequested, isOwner, setShareRequested]);
@@ -663,6 +668,9 @@ export function Header() {
 
         <div ref={navRef}>
           <nav className="hidden items-center md:flex" aria-label="Main menu">
+            {/* Menu entries' onClick handlers close over the hidden file-input
+                refs; the refs are read on click, not during render. */}
+            {/* eslint-disable-next-line react-hooks/refs */}
             {NAV_ITEMS.map((item) => {
               const panelKey = `${item.toLowerCase()}-menu` as OpenPanel;
               const isOpen = openPanel === panelKey;

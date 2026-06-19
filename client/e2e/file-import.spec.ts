@@ -39,7 +39,6 @@ test.describe("file import (backend required)", () => {
   test.beforeAll(async () => {
     backendAvailable = await isBackendAvailable();
     if (!backendAvailable) {
-      // eslint-disable-next-line no-console
       console.log("⚠  Backend not available — skipping file import tests.");
     }
   });
