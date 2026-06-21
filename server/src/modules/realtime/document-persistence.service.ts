@@ -3,36 +3,45 @@ import { ConfigService } from '@nestjs/config';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { DocumentManagerService } from './document-manager.service';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
+
+/** Redis key holding the shared sequence counter for a document. */
+function seqKey(documentId: string): string {
+  return `meridian:doc:${documentId}:seq`;
+}
 
 @Injectable()
 export class DocumentPersistenceService {
   // ---------------------------------------------------------------------------
   // Sequence counters
   //
-  // Why in-memory instead of a DB-level sequence?
+  // The `seq` column only needs to be globally unique and monotonic per
+  // document so updates can be ordered/filtered against snapshots when
+  // rebuilding a document (Yjs updates are themselves commutative/idempotent).
   //
-  // A DB sequence (or SELECT MAX(seq) + 1 inside each INSERT) requires a
-  // round-trip to the database on every Yjs update.  Yjs updates are
-  // generated at editing speed (dozens per second per user), so a DB
-  // round-trip per update would become a bottleneck and add latency to the
-  // relay path even though the seq column is only needed for ordering when
-  // replaying updates to rebuild a document.
+  // Allocation strategy:
+  //   - When Redis is available, seq is allocated with an atomic Redis counter
+  //     (seeded once from the DB high-water mark). This is correct across
+  //     multiple server instances — two replicas persisting the same document
+  //     never collide.
+  //   - When Redis is unavailable, it falls back to a per-process in-memory
+  //     counter (also seeded from the DB high-water mark). This matches the
+  //     original single-instance behavior and avoids a DB round-trip per
+  //     keystroke, but is only collision-free within one process.
   //
-  // The in-memory counter is safe because writes for the same document are
-  // serialised through the per-document promise chain below.  The counter is
-  // initialised on the first write by taking MAX(documentUpdate.seq,
-  // snapshot.seq) from the database so we resume correctly after both a
-  // normal restart and a compaction (which deletes DocumentUpdate rows).
-  //
-  // Limitation: this strategy is correct only for a single-server deployment.
-  // Horizontal scaling requires a shared counter such as a Redis INCR or a
-  // PostgreSQL sequence fetched once per connection — deferred until the Redis
-  // pub/sub layer is added.
+  // Writes for the same document are serialised through the per-document
+  // promise chain below, so an allocated seq is always written before the next
+  // is allocated — which keeps the in-memory fallback self-correcting (the DB
+  // high-water mark stays current). See docs/scaling.md.
   // ---------------------------------------------------------------------------
   private readonly seqMap = new Map<string, number>();
+
+  // Documents whose Redis seq counter this process has already seeded, so the
+  // hot path can use a plain INCR instead of re-seeding from the DB each write.
+  private readonly redisSeeded = new Set<string>();
 
   // Per-document write chain.  Each new write is appended to the tail of the
   // existing promise so that:
@@ -49,6 +58,7 @@ export class DocumentPersistenceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly documentManager: DocumentManagerService,
+    private readonly redis: RedisService,
     configService: ConfigService,
     @InjectPinoLogger(DocumentPersistenceService.name)
     private readonly logger: PinoLogger,
@@ -114,9 +124,8 @@ export class DocumentPersistenceService {
    *    DocumentManager.seedFromContent, and the seq counter is forgotten so it
    *    is re-derived from the database.
    *
-   * Like the seq counter itself, this is correct for a single-server
-   * deployment; horizontal scaling would need the same shared-counter work
-   * already noted above.
+   * The shared Redis seq counter is cleared too (best-effort) so the next
+   * write on any instance re-seeds from the post-reset DB high-water mark.
    */
   async resetDocument(
     documentId: string,
@@ -137,6 +146,13 @@ export class DocumentPersistenceService {
     });
 
     this.updateCountSinceSnapshot.delete(documentId);
+
+    // Drop the shared Redis counter and the local seed flag so the next write
+    // re-seeds from the post-reset DB high-water mark on whichever instance
+    // handles it (snapshot seq 0 → next seq 1; no rows → next seq 0).
+    await this.redis.del(seqKey(documentId));
+    this.redisSeeded.delete(documentId);
+
     if (fullState !== null) {
       this.seqMap.set(documentId, 1);
     } else {
@@ -160,36 +176,61 @@ export class DocumentPersistenceService {
   }
 
   private async nextSeq(documentId: string): Promise<number> {
-    if (!this.seqMap.has(documentId)) {
-      // First write after (re)start: derive the high-water mark from both
-      // tables so we resume correctly even after compaction deleted rows.
-      //
-      // After compaction the DocumentUpdate table may be empty (seq returns
-      // null) while the Snapshot table holds the latest seq.  Taking the max
-      // of both ensures new writes continue from the right sequence number
-      // instead of resetting to 0, which would make them invisible to
-      // reconstruction (snapshot.seq > new update.seq → filtered out).
-      const [updateResult, snapshot] = await Promise.all([
-        this.prisma.documentUpdate.aggregate({
-          where: { documentId },
-          _max: { seq: true },
-        }),
-        this.prisma.snapshot.findFirst({
-          where: { documentId },
-          orderBy: { seq: 'desc' },
-          select: { seq: true },
-        }),
-      ]);
-
-      const maxUpdateSeq = updateResult._max.seq ?? -1;
-      const maxSnapshotSeq = snapshot?.seq ?? -1;
-      const maxSeq = Math.max(maxUpdateSeq, maxSnapshotSeq);
-      this.seqMap.set(documentId, maxSeq < 0 ? 0 : maxSeq + 1);
+    // Prefer the shared Redis counter (multi-instance safe). On any Redis
+    // miss/error this returns null and we fall back to the in-memory counter.
+    if (this.redis.isAvailable) {
+      const fromRedis = await this.redisNextSeq(documentId);
+      if (fromRedis !== null) return fromRedis;
     }
+    return this.inMemoryNextSeq(documentId);
+  }
 
-    const seq = this.seqMap.get(documentId) as number; // guaranteed above
+  private async redisNextSeq(documentId: string): Promise<number | null> {
+    const key = seqKey(documentId);
+    if (this.redisSeeded.has(documentId)) {
+      return this.redis.incr(key);
+    }
+    // First allocation on this process: seed the counter to the DB high-water
+    // mark (only applied if no other instance has seeded it yet) and increment.
+    const floor = await this.dbHighWaterMark(documentId);
+    const allocated = await this.redis.allocateSeq(key, floor);
+    if (allocated !== null) this.redisSeeded.add(documentId);
+    return allocated;
+  }
+
+  private async inMemoryNextSeq(documentId: string): Promise<number> {
+    if (!this.seqMap.has(documentId)) {
+      // Only query the DB on the first write of this process — subsequent
+      // writes increment the cached counter (no per-keystroke round-trip).
+      const floor = await this.dbHighWaterMark(documentId);
+      this.seqMap.set(documentId, floor < 0 ? 0 : floor + 1);
+    }
+    const seq = this.seqMap.get(documentId) as number;
     this.seqMap.set(documentId, seq + 1);
     return seq;
+  }
+
+  /**
+   * The current maximum seq for a document across both update and snapshot
+   * tables, or -1 when neither exists. After compaction the DocumentUpdate
+   * table may be empty while the Snapshot table holds the latest seq, so we
+   * take the max of both to resume from the right number.
+   */
+  private async dbHighWaterMark(documentId: string): Promise<number> {
+    const [updateResult, snapshot] = await Promise.all([
+      this.prisma.documentUpdate.aggregate({
+        where: { documentId },
+        _max: { seq: true },
+      }),
+      this.prisma.snapshot.findFirst({
+        where: { documentId },
+        orderBy: { seq: 'desc' },
+        select: { seq: true },
+      }),
+    ]);
+    const maxUpdateSeq = updateResult._max.seq ?? -1;
+    const maxSnapshotSeq = snapshot?.seq ?? -1;
+    return Math.max(maxUpdateSeq, maxSnapshotSeq);
   }
 
   // ---------------------------------------------------------------------------

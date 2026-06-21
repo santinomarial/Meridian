@@ -21,7 +21,7 @@ Meridian is a TypeScript end-to-end collaborative browser IDE for engineering te
 - **Settings** — update your display name, switch theme (persisted), and trigger a password-reset email
 - **Notifications** — an in-app feed of real session events (file saved, invite created); never fabricated
 - **Yjs CRDT sync** — binary update protocol; the server maintains an authoritative Y.Doc per open document and performs sync step 1/2 handshakes with every joining client
-- **Redis cross-instance fan-out** — Yjs updates and awareness states are published to Redis and relayed to clients on other server instances
+- **Redis cross-instance fan-out** — Yjs updates, awareness, and chat are published to Redis and relayed to clients on other server instances; the document persistence sequence counter and terminal sandbox sync are also Redis-shared, so the backend scales horizontally (with sticky WebSocket sessions). See [docs/scaling.md](docs/scaling.md).
 - **PostgreSQL persistence** — users, workspaces, documents, invites, and Yjs update logs persisted durably via Prisma
 - **Snapshot compaction** — every N Yjs updates the in-memory Y.Doc state is saved as a Snapshot row and preceding update rows are deleted in a single transaction, bounding storage growth
 - **Frontend resilience** — when the backend is unavailable the frontend falls back to a clearly-labelled local demo workspace; no crash, no empty screen, and demo data never appears as if it were real
@@ -244,7 +244,7 @@ Live editing is driven by a Yjs CRDT, while versions store plain text. Restore r
 - If the document is **not open**, the Yjs history is dropped so the next collaborative open re-seeds the `Y.Doc` from the restored content column.
 - A `document:restored` event is emitted so clients reconcile their save/dirty indicators.
 
-Like the rest of the realtime persistence layer, this assumes a single server instance for the in-memory sequence counter; multi-instance restore would additionally publish the update and event over Redis (see [docs/architecture.md](docs/architecture.md)).
+The persisted Yjs history is reset through the document persistence layer, whose sequence counter is Redis-shared across instances (with an in-memory fallback when Redis is down). See [docs/scaling.md](docs/scaling.md) for the cross-instance design.
 
 ## Password reset & email
 
@@ -332,4 +332,4 @@ These were deliberately left out (and are therefore hidden from the UI rather th
 
 ## Architecture
 
-See **[docs/architecture.md](docs/architecture.md)** for the full diagram set: system context, container layout, backend components, realtime editing sequence, cross-instance Redis scaling, Yjs persistence and recovery, and the complete data model.
+See **[docs/architecture.md](docs/architecture.md)** for the full diagram set: system context, container layout, backend components, realtime editing sequence, cross-instance Redis scaling, Yjs persistence and recovery, and the complete data model. See **[docs/scaling.md](docs/scaling.md)** for the horizontal-scaling design: what is shared across replicas (Redis fan-out, the document sequence counter, terminal sandbox sync), the sticky-session requirement, and known limitations.

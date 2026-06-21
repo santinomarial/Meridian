@@ -1,21 +1,48 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { randomUUID } from 'crypto';
 import * as os from 'os';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { DocumentType } from '@prisma/client';
 import type { Socket } from 'socket.io';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { assertSafeRelPath, safeJoin } from './path-safety';
+import type { AppConfig } from '../../config/configuration.type';
+import { APP_CONFIG_KEY } from '../../config/app.config';
 
 // Allowed characters in workspace/user ids used as path segments.
 const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
+
+// Unique per server process — used to ignore a sandbox-sync message this
+// instance itself published (it already applied the change locally).
+const ORIGIN_ID = randomUUID();
+
+// Redis pub/sub channels for cross-instance sandbox sync.
+const SANDBOX_SYNC_PATTERN = 'meridian:sandbox:*:sync';
+function sandboxChannel(workspaceId: string): string {
+  return `meridian:sandbox:${workspaceId}:sync`;
+}
 
 interface ActiveSandbox {
   workspaceId: string;
   userId: string;
   root: string;
   socket: Socket;
+}
+
+type SandboxOp = 'write' | 'mkdir' | 'delete' | 'rename';
+
+interface SandboxSyncMessage {
+  originId: string;
+  op: SandboxOp;
+  workspaceId: string;
+  relPath?: string;
+  content?: string;
+  oldPath?: string;
+  newPath?: string;
 }
 
 /**
@@ -27,20 +54,38 @@ interface ActiveSandbox {
  * best-effort: a failed sync warns the user (in the terminal and via a
  * `terminal:sync` event) but never throws into — or corrupts — the DB path.
  *
- * Sandboxes live under the OS temp dir (not the server project tree) so the
- * shell's working directory is well away from server source and secrets. This
- * is NOT container isolation — see the README's "known limitations".
+ * Cross-instance: a PTY (and its sandbox dir) lives on one server instance, but
+ * a document edit can be handled by any instance. So each sync op is applied to
+ * local sandboxes AND published over Redis; the instance hosting the sandbox
+ * applies the change to disk. The op carries the new content so the receiving
+ * instance doesn't need a DB read. See docs/scaling.md. This fan-out only runs
+ * when the terminal feature is enabled (otherwise no sandboxes exist anywhere).
+ *
+ * Sandboxes live under the OS temp dir (not the server project tree). This is
+ * NOT container isolation — see the README's "known limitations".
  */
 @Injectable()
-export class TerminalSandboxService {
+export class TerminalSandboxService implements OnModuleInit {
   // socketId → active sandbox (one terminal session per socket).
   private readonly active = new Map<string, ActiveSandbox>();
+  private readonly enableTerminal: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+    configService: ConfigService,
     @InjectPinoLogger(TerminalSandboxService.name)
     private readonly logger: PinoLogger,
-  ) {}
+  ) {
+    this.enableTerminal = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY).enableTerminal;
+  }
+
+  async onModuleInit(): Promise<void> {
+    if (!this.enableTerminal) return;
+    await this.redis.subscribe(SANDBOX_SYNC_PATTERN, (_channel, message) =>
+      this.onRemoteSync(message),
+    );
+  }
 
   sandboxBaseDir(): string {
     return path.join(os.tmpdir(), 'meridian-terminal-sandboxes');
@@ -111,11 +156,85 @@ export class TerminalSandboxService {
   }
 
   // ---------------------------------------------------------------------------
-  // Live sync — best-effort projections of DB mutations. All no-op when no
-  // terminal sandbox is active for the workspace.
+  // Public sync API — apply to local sandboxes AND fan out to other instances.
+  // Each is a no-op for instances with no sandbox for the workspace.
   // ---------------------------------------------------------------------------
 
   async syncWriteFile(workspaceId: string, relPath: string, content: string): Promise<void> {
+    await this.applyWriteFile(workspaceId, relPath, content);
+    this.publish({ originId: ORIGIN_ID, op: 'write', workspaceId, relPath, content });
+  }
+
+  async syncMkdir(workspaceId: string, relPath: string): Promise<void> {
+    await this.applyMkdir(workspaceId, relPath);
+    this.publish({ originId: ORIGIN_ID, op: 'mkdir', workspaceId, relPath });
+  }
+
+  async syncDelete(workspaceId: string, relPath: string): Promise<void> {
+    await this.applyDelete(workspaceId, relPath);
+    this.publish({ originId: ORIGIN_ID, op: 'delete', workspaceId, relPath });
+  }
+
+  async syncRename(workspaceId: string, oldPath: string, newPath: string): Promise<void> {
+    await this.applyRename(workspaceId, oldPath, newPath);
+    this.publish({ originId: ORIGIN_ID, op: 'rename', workspaceId, oldPath, newPath });
+  }
+
+  /** Validates that a relative path is safe (used by run-file before exec). */
+  assertSafe(relPath: string): string {
+    return assertSafeRelPath(relPath);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cross-instance fan-out
+  // ---------------------------------------------------------------------------
+
+  private publish(message: SandboxSyncMessage): void {
+    if (!this.enableTerminal) return;
+    void this.redis.publish(sandboxChannel(message.workspaceId), JSON.stringify(message));
+  }
+
+  private onRemoteSync(raw: string | Buffer): void {
+    let msg: SandboxSyncMessage;
+    try {
+      msg = JSON.parse(raw.toString()) as SandboxSyncMessage;
+    } catch {
+      this.logger.warn('Received malformed sandbox sync message');
+      return;
+    }
+    // Ignore our own broadcast — we already applied it locally.
+    if (msg.originId === ORIGIN_ID) return;
+    // Only do work when this instance actually hosts a sandbox for the workspace.
+    if (this.sandboxesFor(msg.workspaceId).length === 0) return;
+
+    void (async () => {
+      try {
+        switch (msg.op) {
+          case 'write':
+            await this.applyWriteFile(msg.workspaceId, msg.relPath ?? '', msg.content ?? '');
+            break;
+          case 'mkdir':
+            await this.applyMkdir(msg.workspaceId, msg.relPath ?? '');
+            break;
+          case 'delete':
+            await this.applyDelete(msg.workspaceId, msg.relPath ?? '');
+            break;
+          case 'rename':
+            await this.applyRename(msg.workspaceId, msg.oldPath ?? '', msg.newPath ?? '');
+            break;
+        }
+      } catch (err) {
+        this.logger.warn({ err, op: msg.op }, 'Failed to apply remote sandbox sync');
+      }
+    })();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Local filesystem application — shared by the public API and the Redis
+  // handler. All no-op when no sandbox is active for the workspace here.
+  // ---------------------------------------------------------------------------
+
+  private async applyWriteFile(workspaceId: string, relPath: string, content: string): Promise<void> {
     for (const sandbox of this.sandboxesFor(workspaceId)) {
       try {
         const target = safeJoin(sandbox.root, relPath);
@@ -129,7 +248,7 @@ export class TerminalSandboxService {
     }
   }
 
-  async syncMkdir(workspaceId: string, relPath: string): Promise<void> {
+  private async applyMkdir(workspaceId: string, relPath: string): Promise<void> {
     for (const sandbox of this.sandboxesFor(workspaceId)) {
       try {
         await fs.mkdir(safeJoin(sandbox.root, relPath), { recursive: true });
@@ -141,7 +260,7 @@ export class TerminalSandboxService {
     }
   }
 
-  async syncDelete(workspaceId: string, relPath: string): Promise<void> {
+  private async applyDelete(workspaceId: string, relPath: string): Promise<void> {
     for (const sandbox of this.sandboxesFor(workspaceId)) {
       try {
         const target = safeJoin(sandbox.root, relPath);
@@ -154,7 +273,7 @@ export class TerminalSandboxService {
     }
   }
 
-  async syncRename(workspaceId: string, oldPath: string, newPath: string): Promise<void> {
+  private async applyRename(workspaceId: string, oldPath: string, newPath: string): Promise<void> {
     for (const sandbox of this.sandboxesFor(workspaceId)) {
       try {
         const from = safeJoin(sandbox.root, oldPath);
@@ -170,10 +289,5 @@ export class TerminalSandboxService {
         this.warn(sandbox);
       }
     }
-  }
-
-  /** Validates that a relative path is safe (used by run-file before exec). */
-  assertSafe(relPath: string): string {
-    return assertSafeRelPath(relPath);
   }
 }

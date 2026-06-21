@@ -2,6 +2,7 @@ import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
 import type { ConfigService } from '@nestjs/config';
 import type { PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
 import { APP_CONFIG_KEY } from '../../config/app.config';
@@ -26,15 +27,27 @@ function makeConfigService(snapshotEveryN = DEFAULT_THRESHOLD): ConfigService {
   } as unknown as ConfigService;
 }
 
+/** Redis mock with a settable `isAvailable` getter. Unavailable by default. */
+function makeRedis(available = false): DeepMockProxy<RedisService> {
+  const redis = mockDeep<RedisService>();
+  Object.defineProperty(redis, 'isAvailable', {
+    get: () => available,
+    configurable: true,
+  });
+  return redis;
+}
+
 function makeService(
   prisma: DeepMockProxy<PrismaService>,
   logger: DeepMockProxy<PinoLogger>,
   documentManager: DeepMockProxy<DocumentManagerService>,
   snapshotEveryN = DEFAULT_THRESHOLD,
+  redis: DeepMockProxy<RedisService> = makeRedis(false),
 ): DocumentPersistenceService {
   return new DocumentPersistenceService(
     prisma,
     documentManager,
+    redis,
     makeConfigService(snapshotEveryN),
     logger as unknown as PinoLogger,
   );
@@ -358,6 +371,68 @@ describe('DocumentPersistenceService', () => {
       await cs.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.create).toHaveBeenCalledTimes(THRESHOLD + 1);
+    });
+  });
+
+  // ── Shared (Redis) seq counter ──────────────────────────────────────────────
+
+  describe('shared seq counter (Redis available)', () => {
+    const KEY = 'meridian:doc:doc-1:seq';
+
+    it('allocates seq from Redis, seeded by the DB high-water mark', async () => {
+      const redis = makeRedis(true);
+      redis.allocateSeq.mockResolvedValue(43);
+      prisma.documentUpdate.aggregate.mockResolvedValue({ _max: { seq: 42 } } as never);
+      const svc = makeService(prisma, logger, documentManager, DEFAULT_THRESHOLD, redis);
+
+      svc.persistUpdate('doc-1', new Uint8Array([1]));
+      await svc.flushDocument('doc-1');
+
+      expect(redis.allocateSeq).toHaveBeenCalledWith(KEY, 42);
+      expect(prisma.documentUpdate.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ seq: 43 }) }),
+      );
+    });
+
+    it('uses a plain INCR after the counter has been seeded once', async () => {
+      const redis = makeRedis(true);
+      redis.allocateSeq.mockResolvedValue(0); // first (seeded) allocation
+      redis.incr.mockResolvedValue(1); // subsequent allocations
+      const svc = makeService(prisma, logger, documentManager, DEFAULT_THRESHOLD, redis);
+
+      svc.persistUpdate('doc-1', new Uint8Array([1]));
+      svc.persistUpdate('doc-1', new Uint8Array([2]));
+      await svc.flushDocument('doc-1');
+
+      expect(redis.allocateSeq).toHaveBeenCalledTimes(1);
+      expect(redis.incr).toHaveBeenCalledTimes(1);
+      expect(redis.incr).toHaveBeenCalledWith(KEY);
+    });
+
+    it('falls back to the in-memory counter when Redis allocation fails', async () => {
+      const redis = makeRedis(true);
+      redis.allocateSeq.mockResolvedValue(null); // Redis error/miss
+      prisma.documentUpdate.aggregate.mockResolvedValue({ _max: { seq: null } } as never);
+      const svc = makeService(prisma, logger, documentManager, DEFAULT_THRESHOLD, redis);
+
+      svc.persistUpdate('doc-1', new Uint8Array([1]));
+      await svc.flushDocument('doc-1');
+
+      expect(redis.allocateSeq).toHaveBeenCalled();
+      // Fell back to the local counter: first seq is 0.
+      expect(prisma.documentUpdate.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ seq: 0 }) }),
+      );
+    });
+
+    it('clears the Redis counter on resetDocument', async () => {
+      const redis = makeRedis(true);
+      const svc = makeService(prisma, logger, documentManager, DEFAULT_THRESHOLD, redis);
+      prisma.$transaction.mockResolvedValue(undefined as never);
+
+      await svc.resetDocument('doc-1', null);
+
+      expect(redis.del).toHaveBeenCalledWith(KEY);
     });
   });
 });

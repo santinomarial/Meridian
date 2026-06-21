@@ -152,6 +152,62 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ---------------------------------------------------------------------------
+  // Atomic counters (used for the cross-instance document seq counter)
+  // ---------------------------------------------------------------------------
+
+  // Seeds a key to `floor` only if it doesn't exist yet, then atomically
+  // increments and returns it. The seed-if-absent and INCR happen in a single
+  // Lua call so two instances racing the first allocation can't both seed.
+  private static readonly ALLOCATE_SEQ_LUA = `
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  redis.call('SET', KEYS[1], ARGV[1])
+end
+return redis.call('INCR', KEYS[1])`;
+
+  /**
+   * Allocates the next sequence value for `key`, seeding the counter to `floor`
+   * the first time it is used (so the first returned value is `floor + 1`).
+   * Returns null when Redis is unavailable or the command fails, so callers can
+   * fall back to a local counter.
+   */
+  async allocateSeq(key: string, floor: number): Promise<number | null> {
+    if (!this._available) return null;
+    try {
+      const result = await this.publisher.eval(
+        RedisService.ALLOCATE_SEQ_LUA,
+        1,
+        key,
+        String(floor),
+      );
+      return typeof result === 'number' ? result : Number(result);
+    } catch (err) {
+      this.logger.warn({ err, key }, 'Redis allocateSeq failed');
+      return null;
+    }
+  }
+
+  /** Atomically increments `key`. Returns null when unavailable or on error. */
+  async incr(key: string): Promise<number | null> {
+    if (!this._available) return null;
+    try {
+      return await this.publisher.incr(key);
+    } catch (err) {
+      this.logger.warn({ err, key }, 'Redis incr failed');
+      return null;
+    }
+  }
+
+  /** Deletes a key. No-ops when unavailable; never throws. */
+  async del(key: string): Promise<void> {
+    if (!this._available) return;
+    try {
+      await this.publisher.del(key);
+    } catch (err) {
+      this.logger.warn({ err, key }, 'Redis del failed');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
 
   private wireLifecycleEvents(client: Redis, name: string): void {
     client.on('connect', () =>
