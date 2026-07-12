@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { createWorkspace, getCurrentUser, getDocumentTree, getWorkspaces, getWorkspaceMembers } from "../lib/api";
+import { useNavigate } from "react-router-dom";
+import { ApiError, createWorkspace, getCurrentUser, getDocumentTree, getWorkspaces, getWorkspaceMembers } from "../lib/api";
 import { getLanguageFromFilename, toLanguageMode } from "../lib/language";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import type { ApiDocument } from "../lib/api";
@@ -62,17 +63,26 @@ function findPreferredFileId(nodes: FileNode[]): string | null {
 }
 
 export function useBackendWorkspace(): void {
+  const navigate = useNavigate();
+
   useEffect(() => {
     let cancelled = false;
 
     async function load(): Promise<void> {
       try {
-        // Best-effort auth check — captures user.id for workspace auto-create.
+        // Auth check — captures user.id for workspace auto-create.
         let currentUser: ApiUser | null = null;
         try {
           currentUser = await getCurrentUser();
-        } catch {
-          // unauthenticated — workspace still loads in read-only / demo mode
+        } catch (err) {
+          // A 401 means the backend is reachable but the session is missing or
+          // expired — a normal state after time away. Treat the user as logged
+          // out and send them to the login screen instead of pretending the
+          // backend is down. Network errors fall through to demo mode below.
+          if (err instanceof ApiError && err.status === 401) {
+            if (!cancelled) navigate("/", { replace: true });
+            return;
+          }
         }
         if (cancelled) return;
         useWorkspaceStore.getState().setCurrentUser(
@@ -151,5 +161,5 @@ export function useBackendWorkspace(): void {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [navigate]);
 }

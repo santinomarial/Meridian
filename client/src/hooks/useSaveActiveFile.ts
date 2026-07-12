@@ -1,5 +1,6 @@
 import { useCallback } from "react";
-import { updateDocument } from "../lib/api";
+import { ApiError, updateDocument } from "../lib/api";
+import { toast } from "../components/ui/Toast";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 
 export interface UseSaveActiveFileReturn {
@@ -50,8 +51,13 @@ export function useSaveActiveFile(): UseSaveActiveFileReturn {
       state.clearTabDirty(id);
       state.addNotification({ icon: "save", text: `Saved ${tabName}` });
       return true;
-    } catch {
+    } catch (err) {
       state.setSaveStatus("error");
+      if (err instanceof ApiError && err.status === 401) {
+        // Session expired mid-session — say so plainly instead of a silent
+        // failed-save state. Local edits are kept so nothing is lost.
+        toast("Your session has expired. Please log in again.", "error");
+      }
       return false;
     }
   }, []);

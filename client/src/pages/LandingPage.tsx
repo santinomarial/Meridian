@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { PasswordStrength } from "../components/ui/PasswordStrength";
 import { ApiError, login, register, forgotPassword } from "../lib/api";
+import { getAuthErrorMessage } from "../lib/authErrors";
 import { getPasswordRequirements } from "../lib/passwordPolicy";
 
 type AuthMode = "signup" | "signin" | "forgot";
@@ -214,13 +215,9 @@ function AuthCard({
       }
       navigate(getSafeRedirect());
     } catch (err) {
+      setError(getAuthErrorMessage(err, { invalidCredentialsFor401: mode === "signin" }));
       if (mode === "signin" && err instanceof ApiError && err.status === 401) {
-        setError("Invalid email or password.");
         setShowForgotLink(true);
-      } else {
-        setError(
-          err instanceof ApiError ? err.message : "Something went wrong. Please try again.",
-        );
       }
     } finally {
       setLoading(false);

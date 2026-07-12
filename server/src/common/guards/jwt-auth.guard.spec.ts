@@ -47,10 +47,22 @@ function makeSession(overrides?: Partial<Session>): Session {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeContext(req: Partial<AuthenticatedRequest>): ExecutionContext {
+interface MockResponse {
+  clearCookie: jest.Mock;
+}
+
+function makeResponse(): MockResponse {
+  return { clearCookie: jest.fn() };
+}
+
+function makeContext(
+  req: Partial<AuthenticatedRequest>,
+  res: MockResponse = makeResponse(),
+): ExecutionContext {
   return {
     switchToHttp: () => ({
       getRequest: () => req,
+      getResponse: () => res,
     }),
   } as unknown as ExecutionContext;
 }
@@ -198,6 +210,67 @@ describe('JwtAuthGuard', () => {
       await guard.canActivate(ctx);
 
       expect(jwtService.verify).toHaveBeenCalledWith('cookie-token');
+    });
+  });
+
+  describe('stale cookie cleanup', () => {
+    it('clears the auth cookie when the cookie token is invalid/expired', async () => {
+      const { guard, jwtService } = makeGuard();
+      const res = makeResponse();
+      const ctx = makeContext(
+        { cookies: { auth_token: 'stale-token' }, headers: {} },
+        res,
+      );
+      jwtService.verify.mockImplementation(() => {
+        throw new Error('jwt expired');
+      });
+
+      await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
+      expect(res.clearCookie).toHaveBeenCalledWith(
+        'auth_token',
+        expect.objectContaining({ httpOnly: true, path: '/' }),
+      );
+    });
+
+    it('clears the auth cookie when the session row is expired', async () => {
+      const { guard, jwtService, prisma } = makeGuard();
+      const res = makeResponse();
+      const ctx = makeContext(
+        { cookies: { auth_token: 'good-token' }, headers: {} },
+        res,
+      );
+      jwtService.verify.mockReturnValue(VALID_PAYLOAD as never);
+      prisma.session.findUnique.mockResolvedValue({
+        ...makeSession({ expiresAt: PAST }),
+        user: BASE_USER,
+      } as never);
+
+      await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
+      expect(res.clearCookie).toHaveBeenCalledWith('auth_token', expect.anything());
+    });
+
+    it('does NOT clear the cookie when the failed token came from a Bearer header', async () => {
+      const { guard, jwtService } = makeGuard();
+      const res = makeResponse();
+      const ctx = makeContext(
+        { cookies: {}, headers: { authorization: 'Bearer bad-token' } },
+        res,
+      );
+      jwtService.verify.mockImplementation(() => {
+        throw new Error('invalid signature');
+      });
+
+      await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
+      expect(res.clearCookie).not.toHaveBeenCalled();
+    });
+
+    it('does NOT clear the cookie when no token is provided at all', async () => {
+      const { guard } = makeGuard();
+      const res = makeResponse();
+      const ctx = makeContext({ cookies: {}, headers: {} }, res);
+
+      await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
+      expect(res.clearCookie).not.toHaveBeenCalled();
     });
   });
 });

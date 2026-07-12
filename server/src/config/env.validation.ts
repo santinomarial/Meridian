@@ -11,7 +11,9 @@ const envSchema = z.object({
   JWT_SECRET: z
     .string()
     .min(16, 'JWT_SECRET must be at least 16 characters'),
-  JWT_EXPIRES_IN: z.string().default('15m'),
+  // Session lifetime. 7 days keeps users logged in across normal usage gaps;
+  // sessions are still individually revocable server-side via the Session table.
+  JWT_EXPIRES_IN: z.string().default('7d'),
   LOG_LEVEL: z.string().default('info'),
   DOC_TEARDOWN_GRACE_MS: z.coerce.number().int().positive().default(30000),
   SNAPSHOT_EVERY_N_UPDATES: z.coerce.number().int().positive().default(100),

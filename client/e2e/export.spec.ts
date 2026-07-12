@@ -55,9 +55,15 @@ const exportCommand = (page: Page) =>
 // ── Demo mode (no backend) ──────────────────────────────────────────────────
 
 test("export is disabled with a reason when no workspace is loaded", async ({ page }) => {
+  // Block the backend so the app enters demo mode (an unauthenticated visit
+  // with a reachable backend redirects to the login page instead).
+  const apiBase = process.env["MERIDIAN_BACKEND_URL"] ?? "http://localhost:3000";
+  await page.route(`${apiBase}/**`, (route) => route.abort("connectionrefused"));
   await page.goto("/workspace");
   await page.waitForSelector('[data-testid="workspace-root"]', { timeout: 15_000 });
-  await page.waitForTimeout(1_000);
+  await page.waitForSelector('[data-testid="backend-unavailable-banner"]', {
+    timeout: 10_000,
+  });
 
   await page.keyboard.press("ControlOrMeta+k");
   await expect(page.getByTestId("command-palette")).toBeVisible({ timeout: 5_000 });

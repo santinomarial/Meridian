@@ -41,7 +41,7 @@ GET http://localhost:3000/ready    → 200 { "status": "ready", ... }
 | `DATABASE_URL` | (see `.env.example`) | PostgreSQL connection string |
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection string |
 | `JWT_SECRET` | — | **Required** — secret used to sign and verify JWTs |
-| `JWT_EXPIRES_IN` | `15m` | JWT lifetime (parsed by `@nestjs/jwt`) |
+| `JWT_EXPIRES_IN` | `7d` | Session/JWT lifetime (e.g. `15m`, `1h`, `7d`). The auth cookie's `Max-Age` and the `Session.expiresAt` row are both derived from this |
 | `LOG_LEVEL` | `info` | Pino log level (`debug` / `info` / `warn` / `error`) |
 | `DOC_TEARDOWN_GRACE_MS` | `30000` | Milliseconds before an in-memory Y.Doc is destroyed after the last client leaves |
 | `SNAPSHOT_EVERY_N_UPDATES` | `100` | Number of Yjs updates that trigger a snapshot compaction |
@@ -179,6 +179,12 @@ npm run db:studio
 - `revokedAt` — set on logout; guarded handlers reject tokens where this field is non-null.
 
 **Token delivery** uses an httpOnly cookie named `auth_token` (`SameSite=Lax`, `Secure` in production). The Socket.IO auth middleware accepts the token from `socket.handshake.auth.token` or the `auth_token` cookie header.
+
+**Session expiration** is a normal, gracefully-handled state:
+- Sessions last `JWT_EXPIRES_IN` (default **7 days**); the cookie `Max-Age`, the JWT `exp` claim, and the `Session.expiresAt` row always agree.
+- Any guarded route (including `GET /auth/me`) returns **401** — never 500 — for a missing, malformed, expired, or revoked token.
+- When the dead token came from the `auth_token` cookie, the 401 response also **clears the cookie**, so the browser stops re-sending it. (Tokens presented via the `Authorization: Bearer` header never trigger cookie clearing.)
+- `POST /auth/login` ignores any cookie on the request, so logging in with a stale cookie always works and sets a fresh session cookie.
 
 **Timing safety:** The login path always calls `argon2.verify` even when the email does not exist (using a dummy hash), preventing email enumeration via timing differences.
 

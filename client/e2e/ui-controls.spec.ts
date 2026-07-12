@@ -9,13 +9,20 @@ import { test, expect, type Page } from "@playwright/test";
 import { isBackendAvailable, uniqueEmail, signUpViaUI } from "./helpers/auth.js";
 import { STRONG_PASSWORD, freshWorkspace } from "./helpers/workspace.js";
 
-/** Navigate to the workspace in demo mode (no auth required). */
+/**
+ * Navigate to the workspace in demo mode. The backend API is blocked so the
+ * app reliably falls into the offline/demo state — an unauthenticated visit
+ * with a reachable backend now redirects to the login page instead.
+ */
 async function openDemoWorkspace(page: Page): Promise<void> {
+  const apiBase = process.env["MERIDIAN_BACKEND_URL"] ?? "http://localhost:3000";
+  await page.route(`${apiBase}/**`, (route) => route.abort("connectionrefused"));
   await page.goto("/workspace");
   // Wait for the workspace to settle — backend-unavailable banner will show.
   await page.waitForSelector('[data-testid="workspace-root"]', { timeout: 15_000 });
-  // Give the backend check a moment to resolve before asserting.
-  await page.waitForTimeout(1_000);
+  await page.waitForSelector('[data-testid="backend-unavailable-banner"]', {
+    timeout: 10_000,
+  });
 }
 
 // ── Theme toggle ──────────────────────────────────────────────────────────────

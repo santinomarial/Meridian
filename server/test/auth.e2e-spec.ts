@@ -112,4 +112,89 @@ describe('Auth (HTTP integration)', () => {
       .send({ email, password: 'WrongPass@123!' });
     expect(res.status).toBe(401);
   });
+
+  // ── Expired / stale sessions (long-idle behavior) ───────────────────────────
+
+  it('/auth/me with an invalid cookie returns 401 (not 500) and clears the cookie', async () => {
+    const res = await request(ctx.server)
+      .get('/auth/me')
+      .set('Cookie', 'auth_token=this-is-not-a-jwt');
+
+    expect(res.status).toBe(401);
+    // The stale cookie must be cleared so the browser stops sending it.
+    const setCookie = (res.headers['set-cookie'] as unknown as string[]) ?? [];
+    const cleared = setCookie.find((c) => c.startsWith('auth_token='));
+    expect(cleared).toBeDefined();
+    expect(cleared).toMatch(/auth_token=;|Expires=Thu, 01 Jan 1970/);
+  });
+
+  it('/auth/me with a structurally-valid but expired/forged token returns 401, not 500', async () => {
+    // A well-formed JWT signed with the wrong secret.
+    const forged =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
+      'eyJzdWIiOiJ4IiwiZW1haWwiOiJ4QHguY29tIiwianRpIjoieCIsImlhdCI6MSwiZXhwIjoyfQ.' +
+      'invalid-signature-here';
+    const res = await request(ctx.server)
+      .get('/auth/me')
+      .set('Cookie', `auth_token=${forged}`);
+    expect(res.status).toBe(401);
+  });
+
+  it('login succeeds even when a stale/garbage cookie is sent, and sets a fresh cookie', async () => {
+    const email = uniqueEmail(PREFIX);
+    await request(ctx.server)
+      .post('/auth/register')
+      .send({ email, password: STRONG_PASSWORD, displayName: 'Dora' })
+      .expect(201);
+
+    // Simulate a browser that kept an expired/garbage cookie for weeks.
+    const res = await request(ctx.server)
+      .post('/auth/login')
+      .set('Cookie', 'auth_token=stale-garbage-token')
+      .send({ email, password: STRONG_PASSWORD });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.email).toBe(email);
+
+    const setCookie = (res.headers['set-cookie'] as unknown as string[]) ?? [];
+    const fresh = setCookie.find(
+      (c) => c.startsWith('auth_token=') && !c.startsWith('auth_token=;'),
+    );
+    expect(fresh).toBeDefined();
+    expect(fresh).toContain('HttpOnly');
+
+    // The fresh cookie works for /auth/me.
+    const cookieValue = fresh!.split(';')[0]!;
+    const me = await request(ctx.server).get('/auth/me').set('Cookie', cookieValue);
+    expect(me.status).toBe(200);
+    expect(me.body.email).toBe(email);
+  });
+
+  it('sessions are long-lived: cookie Max-Age matches the JWT exp and is at least 1 day', async () => {
+    const email = uniqueEmail(PREFIX);
+    const res = await request(ctx.server)
+      .post('/auth/register')
+      .send({ email, password: STRONG_PASSWORD, displayName: 'Eve' })
+      .expect(201);
+
+    const setCookie = (res.headers['set-cookie'] as unknown as string[]) ?? [];
+    const authCookie = setCookie.find((c) => c.startsWith('auth_token='));
+    expect(authCookie).toBeDefined();
+
+    const maxAgeMatch = /Max-Age=(\d+)/.exec(authCookie!);
+    expect(maxAgeMatch).not.toBeNull();
+    const maxAgeSeconds = parseInt(maxAgeMatch![1]!, 10);
+
+    // JWT_EXPIRES_IN defaults to 7d; anything under a day would log users out
+    // during normal usage gaps.
+    expect(maxAgeSeconds).toBeGreaterThanOrEqual(86_400);
+
+    // Cookie lifetime and token exp must agree (within clock-skew tolerance).
+    const token = res.body.token as string;
+    const payload = JSON.parse(
+      Buffer.from(token.split('.')[1]!, 'base64url').toString(),
+    ) as { exp: number; iat: number };
+    const tokenLifetime = payload.exp - payload.iat;
+    expect(Math.abs(tokenLifetime - maxAgeSeconds)).toBeLessThanOrEqual(5);
+  });
 });

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { PasswordStrength } from "../components/ui/PasswordStrength";
-import { ApiError, resetPassword } from "../lib/api";
+import { resetPassword } from "../lib/api";
+import { getAuthErrorMessage } from "../lib/authErrors";
 import { getPasswordRequirements } from "../lib/passwordPolicy";
 
 // ---------------------------------------------------------------------------
@@ -45,11 +46,7 @@ export function ResetPasswordPage() {
       await resetPassword({ token: token ?? "", password });
       setSuccess(true);
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : "Something went wrong. Please try again.",
-      );
+      setError(getAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }

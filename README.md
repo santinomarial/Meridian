@@ -246,6 +246,25 @@ Live editing is driven by a Yjs CRDT, while versions store plain text. Restore r
 
 The persisted Yjs history is reset through the document persistence layer, whose sequence counter is Redis-shared across instances (with an in-memory fallback when Redis is down). See [docs/scaling.md](docs/scaling.md) for the cross-instance design.
 
+## Sessions & login
+
+Sessions are httpOnly-cookie JWTs backed by a `Session` database row (revocable per session). Expired sessions are a normal state and are handled cleanly end to end:
+
+- **Lifetime** — sessions last `JWT_EXPIRES_IN` (default **7 days**). The cookie `Max-Age`, JWT `exp`, and `Session.expiresAt` always agree.
+- **Expired session on load** — `GET /auth/me` returns 401 (never 500) and clears the stale cookie; the app treats you as logged out and shows the login screen. No crash, no misleading "backend unavailable" state.
+- **Logging back in** — login ignores any stale cookie and always sets a fresh one, so logging in after weeks away just works.
+- **Clear errors** — wrong credentials show "Invalid email or password."; a rate-limited login shows "Too many login attempts. Please wait and try again."; an unreachable backend shows "Unable to connect to Meridian. Please check that the server is running." The auth flows never show a vague "Something went wrong" for expected states.
+- **Demo mode** is only entered when the backend is actually unreachable — never for a merely expired session.
+
+**Local dev troubleshooting**
+
+| Symptom | Cause / fix |
+|---|---|
+| Login page appears after time away | Session expired (normal) — just log in again |
+| "Unable to connect to Meridian…" on login | Backend not running — `cd server && npm run start:dev` (and `npm run infra:up` for Postgres/Redis) |
+| Stale cookie weirdness | The server clears dead cookies automatically on the first 401; you can also delete the `auth_token` cookie in DevTools → Application → Cookies |
+| Fresh local DB | `cd server && npm run db:migrate && npm run db:seed` (your old accounts/sessions are gone — sign up again) |
+
 ## Password reset & email
 
 - `POST /auth/forgot-password` always returns the same generic message and never reveals whether an account exists.
@@ -261,6 +280,7 @@ Set these in `server/.env` (see `.env.example`):
 | `DATABASE_URL` | PostgreSQL connection string |
 | `REDIS_URL` | Redis connection string |
 | `JWT_SECRET` | Secret for signing session JWTs (required) |
+| `JWT_EXPIRES_IN` | Session lifetime (default `7d`) — see [Sessions & login](#sessions--login) |
 | `CLIENT_ORIGIN` | Frontend origin, used to build invite/reset URLs and for CORS |
 | `RESEND_API_KEY` | Optional — enables real email delivery via Resend |
 | `MAIL_FROM` | From-address for outgoing email |

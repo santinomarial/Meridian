@@ -21,8 +21,7 @@ import type { ResetPasswordDto } from './dto/reset-password.dto';
 import { MailService } from '../mail/mail.service';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
-
-const COOKIE_NAME = 'auth_token';
+import { AUTH_COOKIE_NAME, authCookieOptions } from './auth-cookie';
 
 @Injectable()
 export class AuthService {
@@ -96,7 +95,7 @@ export class AuthService {
       where: { jti },
       data: { revokedAt: new Date() },
     });
-    res.clearCookie(COOKIE_NAME, cookieOptions());
+    res.clearCookie(AUTH_COOKIE_NAME, authCookieOptions());
     this.logger.info({ jti }, 'Session revoked');
   }
 
@@ -242,8 +241,10 @@ export class AuthService {
       data: { userId: user.id, jti, expiresAt },
     });
 
-    res.cookie(COOKIE_NAME, token, {
-      ...cookieOptions(),
+    // Login/register always sets a fresh cookie, replacing any stale one the
+    // browser may still hold from an expired session.
+    res.cookie(AUTH_COOKIE_NAME, token, {
+      ...authCookieOptions(),
       maxAge: expiresAt.getTime() - Date.now(),
     });
 
@@ -262,14 +263,5 @@ export function toAuthUser(user: User): AuthUser {
     avatarUrl: user.avatarUrl,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
-  };
-}
-
-function cookieOptions() {
-  return {
-    httpOnly: true,
-    sameSite: 'lax' as const,
-    secure: process.env['NODE_ENV'] === 'production',
-    path: '/',
   };
 }
