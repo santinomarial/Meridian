@@ -23,7 +23,12 @@ describe("normalizeAwarenessUser", () => {
     expect(result).not.toBeNull();
     expect(result?.color).toBe(colorForUser("attacker"));
     expect(result?.color).toMatch(/^#[0-9a-f]{6}$/i);
-    expect(result?.name).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(
+      [...(result?.name ?? "")].every((character) => {
+        const code = character.charCodeAt(0);
+        return code > 0x1f && code !== 0x7f;
+      }),
+    ).toBe(true);
   });
 
   it("rejects malformed or empty identities", () => {

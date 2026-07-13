@@ -64,11 +64,8 @@ function findPreferredFileId(nodes: FileNode[]): string | null {
 
 export function useBackendWorkspace(): void {
   const navigate = useNavigate();
-  const { workspaceId, id: legacySessionId } = useParams<{
-    workspaceId?: string;
-    id?: string;
-  }>();
-  const requestedWorkspaceId = workspaceId ?? legacySessionId ?? null;
+  const { workspaceId } = useParams<{ workspaceId?: string }>();
+  const requestedWorkspaceId = workspaceId ?? null;
 
   useEffect(() => {
     let cancelled = false;

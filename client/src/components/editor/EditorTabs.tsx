@@ -17,6 +17,7 @@ function EditorTab({
 }) {
   return (
     <li
+      role="presentation"
       className={[
         "group flex h-9 shrink-0 items-stretch meridian-crisp-border border-r",
         transitionBase,
@@ -29,6 +30,7 @@ function EditorTab({
         type="button"
         onClick={() => onSelect(tab.fileId)}
         className={["flex h-full min-w-0 items-center gap-1.5 px-3", focusRing].join(" ")}
+        role="tab"
         aria-selected={isActive}
       >
         <MaterialIcon
@@ -40,7 +42,10 @@ function EditorTab({
       </button>
       <div className="relative flex w-7 shrink-0 items-center justify-center">
         {tab.dirty ? (
-          <span className="h-1.5 w-1.5 rounded-full bg-primary group-hover:hidden" aria-hidden />
+          <span
+            className="h-1.5 w-1.5 rounded-full bg-primary group-hover:hidden group-focus-within:hidden"
+            aria-hidden
+          />
         ) : null}
         <button
           type="button"
@@ -53,7 +58,8 @@ function EditorTab({
             transitionBase,
             "hover:bg-surface-container-high hover:text-on-surface",
             focusRing,
-            tab.dirty ? "absolute hidden group-hover:inline-flex" : "opacity-0 group-hover:opacity-100",
+            tab.dirty ? "absolute" : "",
+            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
           ].join(" ")}
           aria-label={`Close ${tab.name}`}
         >
@@ -70,6 +76,14 @@ export function EditorTabs() {
   const setActiveFile = useWorkspaceStore((s) => s.setActiveFile);
   const closeTab = useWorkspaceStore((s) => s.closeTab);
 
+  const handleClose = (fileId: string): void => {
+    const tab = useWorkspaceStore.getState().openTabs.find((item) => item.fileId === fileId);
+    if (tab?.dirty && !window.confirm(`Close ${tab.name} without saving your changes?`)) {
+      return;
+    }
+    closeTab(fileId);
+  };
+
   if (!openTabs.length) return null;
 
   return (
@@ -81,7 +95,7 @@ export function EditorTabs() {
             tab={tab}
             isActive={activeFileId === tab.fileId}
             onSelect={setActiveFile}
-            onClose={closeTab}
+            onClose={handleClose}
           />
         ))}
       </ul>

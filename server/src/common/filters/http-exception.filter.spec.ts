@@ -15,6 +15,7 @@ describe('HttpExceptionFilter', () => {
   function setup() {
     const logger = mockDeep<PinoLogger>();
     const response = mockDeep<Response>();
+    response.status.mockReturnValue(response);
     const request = { id: 'request-1', url: '/test' } as RequestWithId;
     const host = {
       switchToHttp: () => ({

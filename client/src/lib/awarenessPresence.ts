@@ -20,6 +20,15 @@ const REMOTE_SELECTION_STYLE_ID = "meridian-remote-selection-styles";
 
 const SAFE_HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
+function replaceControlCharacters(value: string): string {
+  return [...value]
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f ? " " : character;
+    })
+    .join("");
+}
+
 export function normalizeAwarenessUser(
   state: Record<string, unknown>,
 ): AwarenessUser | null {
@@ -32,10 +41,7 @@ export function normalizeAwarenessUser(
   const safeId = id.trim().slice(0, 128);
   if (safeId.length === 0) return null;
   const safeName =
-    name
-      .replace(/[\u0000-\u001f\u007f]/g, " ")
-      .trim()
-      .slice(0, 80) || "Collaborator";
+    replaceControlCharacters(name).trim().slice(0, 80) || "Collaborator";
   const safeColor = SAFE_HEX_COLOR.test(color)
     ? color.toLowerCase()
     : colorForUser(safeId);

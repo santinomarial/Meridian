@@ -190,7 +190,7 @@ export class WorkspacesController {
   }
 
   /**
-   * Loads a workspace and verifies the current user is an OWNER.
+   * Loads a workspace and verifies the current user is the canonical owner.
    * Non-members receive 404; members without owner role receive 403.
    */
   private async requireOwnerAccess(
@@ -203,7 +203,9 @@ export class WorkspacesController {
     const role = await this.workspacesService.getMemberRole(user.id, workspaceId);
     if (role === null)
       throw new NotFoundException(`Workspace ${workspaceId} not found`);
-    if (role !== WorkspaceRole.OWNER)
+    // Workspace.ownerId is authoritative. Checking both fields prevents a
+    // malformed or legacy extra OWNER membership from gaining owner powers.
+    if (ws.ownerId !== user.id || role !== WorkspaceRole.OWNER)
       throw new ForbiddenException('Only workspace owners can perform this action');
     return ws;
   }

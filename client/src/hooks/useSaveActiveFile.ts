@@ -27,7 +27,10 @@ export function useSaveActiveFile(): UseSaveActiveFileReturn {
   const userRole = useWorkspaceStore((s) => s.userRole);
 
   const canSaveActiveFile =
-    activeFileId !== null && backendStatus === "available" && userRole !== "VIEWER";
+    activeFileId !== null &&
+    !activeFileId.startsWith("local-") &&
+    backendStatus === "available" &&
+    (userRole === "OWNER" || userRole === "EDITOR");
 
   const saveActiveFile = useCallback(async (): Promise<boolean> => {
     // Read fresh state at call time so a stale closure can't save old content.
@@ -35,8 +38,9 @@ export function useSaveActiveFile(): UseSaveActiveFileReturn {
     const id = state.activeFileId;
     if (
       id === null ||
+      id.startsWith("local-") ||
       state.backendStatus !== "available" ||
-      state.userRole === "VIEWER"
+      (state.userRole !== "OWNER" && state.userRole !== "EDITOR")
     ) {
       return false;
     }
@@ -47,12 +51,18 @@ export function useSaveActiveFile(): UseSaveActiveFileReturn {
     state.setSaveStatus("saving");
     try {
       await updateDocument(id, { content });
-      state.setSaveStatus("saved");
-      state.clearTabDirty(id);
+      const latest = useWorkspaceStore.getState();
+      const contentStillMatches = latest.editorContentByFileId[id] === content;
+      if (contentStillMatches) latest.clearTabDirty(id);
+      if (latest.activeFileId === id) {
+        latest.setSaveStatus(contentStillMatches ? "saved" : "unsaved");
+      }
       state.addNotification({ icon: "save", text: `Saved ${tabName}` });
       return true;
     } catch (err) {
-      state.setSaveStatus("error");
+      if (useWorkspaceStore.getState().activeFileId === id) {
+        state.setSaveStatus("error");
+      }
       if (err instanceof ApiError && err.status === 401) {
         // Session expired mid-session — say so plainly instead of a silent
         // failed-save state. Local edits are kept so nothing is lost.

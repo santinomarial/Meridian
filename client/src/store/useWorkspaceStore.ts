@@ -267,7 +267,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
             ...state.openTabs,
             { fileId: file.id, name: file.name, language: file.language, dirty: false },
           ];
-      return { openTabs, activeFileId: fileId };
+      return {
+        openTabs,
+        activeFileId: fileId,
+        saveStatus: existingTab?.dirty ? ("unsaved" as const) : ("saved" as const),
+      };
     });
   },
 
@@ -282,7 +286,17 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
         activeFileId = nextTab?.fileId ?? null;
       }
 
-      return { openTabs, activeFileId };
+      const nextActiveTab = openTabs.find((tab) => tab.fileId === activeFileId);
+      return {
+        openTabs,
+        activeFileId,
+        saveStatus:
+          state.activeFileId === fileId
+            ? nextActiveTab?.dirty
+              ? ("unsaved" as const)
+              : ("saved" as const)
+            : state.saveStatus,
+      };
     });
   },
 
@@ -292,7 +306,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       get().openFile(fileId);
       return;
     }
-    set({ activeFileId: fileId });
+    const tab = get().openTabs.find((candidate) => candidate.fileId === fileId);
+    set({
+      activeFileId: fileId,
+      saveStatus: tab?.dirty ? "unsaved" : "saved",
+    });
   },
 
   updateFileContent: (fileId, content) => {

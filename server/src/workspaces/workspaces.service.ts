@@ -1,4 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { Workspace, WorkspaceMember } from '@prisma/client';
 import { Prisma, WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -68,6 +73,7 @@ export class WorkspacesService {
     userId: string,
     role: WorkspaceRole,
   ): Promise<WorkspaceMember> {
+    this.assertAssignableMemberRole(role);
     return this.prisma.workspaceMember.create({
       data: { workspaceId, userId, role },
     });
@@ -77,6 +83,8 @@ export class WorkspacesService {
     memberId: string,
     role: WorkspaceRole,
   ): Promise<WorkspaceMember> {
+    this.assertAssignableMemberRole(role);
+    await this.assertMutableMember(memberId);
     return this.prisma.workspaceMember.update({
       where: { id: memberId },
       data: { role },
@@ -84,6 +92,7 @@ export class WorkspacesService {
   }
 
   async removeMember(memberId: string): Promise<void> {
+    await this.assertMutableMember(memberId);
     await this.prisma.workspaceMember.delete({ where: { id: memberId } });
   }
 
@@ -127,8 +136,48 @@ export class WorkspacesService {
   }
 
   async canManageWorkspace(userId: string, workspaceId: string): Promise<boolean> {
-    const role = await this.getMemberRole(userId, workspaceId);
-    return role === WorkspaceRole.OWNER;
+    const member = await this.prisma.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      select: {
+        role: true,
+        workspace: { select: { ownerId: true } },
+      },
+    });
+    return (
+      member?.role === WorkspaceRole.OWNER && member.workspace.ownerId === userId
+    );
+  }
+
+  /** OWNER is reserved for the canonical Workspace.ownerId membership. */
+  private assertAssignableMemberRole(role: WorkspaceRole): void {
+    if (role === WorkspaceRole.OWNER) {
+      throw new BadRequestException(
+        'OWNER cannot be assigned through workspace member APIs',
+      );
+    }
+  }
+
+  /** Generic member APIs must never mutate or remove the canonical owner. */
+  private async assertMutableMember(memberId: string): Promise<void> {
+    const member = await this.prisma.workspaceMember.findUnique({
+      where: { id: memberId },
+      select: {
+        userId: true,
+        role: true,
+        workspace: { select: { ownerId: true } },
+      },
+    });
+    if (member === null) {
+      throw new NotFoundException(`Member ${memberId} not found`);
+    }
+    if (
+      member.role === WorkspaceRole.OWNER ||
+      member.userId === member.workspace.ownerId
+    ) {
+      throw new ForbiddenException(
+        'The workspace owner cannot be changed through member APIs',
+      );
+    }
   }
 
   /**
