@@ -37,7 +37,10 @@ class SocketIoAdapter extends IoAdapter {
 }
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    bodyParser: false,
+  });
   app.useLogger(app.get(Logger));
 
   configureApp(app);

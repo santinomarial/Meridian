@@ -17,7 +17,7 @@ export class BulkCreateDocumentsDto {
   })
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(1000)
+  @ArrayMaxSize(2000)
   @ValidateNested({ each: true })
   @Type(() => CreateDocumentDto)
   documents!: CreateDocumentDto[];

@@ -17,7 +17,8 @@ export type { DocumentType };
 // a real workspace export even if a document somehow lives under them.
 const EXPORT_EXCLUDED_SEGMENTS = new Set(['.meridian-build', '.terminal-sandboxes']);
 
-export const BULK_IMPORT_MAX_DOCUMENTS = 1_000;
+export const BULK_IMPORT_MAX_FILES = 1_000;
+export const BULK_IMPORT_MAX_DOCUMENTS = 2_000;
 export const BULK_IMPORT_MAX_CONTENT_BYTES = 1024 * 1024;
 export const BULK_IMPORT_MAX_TOTAL_CONTENT_BYTES = 25 * 1024 * 1024;
 
@@ -437,7 +438,10 @@ export class DocumentsService {
           (change) => change.document.path !== change.path,
         );
         if (changedPaths.length > 1) {
-          const occupied = new Set(allDocuments.map((document) => document.path));
+          const occupied = new Set([
+            ...allDocuments.map((document) => document.path),
+            ...changes.map((change) => change.path),
+          ]);
           for (const [index, change] of changedPaths.entries()) {
             let temporaryPath = `.__meridian_move__/${documentId}/${index}`;
             while (occupied.has(temporaryPath)) temporaryPath += '_';
@@ -506,8 +510,17 @@ export class DocumentsService {
       );
     }
 
+    let fileCount = 0;
     let totalContentBytes = 0;
     for (const document of documents) {
+      if (document.type === DocumentType.FILE) {
+        fileCount += 1;
+        if (fileCount > BULK_IMPORT_MAX_FILES) {
+          throw new PayloadTooLargeException(
+            `Bulk import is limited to ${BULK_IMPORT_MAX_FILES} files`,
+          );
+        }
+      }
       const contentBytes = Buffer.byteLength(document.content ?? '', 'utf8');
       if (contentBytes > BULK_IMPORT_MAX_CONTENT_BYTES) {
         throw new PayloadTooLargeException(
@@ -572,7 +585,14 @@ export class DocumentsService {
         throw new BadRequestException('Document hierarchy contains a cycle');
       }
       visited.add(cursor.id);
-      cursor = cursor.parentId === null ? undefined : byId.get(cursor.parentId);
+      if (cursor.parentId === null) return;
+      const ancestor = byId.get(cursor.parentId);
+      if (ancestor === undefined) {
+        throw new BadRequestException(
+          'Parent hierarchy must stay within the same workspace',
+        );
+      }
+      cursor = ancestor;
     }
   }
 

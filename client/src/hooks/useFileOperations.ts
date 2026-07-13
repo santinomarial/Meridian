@@ -24,6 +24,7 @@ const MAX_FILE_BYTES = 1024 * 1024; // 1 MB per file
 const MAX_ZIP_BYTES = 100 * 1024 * 1024; // 100 MB ZIP total
 const MAX_IMPORTED_BYTES = 25 * 1024 * 1024; // 25 MB after decompression
 const MAX_IMPORTED_FILES = 1_000;
+const MAX_BULK_REQUEST_BYTES = 26 * 1024 * 1024;
 
 const IGNORED_DIR_SEGMENTS = new Set([
   "node_modules",
@@ -408,7 +409,14 @@ export function useFileOperations() {
                 content: entry.content,
               })),
             ];
-            const created = await bulkCreateDocuments(workspaceId!, { documents });
+            const payload = { documents };
+            const requestBytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+            if (requestBytes > MAX_BULK_REQUEST_BYTES) {
+              return {
+                error: 'ZIP metadata and content exceed the 26 MB request limit.',
+              };
+            }
+            const created = await bulkCreateDocuments(workspaceId!, payload);
             const idByPath = new Map(created.map((doc) => [doc.path, doc.id]));
             folderIdByPath = idByPath;
             for (const entry of entries) {

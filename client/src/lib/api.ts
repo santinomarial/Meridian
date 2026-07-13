@@ -54,7 +54,8 @@ const _rawApiUrl = import.meta.env['VITE_API_URL'] as string | undefined;
 if (!_rawApiUrl && import.meta.env.DEV) {
   console.warn('[Meridian] VITE_API_URL not set — defaulting to http://localhost:3000');
 }
-const API_URL: string = _rawApiUrl ?? 'http://localhost:3000';
+const API_URL: string =
+  _rawApiUrl ?? (import.meta.env.DEV ? 'http://localhost:3000' : window.location.origin);
 
 export class ApiError extends Error {
   readonly status: number;

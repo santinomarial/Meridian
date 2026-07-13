@@ -197,11 +197,24 @@ describe('DocumentsService', () => {
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
-    it('rejects more than 1,000 documents before opening a transaction', async () => {
-      const documents = Array.from({ length: 1_001 }, (_, index) => ({
+    it('rejects more than 2,000 documents before opening a transaction', async () => {
+      const documents = Array.from({ length: 2_001 }, (_, index) => ({
         type: DocumentType.FOLDER,
         path: `folder-${index}`,
         name: `folder-${index}`,
+      }));
+
+      await expect(
+        service.bulkCreateDocuments('ws-1', documents),
+      ).rejects.toBeInstanceOf(PayloadTooLargeException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects more than 1,000 files before opening a transaction', async () => {
+      const documents = Array.from({ length: 1_001 }, (_, index) => ({
+        type: DocumentType.FILE,
+        path: `file-${index}.txt`,
+        name: `file-${index}.txt`,
       }));
 
       await expect(

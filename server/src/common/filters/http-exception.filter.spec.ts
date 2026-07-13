@@ -96,4 +96,41 @@ describe('HttpExceptionFilter', () => {
       message: 'Too many attempts',
     });
   });
+
+  it('maps body-parser size errors to a safe 413 response', () => {
+    const { filter, host, logger, response } = setup();
+    const error = Object.assign(new Error('request entity too large: private parser detail'), {
+      type: 'entity.too.large',
+      status: HttpStatus.PAYLOAD_TOO_LARGE,
+    });
+
+    filter.catch(error, host);
+
+    expect(response.status).toHaveBeenCalledWith(HttpStatus.PAYLOAD_TOO_LARGE);
+    expect(responseBody(response)).toMatchObject({
+      statusCode: 413,
+      error: 'Payload Too Large',
+      message: 'Request body is too large',
+    });
+    expect(JSON.stringify(responseBody(response))).not.toContain('private parser detail');
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('maps malformed JSON parser errors to a safe 400 response', () => {
+    const { filter, host, response } = setup();
+    const error = Object.assign(new SyntaxError('Unexpected token with private body fragment'), {
+      type: 'entity.parse.failed',
+      status: HttpStatus.BAD_REQUEST,
+    });
+
+    filter.catch(error, host);
+
+    expect(response.status).toHaveBeenCalledWith(HttpStatus.BAD_REQUEST);
+    expect(responseBody(response)).toMatchObject({
+      statusCode: 400,
+      error: 'Bad Request',
+      message: 'Malformed JSON request body',
+    });
+    expect(JSON.stringify(responseBody(response))).not.toContain('private body fragment');
+  });
 });

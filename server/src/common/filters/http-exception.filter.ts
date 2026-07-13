@@ -18,6 +18,37 @@ interface ErrorResponseBody {
   path: string;
 }
 
+interface ParserErrorDetails {
+  statusCode: HttpStatus.BAD_REQUEST | HttpStatus.PAYLOAD_TOO_LARGE;
+  error: 'Bad Request' | 'Payload Too Large';
+  message: string;
+}
+
+function getParserErrorDetails(exception: unknown): ParserErrorDetails | null {
+  if (exception === null || typeof exception !== 'object') return null;
+
+  const type = 'type' in exception ? exception.type : undefined;
+  const status = 'status' in exception ? exception.status : undefined;
+
+  if (type === 'entity.too.large' && status === HttpStatus.PAYLOAD_TOO_LARGE) {
+    return {
+      statusCode: HttpStatus.PAYLOAD_TOO_LARGE,
+      error: 'Payload Too Large',
+      message: 'Request body is too large',
+    };
+  }
+
+  if (type === 'entity.parse.failed' && status === HttpStatus.BAD_REQUEST) {
+    return {
+      statusCode: HttpStatus.BAD_REQUEST,
+      error: 'Bad Request',
+      message: 'Malformed JSON request body',
+    };
+  }
+
+  return null;
+}
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   constructor(private readonly logger: PinoLogger) {}
@@ -26,10 +57,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const req = ctx.getRequest<RequestWithId>();
     const res = ctx.getResponse<Response>();
+    const parserError = getParserErrorDetails(exception);
 
     const statusCode =
       exception instanceof HttpException
         ? exception.getStatus()
+        : parserError !== null
+          ? parserError.statusCode
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
     const httpError =
@@ -42,6 +76,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const message: string | string[] =
       isServerError
         ? 'Internal server error'
+        : parserError !== null
+          ? parserError.message
         : typeof httpError === 'string'
           ? httpError
           : httpError !== null && typeof httpError === 'object' && 'message' in httpError
@@ -53,6 +89,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const errorLabel =
       isServerError
         ? 'Internal Server Error'
+        : parserError !== null
+          ? parserError.error
         : httpError !== null && typeof httpError === 'object' && 'error' in httpError
           ? String((httpError as { error: string }).error)
           : HttpStatus[statusCode] ?? 'Request Error';
