@@ -150,7 +150,6 @@ function AuthCard({
       (prevMode === "signin" && mode === "forgot") ||
       (prevMode === "forgot" && mode === "signin");
     // Intentional reset of form fields on auth-mode transitions.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setName("");
     setPassword("");
     setConfirmPassword("");

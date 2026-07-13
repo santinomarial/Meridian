@@ -512,6 +512,101 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Sync messages are read-only on the server and document-scoped
+// ---------------------------------------------------------------------------
+
+describe('EditorGateway.handleYjsSync — authorization and mutation safety', () => {
+  function syncStep1(doc: Doc): Uint8Array {
+    const encoder = encoding.createEncoder();
+    syncProtocol.writeSyncStep1(encoder, doc);
+    return encoding.toUint8Array(encoder);
+  }
+
+  function syncStep2(doc: Doc): Uint8Array {
+    const encoder = encoding.createEncoder();
+    syncProtocol.writeSyncStep2(encoder, doc);
+    return encoding.toUint8Array(encoder);
+  }
+
+  it('rejects sync for a globally loaded document the socket did not join', () => {
+    const { gateway, documentManager } = makeGateway();
+    const socket = makeSocket({ data: { user: AUTH_USER } });
+    const clientDoc = new Doc();
+    const serverDoc = new Doc();
+    documentManager.getDoc.mockReturnValue(serverDoc);
+
+    gateway.handleYjsSync(
+      { documentId: 'another-users-loaded-doc', message: syncStep1(clientDoc) },
+      socket,
+    );
+
+    expect(documentManager.getDoc).not.toHaveBeenCalled();
+    expect(socket.emit).toHaveBeenCalledWith(
+      'error',
+      expect.objectContaining({ message: expect.stringContaining('joinDocument') as string }),
+    );
+    clientDoc.destroy();
+    serverDoc.destroy();
+  });
+
+  it('answers a joined viewer SyncStep1 with server state', () => {
+    const { gateway, documentManager } = makeGateway();
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.VIEWER },
+      },
+      rooms: ['document:doc-1'],
+    });
+    const clientDoc = new Doc();
+    const serverDoc = new Doc();
+    serverDoc.getText('content').insert(0, 'server content');
+    documentManager.getDoc.mockReturnValue(serverDoc);
+
+    gateway.handleYjsSync(
+      { documentId: 'doc-1', message: syncStep1(clientDoc) },
+      socket,
+    );
+
+    expect(socket.emit).toHaveBeenCalledWith(
+      'yjs:sync',
+      expect.objectContaining({
+        documentId: 'doc-1',
+        message: expect.any(Uint8Array),
+      }) as object,
+    );
+    expect(serverDoc.getText('content').toString()).toBe('server content');
+    clientDoc.destroy();
+    serverDoc.destroy();
+  });
+
+  it('never applies client SyncStep2 mutations, even for an editor', () => {
+    const { gateway, documentManager } = makeGateway();
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+      },
+      rooms: ['document:doc-1'],
+    });
+    const clientDoc = new Doc();
+    clientDoc.getText('content').insert(0, 'unpersisted bypass');
+    const serverDoc = new Doc();
+    documentManager.getDoc.mockReturnValue(serverDoc);
+
+    gateway.handleYjsSync(
+      { documentId: 'doc-1', message: syncStep2(clientDoc) },
+      socket,
+    );
+
+    expect(documentManager.getDoc).not.toHaveBeenCalled();
+    expect(serverDoc.getText('content').toString()).toBe('');
+    clientDoc.destroy();
+    serverDoc.destroy();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Part 3 (new) — Payload cap on yjs:update
 // ---------------------------------------------------------------------------
 
