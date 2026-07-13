@@ -144,6 +144,7 @@ describe('TerminalGateway', () => {
       const { gateway, workspaces, terminalService } = makeGateway(true);
       workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
       terminalService.hasSession.mockReturnValue(true);
+      terminalService.getSession.mockReturnValue(activeSession());
       const { socket, emitted } = makeSocket();
 
       await gateway.handleStart(dto, socket);
@@ -203,19 +204,20 @@ describe('TerminalGateway', () => {
   describe('handleInput', () => {
     const dto: TerminalInputDto = { data: 'ls\n' };
 
-    it('does nothing when feature is disabled', () => {
+    it('does nothing when feature is disabled', async () => {
       const { gateway } = makeGateway(false);
       const { socket, emitted } = makeSocket();
-      gateway.handleInput(dto, socket);
+      await gateway.handleInput(dto, socket);
       expect(emitted).toHaveLength(0);
     });
 
-    it('emits terminal:error when no session exists', () => {
+    it('emits terminal:error when no session exists', async () => {
       const { gateway, terminalService } = makeGateway(true);
       terminalService.hasSession.mockReturnValue(false);
       const { socket, emitted } = makeSocket();
 
-      gateway.handleInput(dto, socket);
+      terminalService.getSession.mockReturnValue(undefined);
+      await gateway.handleInput(dto, socket);
 
       expect(emitted).toContainEqual([
         'terminal:error',
@@ -223,12 +225,13 @@ describe('TerminalGateway', () => {
       ]);
     });
 
-    it('writes data to the session when session exists', () => {
-      const { gateway, terminalService } = makeGateway(true);
-      terminalService.hasSession.mockReturnValue(true);
+    it('writes data to the session when session exists', async () => {
+      const { gateway, terminalService, workspaces } = makeGateway(true);
+      terminalService.getSession.mockReturnValue(activeSession());
+      workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
       const { socket } = makeSocket();
 
-      gateway.handleInput(dto, socket);
+      await gateway.handleInput(dto, socket);
 
       expect(terminalService.writeToSession).toHaveBeenCalledWith('socket-1', 'ls\n');
     });
@@ -239,18 +242,20 @@ describe('TerminalGateway', () => {
   describe('handleResize', () => {
     const dto: TerminalResizeDto = { cols: 80, rows: 24 };
 
-    it('does nothing when feature is disabled', () => {
+    it('does nothing when feature is disabled', async () => {
       const { gateway, terminalService } = makeGateway(false);
       const { socket } = makeSocket();
-      gateway.handleResize(dto, socket);
+      await gateway.handleResize(dto, socket);
       expect(terminalService.resizeSession).not.toHaveBeenCalled();
     });
 
-    it('forwards the new size to the PTY via resizeSession', () => {
-      const { gateway, terminalService } = makeGateway(true);
+    it('forwards the new size to the PTY via resizeSession', async () => {
+      const { gateway, terminalService, workspaces } = makeGateway(true);
+      terminalService.getSession.mockReturnValue(activeSession());
+      workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
       const { socket, emitted } = makeSocket();
 
-      gateway.handleResize({ cols: 120, rows: 40 }, socket);
+      await gateway.handleResize({ cols: 120, rows: 40 }, socket);
 
       expect(terminalService.resizeSession).toHaveBeenCalledWith('socket-1', 120, 40);
       // Resize never emits to the socket directly.
@@ -398,6 +403,79 @@ describe('TerminalGateway', () => {
 
       expect(terminalService.createSession).toHaveBeenCalledWith('socket-1', 'user-1', 'ws-1', socket);
       expect(terminalService.writeToSession).toHaveBeenCalledWith('socket-1', `node 'src/app.js'\n`);
+    });
+  });
+
+  describe('live authorization revocation', () => {
+    it('kills the PTY and disconnects before input when the session was revoked', async () => {
+      const { gateway, terminalService, workspaces, realtimeAuthorization } =
+        makeGateway(true);
+      terminalService.getSession.mockReturnValue(activeSession());
+      terminalService.hasSession.mockReturnValue(true);
+      workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
+      realtimeAuthorization.isSessionActive.mockResolvedValue(false);
+      const { socket, emitted } = makeSocket();
+
+      await gateway.handleInput({ data: 'rm -rf something\n' }, socket);
+
+      expect(terminalService.killSession).toHaveBeenCalledWith('socket-1');
+      expect(terminalService.writeToSession).not.toHaveBeenCalled();
+      expect(socket.disconnect).toHaveBeenCalledWith(true);
+      expect(emitted).toContainEqual([
+        'terminal:error',
+        { message: 'Session is no longer active' },
+      ]);
+    });
+
+    it('kills the PTY before input when the member was demoted to viewer', async () => {
+      const { gateway, terminalService, workspaces } = makeGateway(true);
+      terminalService.getSession.mockReturnValue(activeSession());
+      terminalService.hasSession.mockReturnValue(true);
+      workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.VIEWER);
+      const { socket, emitted } = makeSocket();
+
+      await gateway.handleInput({ data: 'whoami\n' }, socket);
+
+      expect(terminalService.killSession).toHaveBeenCalledWith('socket-1');
+      expect(terminalService.writeToSession).not.toHaveBeenCalled();
+      expect(emitted).toContainEqual([
+        'terminal:error',
+        { message: 'Viewers cannot use the terminal' },
+      ]);
+    });
+
+    it('immediately kills an idle PTY when workspace access is invalidated', async () => {
+      const { gateway, terminalService, workspaces, realtimeAuthorization } =
+        makeGateway(true);
+      terminalService.hasSession.mockReturnValue(true);
+      terminalService.getSession.mockReturnValue(activeSession());
+      workspaces.getMemberRole
+        .mockResolvedValueOnce(WorkspaceRole.EDITOR)
+        .mockResolvedValue(WorkspaceRole.VIEWER);
+      const { socket } = makeSocket();
+
+      await gateway.handleStart({ workspaceId: 'ws-1' }, socket);
+      const listener = realtimeAuthorization.onInvalidation.mock.calls[0]?.[0];
+      void listener?.({ type: 'workspace', workspaceId: 'ws-1', userId: 'user-1' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(terminalService.killSession).toHaveBeenCalledWith('socket-1');
+    });
+
+    it('immediately kills and disconnects an idle PTY for an invalidated session', async () => {
+      const { gateway, terminalService, workspaces, realtimeAuthorization } =
+        makeGateway(true);
+      terminalService.hasSession.mockReturnValue(true);
+      terminalService.getSession.mockReturnValue(activeSession());
+      workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
+      const { socket } = makeSocket();
+
+      await gateway.handleStart({ workspaceId: 'ws-1' }, socket);
+      const listener = realtimeAuthorization.onInvalidation.mock.calls[0]?.[0];
+      void listener?.({ type: 'session', jti: 'jti-1' });
+
+      expect(terminalService.killSession).toHaveBeenCalledWith('socket-1');
+      expect(socket.disconnect).toHaveBeenCalledWith(true);
     });
   });
 });
