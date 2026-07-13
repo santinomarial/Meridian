@@ -191,28 +191,28 @@ export function InvitePage() {
   useEffect(() => {
     let mounted = true;
 
-    // Invite details are public — load them regardless of auth state. Falls
-    // back to null (generic invite UI) for demo links or when offline.
-    if (inviteId !== undefined) {
-      getInvite(inviteId)
-        .then((details) => {
-          if (mounted) setInvite(details);
-        })
-        .catch(() => {
-          if (mounted) setInvite(null);
-        });
+    async function load(): Promise<void> {
+      // Resolve both requests before showing an actionable screen. Otherwise a
+      // fast auth response can briefly render a generic button that skips the
+      // still-loading invite acceptance request.
+      const inviteRequest =
+        inviteId !== undefined ? getInvite(inviteId) : Promise.resolve(null);
+      const [inviteResult, userResult] = await Promise.allSettled([
+        inviteRequest,
+        getCurrentUser(),
+      ]);
+      if (!mounted) return;
+
+      setInvite(inviteResult.status === "fulfilled" ? inviteResult.value : null);
+      if (userResult.status === "fulfilled") {
+        setUser(userResult.value);
+        setLoadState("authenticated");
+      } else {
+        setLoadState("unauthenticated");
+      }
     }
 
-    getCurrentUser()
-      .then((u) => {
-        if (!mounted) return;
-        setUser(u);
-        setLoadState("authenticated");
-      })
-      .catch(() => {
-        if (!mounted) return;
-        setLoadState("unauthenticated");
-      });
+    void load();
     return () => {
       mounted = false;
     };
