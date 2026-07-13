@@ -9,6 +9,7 @@ import { json, urlencoded } from 'express';
 import type { ErrorRequestHandler } from 'express';
 
 const DEFAULT_JSON_LIMIT = '100kb';
+const DOCUMENT_WRITE_JSON_LIMIT = '7mb';
 const BULK_IMPORT_JSON_LIMIT = '26mb';
 
 /**
@@ -25,6 +26,13 @@ export function configureApp(app: INestApplication): void {
     '/workspaces/:workspaceId/documents/bulk',
     json({ limit: BULK_IMPORT_JSON_LIMIT }),
   );
+  // A one-MiB text document can occupy up to roughly six MiB once JSON escape
+  // sequences are applied, so document writes need a larger wire allowance.
+  app.use(
+    '/workspaces/:workspaceId/documents',
+    json({ limit: DOCUMENT_WRITE_JSON_LIMIT }),
+  );
+  app.use('/documents/:documentId', json({ limit: DOCUMENT_WRITE_JSON_LIMIT }));
   app.use(json({ limit: DEFAULT_JSON_LIMIT }));
   app.use(urlencoded({ extended: true, limit: DEFAULT_JSON_LIMIT }));
   const normalizeParserError: ErrorRequestHandler = (error, _req, _res, next) => {

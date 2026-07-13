@@ -39,6 +39,12 @@ export class UsersService {
   }
 
   async deleteUser(id: string): Promise<void> {
-    await this.prisma.user.delete({ where: { id } });
+    // Workspace.ownerId intentionally uses RESTRICT semantics so an owner can
+    // never disappear while their workspace survives. Account deletion owns
+    // the broader lifecycle: remove owned workspaces and the user atomically.
+    await this.prisma.$transaction([
+      this.prisma.workspace.deleteMany({ where: { ownerId: id } }),
+      this.prisma.user.delete({ where: { id } }),
+    ]);
   }
 }

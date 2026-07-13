@@ -100,4 +100,25 @@ describe('UsersService', () => {
       expect(result).toEqual([]);
     });
   });
+
+  describe('deleteUser', () => {
+    it('atomically deletes owned workspaces before deleting the account', async () => {
+      prisma.workspace.deleteMany.mockResolvedValue({ count: 2 });
+      prisma.user.delete.mockResolvedValue(BASE_USER);
+      prisma.$transaction.mockResolvedValue([{ count: 2 }, BASE_USER]);
+
+      await service.deleteUser(BASE_USER.id);
+
+      expect(prisma.workspace.deleteMany).toHaveBeenCalledWith({
+        where: { ownerId: BASE_USER.id },
+      });
+      expect(prisma.user.delete).toHaveBeenCalledWith({
+        where: { id: BASE_USER.id },
+      });
+      expect(prisma.$transaction).toHaveBeenCalledWith([
+        expect.anything(),
+        expect.anything(),
+      ]);
+    });
+  });
 });
