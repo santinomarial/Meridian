@@ -727,6 +727,13 @@ Each client gets a three-second startup connection timeout.
 | `meridian:sandbox:*:sync` | Best-effort terminal projection changes |
 | `meridian:doc:<id>:seq` | Atomic document update sequence counter |
 
+Redis is a trusted internal boundary. Inbound collaboration, chat, and sandbox
+pub/sub messages are not independently authenticated or re-authorized against
+PostgreSQL. A party that can publish to these channels can inject events. The
+channel and key names are not prefixed by deployment or environment, and Redis
+pub/sub is not isolated by logical database number. Deployments must not share
+an untrusted or overlapping Redis channel namespace.
+
 Messages carry a process origin ID so the publisher ignores its own fan-out.
 Inbound document updates are applied only when that instance already has the
 document loaded. Pub/sub has no replay; an unloaded instance relies on the
@@ -813,6 +820,13 @@ after three seconds. Terminal events use DTO validation and authorization but
 do not use `WsRateLimiter`; `terminal:input` also has no
 application-level string-length cap.
 
+A natural PTY exit removes the `TerminalService` session but does not call
+`TerminalSandboxService.unregister`. Its active projection entry, socket
+reference, and file-sync activity can remain until that socket ID starts a
+replacement session or the process exits. Terminal teardown does not delete
+the temporary directory; it remains until a later materialization recreates it
+or an external cleanup removes it.
+
 ## 13. Operations and configuration
 
 ### 13.1 Health, logging, and shutdown
@@ -820,11 +834,14 @@ application-level string-length cap.
 | Endpoint | Behavior |
 |---|---|
 | `GET /health` | Process liveness data. It does not probe dependencies. |
-| `GET /ready` | Two-second PostgreSQL and Redis probes. Returns 503 only when PostgreSQL fails. Redis can be `ok`, `error`, or `disabled` without changing HTTP readiness. |
+| `GET /ready` | Two-second PostgreSQL and Redis probes. Returns 503 only when PostgreSQL fails. Redis can be `ok`, `error`, or `disabled` without changing HTTP readiness. A 200 response includes dependency details; the global 5xx filter converts the intentional 503 to the generic internal-error envelope, so the failed dependency object is not returned to the caller. |
 
 Pino logs are pretty-printed in development and JSON elsewhere. The
-configurable log level defaults to `info`. HTTP errors include the
-request correlation ID; Socket.IO errors are emitted as protocol events.
+configurable log level defaults to `info`. Authorization and Cookie headers,
+password/token body fields, and Set-Cookie response headers are configured for
+redaction. Request URLs are not redacted, so raw bearer invite tokens in
+`/invites/:token` paths can enter access and error logs. HTTP errors include
+the request correlation ID; Socket.IO errors are emitted as protocol events.
 
 Nest shutdown hooks are enabled. Shutdown waits for known document write
 chains, disconnects Prisma and Redis, releases realtime timers/subscriptions,
@@ -964,8 +981,10 @@ guarantees:
    restore reconciliation.
 5. Redis pub/sub has no replay or reconnect path; multi-replica operation
    during Redis failure can diverge and allocate duplicate sequence numbers.
-6. The terminal is host command execution, not a security sandbox, and lacks
-   editor-gateway message-rate protection.
+   Inbound pub/sub events trust Redis, and names are not environment-prefixed.
+6. The terminal is host command execution, not a security sandbox, lacks
+   editor-gateway message-rate protection, and leaks its active projection
+   registration after a natural PTY exit.
 7. HTTP request parsing precedes Nest authentication/throttling; HTTP
    throttling is process-local and proxy trust is not configured.
 8. Client CRDT objects and server persistence bookkeeping grow per touched
@@ -981,6 +1000,8 @@ guarantees:
     retention cleanup.
 14. Reset-token email copy remains fixed at 30 minutes even when its configured
     lifetime changes.
-15. Production infrastructure, security headers, ingress controls, isolation,
+15. Bearer invite tokens can be retained in request logs because they are URL
+    path parameters and URL redaction is not configured.
+16. Production infrastructure, security headers, ingress controls, isolation,
     observability backend, backup policy, and disaster-recovery behavior are
     not defined in this repository.
