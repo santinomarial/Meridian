@@ -145,7 +145,7 @@ export function WorkspacePage() {
           <CodeEditor workspaceTheme={workspaceTheme} />
         </main>
 
-        {!isCompact ? (
+        {!isCompact && isCollaborationPanelOpen ? (
           <CollaborationPanel isLoading={!isWorkspaceReady} mode="inline" />
         ) : null}
       </div>

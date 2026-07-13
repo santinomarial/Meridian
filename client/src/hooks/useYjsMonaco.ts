@@ -137,7 +137,12 @@ export function useYjsMonaco(
       flushUpdates();
       if (awarenessFlushTimer !== null) window.clearTimeout(awarenessFlushTimer);
       flushAwareness();
-      binding.destroy();
+      // y-monaco destroys itself from Monaco's onWillDispose callback. React
+      // can run this effect cleanup after that callback during a file switch
+      // or page teardown, so only destroy a still-live binding here. Calling
+      // destroy twice makes Yjs attempt to unregister the same observers twice
+      // and emits a noisy console error.
+      if (!model.isDisposed()) binding.destroy();
       if (socket.connected) {
         socket.emit("leaveDocument", { documentId });
       }

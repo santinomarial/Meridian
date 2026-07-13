@@ -49,7 +49,6 @@ function ActivityButton({
 
 export function ActivityBar() {
   const breakpoint = useBreakpoint();
-  const selectedActivityItem = useWorkspaceStore((s) => s.selectedActivityItem);
   const isExplorerOpen = useWorkspaceStore((s) => s.isExplorerOpen);
   const isCollaborationPanelOpen = useWorkspaceStore((s) => s.isCollaborationPanelOpen);
   const isTerminalOpen = useWorkspaceStore((s) => s.isTerminalOpen);
@@ -95,7 +94,11 @@ export function ActivityBar() {
             key={activity.item}
             icon={activity.icon}
             label={activity.label}
-            selected={selectedActivityItem === activity.item}
+            selected={
+              activity.panel === "explorer"
+                ? isExplorerOpen
+                : isCollaborationPanelOpen
+            }
             onClick={() => handleTopActivityClick(activity)}
           />
         ))}

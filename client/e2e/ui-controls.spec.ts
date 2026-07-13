@@ -154,6 +154,22 @@ test.describe("share / invite dialog", () => {
 // ── Collaboration panel ───────────────────────────────────────────────────────
 
 test.describe("collaboration panel", () => {
+  test("activity bar toggles the desktop collaboration panel", async ({ page }) => {
+    await openDemoWorkspace(page);
+
+    const toggle = page.getByRole("button", { name: "Collaboration", exact: true });
+    const panel = page.getByTestId("collaboration-panel");
+
+    await expect(panel).toBeVisible();
+    await toggle.click();
+    await expect(panel).toHaveCount(0);
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    await toggle.click();
+    await expect(panel).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  });
+
   test("demo mode shows demo-labelled collaborators, not real users", async ({ page }) => {
     // Block the backend API to force demo mode unconditionally, regardless of
     // whether the server is running.  Mirrors the pattern in offline.spec.ts.
