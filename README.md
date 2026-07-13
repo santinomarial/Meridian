@@ -54,7 +54,7 @@ behavior are documented in [Horizontal scaling](docs/scaling.md).
 
 ## Prerequisites
 
-- Node.js 22 or later and npm.
+- Node.js 22.12 or later and npm, satisfying the Vite 8 runtime requirement.
 - Docker with Docker Compose for the provided PostgreSQL and Redis services.
 - A native C/C++ build toolchain and Python when `node-pty` must compile from
   source on the host platform.
@@ -144,8 +144,10 @@ The client accepts these build-time Vite variables, typically through
 | `VITE_API_URL` | `http://localhost:3000` | Browser page origin |
 | `VITE_SOCKET_URL` | `http://localhost:3000` | Browser page origin |
 
-When the production frontend and backend do not share an origin, set both
-variables explicitly and set `CLIENT_ORIGIN` to the frontend origin.
+For a same-site deployment that uses separate frontend and backend origins, set
+both variables explicitly and set `CLIENT_ORIGIN` to the frontend origin. A
+genuinely cross-site topology is not supported by configuration alone because
+the authentication cookie uses `SameSite=Lax`.
 
 ## Testing and verification
 
