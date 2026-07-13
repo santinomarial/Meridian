@@ -1,7 +1,14 @@
-import { Injectable, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleDestroy,
+  UseFilters,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
+  OnGatewayInit,
   OnGatewayDisconnect,
   SubscribeMessage,
   WebSocketGateway,
@@ -22,6 +29,13 @@ import { TerminalStartDto } from './dto/terminal-start.dto';
 import { TerminalInputDto } from './dto/terminal-input.dto';
 import { TerminalResizeDto } from './dto/terminal-resize.dto';
 import { TerminalRunFileDto } from './dto/terminal-run-file.dto';
+import {
+  RealtimeAuthorizationService,
+  SOCKET_SESSION_JTI,
+  type RealtimeAuthorizationInvalidation,
+} from '../realtime-authorization/realtime-authorization.service';
+
+const AUTHORIZATION_SWEEP_MS = 10_000;
 
 /**
  * Maps a file extension to the shell command that runs it. Returns null for
@@ -50,19 +64,45 @@ export function buildRunCommand(relPath: string): string | null {
 @Injectable()
 @UseFilters(new WsValidationFilter())
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
-export class TerminalGateway implements OnGatewayDisconnect {
+export class TerminalGateway
+  implements OnGatewayInit, OnGatewayDisconnect, OnModuleDestroy
+{
   private readonly enabled: boolean;
+  private readonly terminalClients = new Map<string, Socket>();
+  private readonly unsubscribeAuthorization: () => void;
+  private authorizationSweep: NodeJS.Timeout | undefined;
+  private authorizationSweepRunning = false;
 
   constructor(
     private readonly terminalService: TerminalService,
     private readonly workspaces: WorkspacesService,
     private readonly prisma: PrismaService,
+    private readonly realtimeAuthorization: RealtimeAuthorizationService,
     configService: ConfigService,
     @InjectPinoLogger(TerminalGateway.name)
     private readonly logger: PinoLogger,
   ) {
     const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
     this.enabled = config.enableTerminal;
+    this.unsubscribeAuthorization = this.realtimeAuthorization.onInvalidation(
+      (invalidation) => this.handleAuthorizationInvalidation(invalidation),
+    );
+  }
+
+  afterInit(): void {
+    this.authorizationSweep = setInterval(() => {
+      void this.auditTerminalClients();
+    }, AUTHORIZATION_SWEEP_MS);
+    this.authorizationSweep.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.authorizationSweep !== undefined) {
+      clearInterval(this.authorizationSweep);
+      this.authorizationSweep = undefined;
+    }
+    this.unsubscribeAuthorization();
+    this.terminalClients.clear();
   }
 
   handleDisconnect(client: Socket): void {
@@ -70,6 +110,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
       this.terminalService.killSession(client.id);
       this.logger.info({ socketId: client.id }, 'Terminal session cleaned up on disconnect');
     }
+    this.terminalClients.delete(client.id);
   }
 
   @SubscribeMessage('terminal:start')
