@@ -24,15 +24,15 @@ behavior.
 
 | Component | Cross-instance mechanism | Status |
 |---|---|---|
-| Yjs document updates | Redis pub/sub fan-out (`document:*:updates`) + per-instance in-memory `Y.Doc`, reconciled by replaying fanned-out updates | ✅ Works |
-| Awareness (cursors/selections) | Redis pub/sub fan-out (`document:*:awareness`) | ✅ Works |
-| Workspace chat | Redis pub/sub fan-out (`workspace:*:chat`) | ✅ Works |
-| **Document persistence `seq` counter** | **Atomic Redis counter** (`meridian:doc:<id>:seq`), seeded from the DB high-water mark | ✅ Works (was the main gap) |
-| **Session/member revocation** | Local + Redis invalidation, per-event DB checks, and a 10-second passive sweep | ✅ Bounded and cross-instance |
-| **Terminal sandbox sync** | **Redis pub/sub fan-out** (`meridian:sandbox:*:sync`) of write/mkdir/delete/rename ops | ✅ Works (with caveats below) |
-| Terminal PTY session | Instance-local process; reattach re-materializes from the DB | ⚠️ Sticky-bound by nature |
-| WS message rate limiter | Per-socket, in-memory | ✅ Correct under sticky sessions |
-| HTTP auth / REST | JWT plus a revocable shared PostgreSQL session row | ✅ Replica-local request handling |
+| Yjs document updates | Redis pub/sub fan-out (`document:*:updates`) + per-instance in-memory `Y.Doc`, reconciled by replaying fanned-out updates | Supported |
+| Awareness (cursors/selections) | Redis pub/sub fan-out (`document:*:awareness`) | Supported |
+| Workspace chat | Redis pub/sub fan-out (`workspace:*:chat`) | Supported |
+| **Document persistence `seq` counter** | **Atomic Redis counter** (`meridian:doc:<id>:seq`), seeded from the DB high-water mark | Supported |
+| **Session/member revocation** | Local + Redis invalidation, per-event DB checks, and a 10-second passive sweep | Supported; passive audit within 10 seconds |
+| **Terminal sandbox sync** | **Redis pub/sub fan-out** (`meridian:sandbox:*:sync`) of write/mkdir/delete/rename ops | Supported with caveats below |
+| Terminal PTY session | Instance-local process; reattach re-materializes from the DB | Instance-local; sticky routing required |
+| WS message rate limiter | Per-socket, in-memory | Per-socket; correct with sticky routing |
+| HTTP auth / REST | JWT plus a revocable shared PostgreSQL session row | Replica-local; shared session enforcement |
 
 ## Details
 

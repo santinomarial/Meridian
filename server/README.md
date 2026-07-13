@@ -1,4 +1,4 @@
-# Meridian server
+# Meridian Server
 
 The Meridian server is a NestJS 11 application that exposes REST and Socket.IO on the same port. PostgreSQL is the durable source of truth. Redis provides cross-instance event fan-out, authorization invalidation, terminal-sandbox synchronization, and document sequence allocation.
 
@@ -12,14 +12,14 @@ The server can run without Redis as a single process. Redis is required when mor
 | Prisma and PostgreSQL | Users, sessions, workspaces, memberships, invites, documents, version history, Yjs updates, and snapshots |
 | Yjs | Authoritative in-memory state for open collaborative documents |
 | Redis | Cross-instance Yjs, awareness, chat, authorization, sandbox events, and sequence counters |
-| Pino | Structured request and application logs with request IDs and credential redaction |
+| Pino | Structured request and application logs with request IDs and configured header/body credential redaction |
 | `node-pty` | Optional host-backed interactive terminal |
 
 See [architecture.md](../docs/architecture.md) for the system design and [scaling.md](../docs/scaling.md) for the multi-replica model.
 
 ## Requirements
 
-- Node.js 22, which is the version used by CI
+- Node.js 22.12 or later, satisfying the repository's Vite 8 requirement; CI uses Node.js 22
 - npm and the committed `package-lock.json`
 - PostgreSQL and, for the complete runtime, Redis; the bundled Compose file and CI use PostgreSQL 16 and Redis 7
 - Docker with Compose v2 for the bundled development infrastructure, or equivalent external services
@@ -37,11 +37,16 @@ cp .env.example .env
 openssl rand -base64 32
 
 npm run infra:up
+docker compose exec postgres pg_isready -U postgres
+docker compose exec redis redis-cli ping
 npm run db:migrate
 npm run start:dev
 ```
 
 The Compose file starts PostgreSQL on port 5432 and Redis on port 6379 using named volumes. Its published ports and default database credentials are intended for local development only.
+It does not define container health checks, so wait for `pg_isready` to report
+that PostgreSQL accepts connections and for Redis to return `PONG` before
+applying migrations or starting the server.
 
 After startup:
 
@@ -50,6 +55,7 @@ After startup:
 | `http://localhost:3000/health` | Process liveness |
 | `http://localhost:3000/ready` | Dependency readiness |
 | `http://localhost:3000/docs` | Swagger/OpenAPI UI |
+| `http://localhost:3000/docs-json` | Raw OpenAPI document |
 
 `GET /health` returns 200 while the process is running. `GET /ready` returns 200 when PostgreSQL responds and 503 otherwise. Redis is reported as `ok`, `error`, or `disabled`, but it does not determine readiness because single-instance operation is supported. Dependency checks time out after two seconds.
 
@@ -152,6 +158,8 @@ Deleting a user also deletes every workspace they own and the dependent workspac
 ### Authentication
 
 Passwords are hashed with Argon2id. Registration and reset passwords must contain at least eight characters, one uppercase letter, one lowercase letter, one number, and one non-alphanumeric character.
+Registration does not verify ownership of the supplied email address; treat it
+as an unverified identifier unless an email-verification flow is added.
 
 Each JWT contains a session JTI. Guarded HTTP requests verify the signature and then load the corresponding `Session` row to check ownership, expiry, and revocation. Tokens may be supplied through either:
 

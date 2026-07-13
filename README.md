@@ -40,10 +40,9 @@ There is no root package manifest; run package commands from `client/` or
 PostgreSQL stores the durable application state. Each active collaborative
 document also has an in-memory `Y.Doc`; incremental updates are queued for
 asynchronous persistence and periodically compacted into snapshots. A database
-write failure is logged and can leave a live update recoverable by connected
-clients but unavailable after every client and server copy is lost. Redis is
-optional for a single server process and required when more than one server
-instance is active.
+write failure is logged; the affected update can be lost once no connected
+client or server memory retains it. Redis is optional for a single server
+process and required when more than one server instance is active.
 
 Detailed diagrams and runtime sequences are available in
 [Architecture](docs/architecture.md). Multi-instance requirements and failure
@@ -244,7 +243,9 @@ are intentionally unauthenticated.
   client with `npm run build` and serve `client/dist/` from a static host or
   reverse proxy. The NestJS server does not serve the client bundle. Configure
   an SPA history fallback, evaluate API proxy rules before that fallback, and
-  forward WebSocket upgrades for `/socket.io/`.
+  forward WebSocket upgrades for `/socket.io/`. There is no `/api` prefix;
+  proxy `/auth`, `/users`, `/workspaces`, `/documents`, `/invites`, `/health`,
+  `/ready`, `/docs`, and `/docs-json` before applying the SPA fallback.
 - Use TLS. Authentication cookies are `HttpOnly`, `SameSite=Lax`, and `Secure`
   when `NODE_ENV=production`.
 - For multiple API replicas, use shared PostgreSQL and Redis services and keep
