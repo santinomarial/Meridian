@@ -70,16 +70,23 @@ cd server
 npm ci
 cp .env.example .env
 npm run infra:up
+docker compose exec postgres pg_isready -U postgres
+docker compose exec redis redis-cli ping
 npm run db:migrate
 npm run db:seed
 npm run start:dev
 ```
 
+The Compose file does not define container health checks. Wait for
+`pg_isready` to report that PostgreSQL accepts connections and for Redis to
+return `PONG` before applying migrations or starting the server.
+
 Before using the application beyond local development, replace the placeholder
 `JWT_SECRET` in `server/.env` with a unique random value of at least 16
 characters. `openssl rand -hex 32` produces a suitable development secret.
 
-The seed creates one workspace with the following accounts:
+The seed step is optional. It creates one demonstration workspace with the
+following accounts:
 
 | Account | Workspace role |
 |---|---|
@@ -126,15 +133,22 @@ settings:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | Template value | PostgreSQL connection string; required |
+| `NODE_ENV` | `development` | Runtime mode; controls production cookies, CORS behavior, development mail logging, and the E2E safety check |
+| `PORT` | `3000` | HTTP and Socket.IO listen port |
+| `DATABASE_URL` | None | PostgreSQL connection string; required |
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection used for coordination |
 | `JWT_SECRET` | None | Session-signing secret; required and at least 16 characters |
 | `JWT_EXPIRES_IN` | `7d` | JWT, cookie, and persisted session lifetime |
-| `CLIENT_ORIGIN` | `http://localhost:5173` | Browser origin allowed by HTTP and Socket.IO CORS |
+| `CLIENT_ORIGIN` | `http://localhost:5173` | Public client origin used in action URLs and as the allowed browser origin outside development |
 | `RESEND_API_KEY` | None | Enables password-reset and invitation email delivery |
 | `MAIL_FROM` | `Meridian <no-reply@meridian.local>` | Sender used for application email |
 | `ENABLE_TERMINAL` | `false` | Enables the server-hosted PTY terminal |
 | `E2E_TEST` | `false` | Relaxes test limits and exposes scoped test helpers outside production |
+
+In development, HTTP and Socket.IO CORS use the explicit localhost and
+`127.0.0.1` allow-list for ports 5173 through 5175. `CLIENT_ORIGIN` still
+controls generated invitation and password-reset URLs, but it does not extend
+that development allow-list.
 
 The client accepts these build-time Vite variables, typically through
 `client/.env.local` or the build environment:
@@ -215,12 +229,16 @@ must never be used for normal operation; startup rejects it when
   `prisma migrate dev` in a production release.
 - Build the server with `npm run build` and run `npm run start:prod`. Build the
   client with `npm run build` and serve `client/dist/` from a static host or
-  reverse proxy. The NestJS server does not serve the client bundle.
+  reverse proxy. The NestJS server does not serve the client bundle. Configure
+  an SPA history fallback, evaluate API proxy rules before that fallback, and
+  forward WebSocket upgrades for `/socket.io/`.
 - Use TLS. Authentication cookies are `HttpOnly`, `SameSite=Lax`, and `Secure`
   when `NODE_ENV=production`.
 - For multiple API replicas, use shared PostgreSQL and Redis services and keep
   each Socket.IO connection pinned to the instance that accepted it. If Redis
-  is unavailable, run only one server instance.
+  is unavailable, run only one server instance. The server does not retry an
+  initial Redis connection failure; start Redis first or restart the API after
+  Redis becomes available.
 - The terminal is disabled by default. When enabled, it launches a host OS
   shell as the server user. Its temporary workspace directory, reduced
   environment, path validation, and authorization checks are not container or

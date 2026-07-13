@@ -1,313 +1,297 @@
-# Meridian Server
+# Meridian server
 
-NestJS + TypeScript backend for the Meridian collaborative browser IDE. Provides REST endpoints for workspace/document management, a Socket.IO gateway for real-time Yjs collaboration, PostgreSQL persistence via Prisma, and optional Redis cross-instance fan-out.
+The Meridian server is a NestJS 11 application that exposes REST and Socket.IO on the same port. PostgreSQL is the durable source of truth. Redis provides cross-instance event fan-out, authorization invalidation, terminal-sandbox synchronization, and document sequence allocation.
 
----
+The server can run without Redis as a single process. Redis is required when more than one server replica is active.
 
-## Prerequisites
+## Runtime components
 
-- Node.js 22+
-- Docker (PostgreSQL and Redis via Docker Compose)
+| Component | Responsibility |
+|---|---|
+| NestJS and Express | HTTP routing, validation, throttling, exception handling, Swagger, and Socket.IO integration |
+| Prisma and PostgreSQL | Users, sessions, workspaces, memberships, invites, documents, version history, Yjs updates, and snapshots |
+| Yjs | Authoritative in-memory state for open collaborative documents |
+| Redis | Cross-instance Yjs, awareness, chat, authorization, sandbox events, and sequence counters |
+| Pino | Structured request and application logs with request IDs and credential redaction |
+| `node-pty` | Optional host-backed interactive terminal |
 
----
+See [architecture.md](../docs/architecture.md) for the system design and [scaling.md](../docs/scaling.md) for the multi-replica model.
 
-## Setup
+## Requirements
+
+- Node.js 22, which is the version used by CI
+- npm and the committed `package-lock.json`
+- PostgreSQL 16 and, for the complete runtime, Redis 7
+- Docker with Compose v2 for the bundled development infrastructure, or equivalent external services
+- A native C/C++ build toolchain and Python on platforms where `node-pty` has no compatible prebuilt binary
+
+Run server commands from this directory. Nest configuration loads `.env` relative to the current working directory.
+
+## Local development
 
 ```bash
-npm install
-cp .env.example .env        # Set JWT_SECRET to a random 16+ character string
-npm run infra:up            # Start PostgreSQL and Redis via Docker Compose
-npm run db:migrate          # Apply Prisma schema migrations
-npm run db:seed             # Seed demo workspace and user
-npm run start:dev           # Dev server with file watch → http://localhost:3000
+cd server
+npm ci
+cp .env.example .env
+# Replace JWT_SECRET in .env with a strong random value, for example from:
+openssl rand -base64 32
+
+npm run infra:up
+npm run db:migrate
+npm run start:dev
 ```
 
-The seeded demo accounts (`alice@meridian.dev`, `bob@meridian.dev`,
-`carol@meridian.dev`, and `dave@meridian.dev`) use the development password
-`Meridian1!`. Set `MERIDIAN_SEED_PASSWORD` before `npm run db:seed` to override
-it; the variable is required if the seed is intentionally run with
-`NODE_ENV=production`.
+The Compose file starts PostgreSQL on port 5432 and Redis on port 6379 using named volumes. Its published ports and default database credentials are intended for local development only.
 
-Verify the server is running:
+After startup:
 
+| URL | Purpose |
+|---|---|
+| `http://localhost:3000/health` | Process liveness |
+| `http://localhost:3000/ready` | Dependency readiness |
+| `http://localhost:3000/docs` | Swagger/OpenAPI UI |
+
+`GET /health` returns 200 while the process is running. `GET /ready` returns 200 when PostgreSQL responds and 503 otherwise. Redis is reported as `ok`, `error`, or `disabled`, but it does not determine readiness because single-instance operation is supported. Dependency checks time out after two seconds.
+
+### Optional demo data
+
+```bash
+npm run db:seed
 ```
-GET http://localhost:3000/health   → 200 { "status": "ok", ... }
-GET http://localhost:3000/ready    → 200 { "status": "ready", ... }
-```
 
----
+The seed creates a `Meridian` workspace with these accounts:
 
-## Environment variables
+| Account | Role |
+|---|---|
+| `alice@meridian.dev` | Owner |
+| `bob@meridian.dev` | Editor |
+| `carol@meridian.dev` | Editor |
+| `dave@meridian.dev` | Viewer |
 
-| Variable | Default | Description |
+The development password is `Meridian1!`. Set `MERIDIAN_SEED_PASSWORD` to override it; the variable is mandatory when seeding with `NODE_ENV=production`.
+
+The seed is for disposable environments. It updates the demo users' password hashes and document contents, and it replaces the seeded documents' CRDT histories. Do not run it against a database containing valued edits.
+
+## Configuration
+
+Application variables are validated at startup. Defaults below come from `src/config/env.validation.ts`; `.env.example` also supplies a local `DATABASE_URL`.
+
+| Variable | Default | Meaning |
 |---|---|---|
-| `NODE_ENV` | `development` | Runtime environment (`development` / `production`) |
-| `PORT` | `3000` | HTTP and WebSocket listen port |
-| `CLIENT_ORIGIN` | `http://localhost:5173` | CORS origin for browser requests and Socket.IO |
-| `DATABASE_URL` | (see `.env.example`) | PostgreSQL connection string |
+| `NODE_ENV` | `development` | `development`, `test`, or `production` |
+| `PORT` | `3000` | HTTP and Socket.IO listen port |
+| `CLIENT_ORIGIN` | `http://localhost:5173` | Browser origin and base URL used in invite/reset links; the exact CORS origin outside development |
+| `DATABASE_URL` | Required | PostgreSQL connection string consumed by Prisma |
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection string |
-| `JWT_SECRET` | — | **Required** — secret used to sign and verify JWTs |
-| `JWT_EXPIRES_IN` | `7d` | Session/JWT lifetime (e.g. `15m`, `1h`, `7d`). The auth cookie's `Max-Age` and the `Session.expiresAt` row are both derived from this |
-| `LOG_LEVEL` | `info` | Pino log level (`debug` / `info` / `warn` / `error`) |
-| `DOC_TEARDOWN_GRACE_MS` | `30000` | Milliseconds before an in-memory Y.Doc is destroyed after the last client leaves |
-| `SNAPSHOT_EVERY_N_UPDATES` | `100` | Number of Yjs updates that trigger a snapshot compaction |
-| `HTTP_TTL_SECONDS` | `60` | Default HTTP throttler window (seconds) |
-| `HTTP_LIMIT` | `120` | Max requests per window for the default throttler |
-| `AUTH_TTL_SECONDS` | `60` | Auth throttler window (seconds) |
-| `AUTH_LIMIT` | `10` | Max requests per window for auth endpoints |
-| `WS_MESSAGE_LIMIT_PER_SECOND` | `50` | Max WebSocket messages per socket per second |
-| `WS_MAX_YJS_UPDATE_BYTES` | `1048576` | Max accepted size (bytes) of a single Yjs update payload (1 MB) |
+| `JWT_SECRET` | Required | JWT signing secret; validation requires at least 16 characters, but production should use a high-entropy 32-byte or longer secret |
+| `JWT_EXPIRES_IN` | `7d` | Session lifetime; accepts an integer followed by `ms`, `s`, `m`, `h`, `d`, `w`, or `y` |
+| `LOG_LEVEL` | `info` | Pino log level |
+| `DOC_TEARDOWN_GRACE_MS` | `30000` | Delay before an unused in-memory Yjs document is destroyed |
+| `SNAPSHOT_EVERY_N_UPDATES` | `100` | Local persisted-update count that triggers a compaction attempt |
+| `HTTP_TTL_SECONDS` | `60` | Default HTTP throttle window |
+| `HTTP_LIMIT` | `120` | Requests allowed in the default window |
+| `AUTH_TTL_SECONDS` | `60` | Additional throttle window for authentication endpoints |
+| `AUTH_LIMIT` | `10` | Authentication requests allowed in the auth window |
+| `WS_MESSAGE_LIMIT_PER_SECOND` | `50` | Per-socket inbound event limit |
+| `WS_MAX_YJS_UPDATE_BYTES` | `1048576` | Maximum binary payload for Yjs sync, update, and awareness events |
+| `ENABLE_TERMINAL` | `false` | Enables host-backed PTY events |
+| `RESEND_API_KEY` | Unset | Resend API key for reset and invite email delivery |
+| `MAIL_FROM` | `Meridian <no-reply@meridian.local>` | Sender passed to Resend |
+| `FORGOT_PASSWORD_TTL_MINUTES` | `30` | Password-reset token validity |
+| `E2E_TEST` | `false` | Enables test helpers and raises HTTP/WebSocket limits; rejected when `NODE_ENV=production` |
 
----
+In development, CORS accepts localhost and `127.0.0.1` on Vite ports 5173-5175. In test and production it accepts only `CLIENT_ORIGIN`. Both HTTP and Socket.IO allow credentials.
+
+When `RESEND_API_KEY` is absent in development, reset and invite URLs are printed to the server console. In production, missing mail configuration is logged as an internal delivery failure. Password-reset requests still return a generic response, and invite creation still returns the shareable link.
 
 ## Commands
 
-| Command | Description |
+| Command | Behavior |
 |---|---|
-| `npm run start:dev` | Start dev server with file watch |
-| `npm run start:prod` | Run compiled output (`dist/main.js`) |
-| `npm run build` | Compile TypeScript to `dist/` |
-| `npm run db:generate` | Regenerate Prisma client after schema changes |
-| `npm run db:migrate` | Create and apply a new Prisma migration |
-| `npm run db:studio` | Open Prisma Studio at `http://localhost:5555` |
-| `npm run db:seed` | Seed demo workspace, folders, files, and user |
-| `npm run infra:up` | Start PostgreSQL and Redis via Docker Compose |
-| `npm run infra:down` | Stop Docker services |
-| `npm test` | Run Jest unit test suite |
+| `npm run start:dev` | Start Nest in watch mode |
+| `npm start` | Start Nest without watch mode |
+| `npm run build` | Compile `src/` to `dist/` |
+| `npm run start:prod` | Run `node dist/main.js`; requires a prior build |
+| `npm test` | Run colocated Jest unit tests |
+| `npm run test:integration` | Run `server/test/**/*.e2e-spec.ts` serially with the real application and database |
+| `npm run db:generate` | Generate Prisma Client |
+| `npm run db:migrate` | Run `prisma migrate dev`; create/apply development migrations |
+| `npm run db:studio` | Start Prisma Studio |
+| `npm run db:seed` | Run the TypeScript seed through Prisma |
+| `npm run infra:up` | Start the development PostgreSQL and Redis containers |
+| `npm run infra:down` | Stop the Compose services without deleting named volumes |
 
----
+`npm ci` runs a best-effort postinstall script that restores the executable bit on the Unix `node-pty` spawn helper.
 
-## Health and readiness probes
+## HTTP API
 
-```
-GET /health
-```
-Liveness probe. Always returns `200 OK` if the Node.js process is running.
+Swagger at `/docs` is the complete route and schema reference. It is registered in every environment and has no application-level authentication; restrict it at the reverse proxy if it should not be public.
 
-```json
-{
-  "status": "ok",
-  "service": "meridian-server",
-  "uptime": 42.3,
-  "timestamp": "2024-01-01T00:00:00.000Z"
-}
-```
+The main route groups are:
 
-```
-GET /ready
-```
-Readiness probe. Returns `200` when PostgreSQL is reachable; returns `503` otherwise. Redis availability is reported but does **not** affect the ready/not-ready decision.
-
-```json
-{
-  "status": "ready",
-  "dependencies": {
-    "postgres": "ok",
-    "redis": "ok"
-  },
-  "timestamp": "2024-01-01T00:00:00.000Z"
-}
-```
-
-Both probes are exempt from the strict `auth` throttler but are still governed by the `default` throttler.
-
----
-
-## API reference
-
-Auto-generated Swagger / OpenAPI documentation is available at:
-
-```
-http://localhost:3000/docs
-```
-
-### REST endpoints
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `POST` | `/auth/register` | No | Create account; sets `auth_token` cookie |
-| `POST` | `/auth/login` | No | Authenticate; sets `auth_token` cookie |
-| `POST` | `/auth/logout` | Yes | Revoke session; clears cookie |
-| `GET` | `/auth/me` | Yes | Return current authenticated user |
-| `GET` | `/users/:id` | Yes | Get user profile |
-| `GET` | `/workspaces` | Yes | List workspaces for current user |
-| `GET` | `/workspaces/:id` | Yes | Get workspace details |
-| `GET` | `/workspaces/:id/documents` | Yes | List all documents in workspace |
-| `GET` | `/workspaces/:id/documents/tree` | Yes | Document tree (nested, with content) |
-| `GET` | `/workspaces/:id/export` | Yes | Export the workspace files/folders as a `.zip` (any member, incl. viewers); built from DB content |
-| `GET` | `/documents/:id` | Yes | Get single document |
-| `PATCH` | `/documents/:id` | Yes | Update document (name, content, language); a meaningful content change records a `DocumentVersion` |
-| `GET` | `/documents/:id/versions` | Yes | List saved versions (lightweight, newest first); any member |
-| `GET` | `/documents/:id/versions/:versionId` | Yes | Get one version with full content; any member |
-| `POST` | `/documents/:id/versions/:versionId/restore` | Yes | Restore the document to a version (editor/owner) |
-
----
-
-## Database
-
-### Schema overview
-
-Managed by Prisma. Migration files live in `prisma/migrations/`.
-
-| Model | Description |
+| Routes | Access and behavior |
 |---|---|
-| `User` | Account record; holds argon2id `passwordHash` |
-| `Workspace` | Named container for documents; owned by one `User` |
-| `WorkspaceMember` | Join table with `OWNER / EDITOR / VIEWER` role |
-| `Document` | File or folder node; self-referential parent/child tree |
-| `DocumentUpdate` | Append-only binary Yjs update row (sequential `seq` per document) |
-| `Snapshot` | Compacted full Y.Doc state at a specific `seq` |
-| `DocumentVersion` | Plain-text point-in-time snapshot of a document's content for history/diff/restore; `versionNumber` unique per document |
-| `Session` | JWT session record with `jti`, `expiresAt`, and `revokedAt` |
+| `/auth/register`, `/auth/login` | Public; create a database-backed session, set the `auth_token` cookie, and return the JWT with the user |
+| `/auth/me`, `/auth/logout` | Require an active session; logout revokes that session and disconnects its realtime sockets |
+| `/auth/forgot-password`, `/auth/reset-password` | Public reset flow; tokens are stored as hashes, are single-use, and a successful reset revokes every active session for the user |
+| `/users/:userId` | Authenticated profile read; update and delete are self-only |
+| `/workspaces` and `/workspaces/:workspaceId` | Authenticated workspace create/list/read/update/delete |
+| `/workspaces/:workspaceId/members` | Owner-managed membership; generic member APIs cannot assign, demote, or remove the canonical owner |
+| `/workspaces/:workspaceId/invites` | Owner-only create/list; invite links expire after seven days |
+| `/invites/:token` | Public invite metadata; accepting an invite requires authentication |
+| `/workspaces/:workspaceId/documents` | Member reads and editor/owner document creation |
+| `/workspaces/:workspaceId/documents/bulk` | Transactional project import with path and content limits |
+| `/workspaces/:workspaceId/export` | Any member, including viewers; returns a ZIP assembled from saved database content |
+| `/documents/:documentId` | Member read; editor/owner update/delete |
+| `/documents/:documentId/versions` | Version list/detail for members and restore for editors/owners |
 
-### Migrations
+Non-members normally receive 404 for private workspace/document resources rather than a response that confirms the resource exists. Viewers can read documents, versions, and exports but cannot mutate documents, restore versions, send Yjs writes, or use the terminal.
 
-```bash
-# Create and apply a new migration interactively
-npm run db:migrate
+Deleting a user also deletes every workspace they own and the dependent workspace data in the same database transaction. It then revokes the user's realtime access and clears the browser cookie. This operation is irreversible and requires an active session, but it does not require password re-entry.
 
-# Regenerate the Prisma client after schema changes
-npm run db:generate
+### Authentication
 
-# Inspect the database in a browser UI
-npm run db:studio
-```
+Passwords are hashed with Argon2id. Registration and reset passwords must contain at least eight characters, one uppercase letter, one lowercase letter, one number, and one non-alphanumeric character.
 
----
+Each JWT contains a session JTI. Guarded HTTP requests verify the signature and then load the corresponding `Session` row to check ownership, expiry, and revocation. Tokens may be supplied through either:
 
-## Authentication
+- the `auth_token` cookie (`HttpOnly`, `SameSite=Lax`, `Secure` in production); or
+- `Authorization: Bearer <token>`.
 
-**Registration and login** use argon2id (argon2id variant) for password hashing.
+An invalid cookie is cleared when a guarded request returns 401. Login and registration replace an existing cookie with a new session.
 
-**Session management** is database-backed. Every login creates a `Session` row with:
-- `jti` — a UUID that is embedded in the JWT as the token ID claim.
-- `expiresAt` — derived from the JWT `exp` claim so the row and the token always agree.
-- `revokedAt` — set on logout; guarded handlers reject tokens where this field is non-null.
+The application does not terminate TLS. Production must use HTTPS at a trusted reverse proxy or load balancer. If the client and API are deployed on different sites, review the cookie `SameSite` policy and add an explicit CSRF design before changing it.
 
-**Token delivery** uses an httpOnly cookie named `auth_token` (`SameSite=Lax`, `Secure` in production). The Socket.IO auth middleware accepts the token from `socket.handshake.auth.token` or the `auth_token` cookie header.
+### Validation and request limits
 
-**Session expiration** is a normal, gracefully-handled state:
-- Sessions last `JWT_EXPIRES_IN` (default **7 days**); the cookie `Max-Age`, the JWT `exp` claim, and the `Session.expiresAt` row always agree.
-- Any guarded route (including `GET /auth/me`) returns **401** — never 500 — for a missing, malformed, expired, or revoked token.
-- When the dead token came from the `auth_token` cookie, the 401 response also **clears the cookie**, so the browser stops re-sending it. (Tokens presented via the `Authorization: Bearer` header never trigger cookie clearing.)
-- `POST /auth/login` ignores any cookie on the request, so logging in with a stale cookie always works and sets a fresh session cookie.
+Global validation strips no unknown properties: unknown DTO fields are rejected, and supported fields are transformed by Nest's validation pipeline. JSON parser limits are route-specific:
 
-**Timing safety:** The login path always calls `argon2.verify` even when the email does not exist (using a dummy hash), preventing email enumeration via timing differences.
+| Request class | Wire limit |
+|---|---|
+| General JSON endpoints | 100 KiB |
+| Single-document create/update routes | 7 MiB |
+| Bulk document import | 26 MiB |
 
----
+Independent semantic document limits also apply:
 
-## Realtime gateway
+- 1 MiB of UTF-8 content per document
+- 1,000 files and 2,000 total file/folder nodes per bulk import
+- 25 MiB of aggregate UTF-8 content per bulk import
+- 4,096 UTF-8 bytes per path, 255 bytes per path segment, and 64 path segments
 
-The `EditorGateway` (`@WebSocketGateway`) handles all Socket.IO connections.
+Callers must satisfy both the JSON wire limit and the semantic limits. Malformed JSON returns 400 and oversized requests return 413.
 
-### Socket events
+Every error response includes `statusCode`, `error`, `message`, `requestId`, `timestamp`, and `path`. Unexpected 5xx details are logged server-side and replaced with `Internal server error` in the response.
 
-| Direction | Event | Description |
-|---|---|---|
-| Client → Server | `joinDocument` | Join document room; receive Yjs sync step 1 and current awareness state |
-| Client → Server | `leaveDocument` | Leave document room; awareness states cleared and broadcast |
-| Client → Server | `yjs:update` | Binary Yjs delta; applied to Y.Doc; relayed to room; persisted; published to Redis |
-| Client → Server | `yjs:sync` | Yjs sync protocol message; server responds with step 2 if state vector differs |
-| Client → Server | `awareness:update` | Binary awareness state (cursor/selection); relayed to room; published to Redis |
-| Server → Client | `yjs:sync` | Sync step 1 sent on join; step 2 responses |
-| Server → Client | `yjs:update` | Relayed Yjs update from another client in the same room |
-| Server → Client | `awareness:update` | Relayed awareness update from another client |
-| Server → Client | `userJoined` | Another user joined the document room |
-| Server → Client | `userLeft` | Another user left or disconnected |
-| Server → Client | `joinedDocument` | Confirmation of successful room join |
-| Server → Client | `error` | Validation or authorization error |
+## Realtime collaboration
 
-### Authorization
+Socket.IO uses the same port and CORS policy as HTTP. The connection handshake accepts the JWT from `socket.handshake.auth.token` or the `auth_token` cookie and verifies the database session before accepting the socket.
 
-Every `joinDocument` event checks workspace membership:
-```
-WorkspacesService.canUserAccessDocument(userId, documentId)
-```
-If the check fails, an `error` event is emitted and the join is rejected without leaking document existence.
+Core client events are:
 
-### Rate limiting
+| Event | Purpose |
+|---|---|
+| `joinWorkspace` | Authorize and join a workspace room for chat |
+| `chat:message` | Send a workspace chat message |
+| `joinDocument`, `leaveDocument` | Manage document membership, reference counts, and awareness cleanup |
+| `yjs:sync` | Read-only synchronization; accepts SyncStep1 requests, ignores client SyncStep2, and rejects mutating sync messages |
+| `yjs:update` | Apply, relay, persist, and cross-publish an editor/owner update |
+| `awareness:update` | Relay ephemeral cursor/selection state |
 
-- **Per-socket message rate:** `WsRateLimiter` enforces a fixed 1-second window. Messages exceeding `WS_MESSAGE_LIMIT_PER_SECOND` (default 50) are dropped and an `error` event is emitted.
-- **Payload size:** Yjs updates exceeding `WS_MAX_YJS_UPDATE_BYTES` (default 1 MB) are rejected before any processing.
+The gateway requires exact room membership and rechecks both the session and current workspace role on protected events. Authorization results are cached for at most one second. Logout, password reset, account deletion, membership changes, and workspace deletion publish local and Redis invalidations; a ten-second audit sweep provides a fallback for passive sockets. Removed users are evicted from workspace/document rooms, and revoked sessions are disconnected.
 
----
+Inbound events use a fixed one-second per-socket rate window. Yjs sync, update, and awareness payloads share the configured byte limit. Awareness is ephemeral and is not stored in PostgreSQL.
 
-## Yjs persistence
+### Yjs persistence
 
-### Write path
+An open document has one reference-counted `Y.Doc` and `Awareness` instance per server process. A cold load applies the latest snapshot followed by later `DocumentUpdate` rows. If no CRDT history exists, the server deterministically seeds Yjs from the document's saved `content` column.
 
-Each `yjs:update` event triggers:
-1. `DocumentManagerService.applyUpdate` — applied immediately to the authoritative in-memory Y.Doc.
-2. Room relay — `client.to(room).emit("yjs:update")` sends to all peers; the sender is excluded.
-3. `DocumentPersistenceService.persistUpdate` — enqueued in a per-document promise chain; returns immediately so relay is not blocked by I/O.
-4. Redis publish — `PUBLISH document:{id}:updates` for cross-instance fan-out.
+`yjs:update` follows this path:
 
-### Sequence numbers
+1. Apply to the in-memory document.
+2. Relay to other sockets in the local document room.
+3. Queue a PostgreSQL `DocumentUpdate` write in a per-document promise chain.
+4. Publish the update through Redis for other replicas.
 
-With Redis available, sequence numbers come from an atomic shared counter seeded
-from the database high-water mark. A single-instance in-memory counter is used
-only when Redis is unavailable. Per-document promise chains serialize writes
-within an instance, while the Redis counter prevents collisions across replicas.
+Sequence numbers use an atomic Redis counter seeded from the PostgreSQL high-water mark. In single-instance fallback mode, they use a process-local counter. Compaction reconstructs a snapshot from durable rows and replaces covered updates in a serializable transaction.
 
-### Snapshot compaction
+Persistence is asynchronous so editing is not blocked on PostgreSQL. Graceful application shutdown flushes pending write chains, but an abrupt process or host failure can lose updates that were accepted in memory and had not yet reached PostgreSQL. Configure an adequate termination grace period and monitor persistence errors.
 
-Every `SNAPSHOT_EVERY_N_UPDATES` persisted updates (default 100):
-1. The latest durable Snapshot plus every persisted delta through a conservative cutoff are replayed into a fresh Y.Doc.
-2. The rebuilt state is encoded with `Y.encodeStateAsUpdate`.
-3. A replacement `Snapshot` is inserted and covered updates/older snapshots are deleted.
-4. The reads and writes run in a serializable PostgreSQL transaction, so concurrent replicas cannot delete an update that their snapshot did not include.
+A meaningful REST content save creates a plain-text `DocumentVersion` in the same transaction as the document update. Restoring a version updates the saved content, reconciles a live Yjs document when present, resets obsolete CRDT history, publishes the restored state, and synchronizes active terminal projections.
 
-Pending write chains are flushed during graceful application shutdown.
+### Redis and multiple replicas
 
-### Cold load
+Redis is optional only for one server process. A multi-replica deployment requires:
 
-When `DocumentManagerService.acquire(documentId)` is called for a document not currently in memory:
-1. Load the latest `Snapshot` row (if any).
-2. Apply it to a new `Y.Doc` with `Y.applyUpdate`.
-3. Load all `DocumentUpdate` rows with `seq > snapshot.seq`, ordered by `seq ASC`.
-4. Apply each delta in sequence.
-5. Return the reconstructed Y.Doc.
+- one shared PostgreSQL database;
+- one shared Redis deployment; and
+- sticky routing for each Socket.IO connection.
 
-### Version restore reset
+Redis fans out document updates, awareness, chat, authorization invalidations, and terminal file operations. It also owns the cross-process document sequence counter. Without Redis, those facilities fall back to single-process behavior and multiple replicas can allocate conflicting sequence numbers.
 
-`POST /documents/:id/versions/:versionId/restore` makes the plain-text content authoritative again, so the CRDT history must be reconciled (`DocumentRestoreService`):
+Redis connection attempts use a three-second startup timeout and do not automatically reconnect after an initial connection failure; restart the server after restoring Redis. Redis is not part of the readiness decision, so production monitoring must alert on its reported state separately when horizontal scaling is enabled.
 
-- If the document is **live in memory**, the canonical `Y.Text` is replaced inside a Yjs transaction; the resulting incremental update is broadcast on `yjs:update` so connected editors converge with no reload. The history is then collapsed via `DocumentPersistenceService.resetDocument(id, fullState)` into a single `Snapshot` at `seq 0`, and the seq counter resumes at 1.
-- If the document is **not in memory**, `resetDocument(id, null)` deletes all `DocumentUpdate`/`Snapshot` rows so the next cold load re-seeds the Y.Doc from the restored `content` column.
-- A `document:restored` event is then emitted to the document room. The shared sequence counter is reset so subsequent writes resume from the restored durable state.
+## Optional terminal
 
-### Document lifecycle
+`ENABLE_TERMINAL=false` is the secure default. When enabled, the server materializes saved workspace documents under the operating system's temporary directory and starts an interactive `node-pty` shell there. One terminal session is tracked per socket, with a 30-minute idle timeout and a four-hour absolute lifetime. Python, JavaScript, TypeScript, and shell run-file actions depend on `python3`, `node`, `tsx`, and `bash` being installed in the server runtime.
 
-`DocumentManagerService` is ref-counted:
-- `acquire()` increments the ref count (or loads from DB if not present).
-- `release()` decrements the ref count. When it reaches zero, a teardown timer (`DOC_TEARDOWN_GRACE_MS`, default 30 s) is set.
-- If a client re-joins before the timer fires, the timer is cancelled and the Y.Doc stays warm.
-- After the timer fires, the Y.Doc and its Awareness are destroyed and removed from the in-memory map.
+Terminal start, input, resize, and run-file events revalidate the database session and workspace role. Viewers and non-members are rejected. Membership/session invalidations kill affected PTYs locally and across replicas. Document writes are projected to active sandboxes and published through Redis.
 
----
+The terminal sandbox is not an operating-system security boundary. The shell runs as the server's OS user and can access anything that user can access; changing its working directory and environment does not provide container, namespace, or filesystem isolation. Do not enable it for untrusted or multi-tenant workloads without an external isolation layer. At minimum, run the server as a dedicated unprivileged user with no host secrets or infrastructure credentials available to the shell process.
 
-## Redis cross-instance scaling
+Sandbox files are temporary host files. They may remain until the host cleans its temporary directory or the same workspace/user sandbox is re-materialized. Provision and monitor temporary storage accordingly.
 
-`RedisService` manages two `ioredis` clients:
-- **Publisher** — used for `PUBLISH` commands.
-- **Subscriber** — registered with `PSUBSCRIBE`; a dedicated connection is required because a subscribed client cannot issue other commands.
+## Database and migrations
 
-The gateway subscribes to:
-- `document:*:updates` — Yjs binary updates from other instances.
-- `document:*:awareness` — awareness states from other instances.
+The Prisma schema is in `prisma/schema.prisma`; committed migrations are in `prisma/migrations/`.
 
-Every outbound Redis message includes `originId` — a UUID generated once at process startup (`origin.ts`). On receiving a message from Redis, instances discard it if `originId` matches their own, preventing self-echo and double-apply.
+- Use `npm run db:migrate` only for local migration development.
+- Apply committed migrations in a release step with `npx prisma migrate deploy`.
+- Run `npm run db:generate` after schema changes and before compiling against a newly installed client.
+- Back up PostgreSQL independently; Redis pub/sub and counters are coordination state, not the durable record of workspaces.
 
-**Startup behavior:** `RedisService` uses `lazyConnect: true` and a 3-second connection timeout. If Redis is unreachable, `isAvailable` is set to `false` and all Redis calls are no-ops. The server continues to operate in single-instance mode with no pub/sub fan-out.
+The main persistence models are `User`, `Session`, `PasswordResetToken`, `Workspace`, `WorkspaceMember`, `Invite`, `Document`, `DocumentVersion`, `DocumentUpdate`, and `Snapshot`. Workspace paths are unique per workspace. Cascades remove dependent memberships, invites, documents, versions, updates, and snapshots when a workspace is deleted.
 
----
+## Testing
 
-## Tests
+Unit tests do not require running PostgreSQL or Redis:
 
 ```bash
 npm test
 ```
 
-Unit tests use **Jest** with **`jest-mock-extended`** for dependency mocking. Every `*.service.ts`, `*.gateway.ts`, and `*.guard.ts` has a corresponding `*.spec.ts` file in the same directory.
+HTTP integration tests boot the real `AppModule` under Supertest and use the configured database. Start and migrate the development infrastructure first:
 
-Test files run in `node` environment (no browser globals). Coverage is collected from all `src/**/*.ts` files.
+```bash
+npm run infra:up
+npm run db:migrate
+npm run test:integration
+```
+
+The integration suite creates prefixed synthetic accounts and removes them afterward. Use a disposable test database despite that cleanup boundary. CI uses PostgreSQL 16, Redis 7, Node 22, `prisma migrate deploy`, and serial integration execution.
+
+Browser end-to-end tests live in the client package; see the [client test documentation](../client/README.md).
+
+### E2E-only server mode
+
+`E2E_TEST=true` raises HTTP and WebSocket rate limits and enables two Swagger-hidden helper endpoints:
+
+- `POST /e2e/cleanup` with an allow-listed synthetic email prefix
+- `POST /auth/e2e/password-reset-token` with an allow-listed synthetic `@example.com` address
+
+The cleanup operation deletes matching test-owned workspaces and users in one transaction. The reset helper returns a raw reset token. Both routes return 404 when test mode is disabled or the process is in production, and startup rejects `E2E_TEST=true` with `NODE_ENV=production`.
+
+These helper routes have no separate authentication. Prefix/domain validation limits their database scope, but an E2E-enabled server must still be isolated from untrusted networks and must never share a database with production.
+
+## Production checklist
+
+1. Build with the lockfile: `npm ci`, `npm run db:generate`, and `npm run build`.
+2. Apply committed migrations with `npx prisma migrate deploy` in a release job.
+3. Set `NODE_ENV=production`, a high-entropy `JWT_SECRET`, the production database and Redis URLs, the exact `CLIENT_ORIGIN`, and working Resend configuration.
+4. Terminate HTTPS at a trusted proxy, forward WebSocket upgrades, enforce request-size/time limits, and use sticky Socket.IO routing when running multiple replicas.
+5. Keep `E2E_TEST=false`. Keep `ENABLE_TERMINAL=false` unless the runtime has an external isolation boundary.
+6. Restrict database, Redis, Swagger, logs, and temporary storage according to their sensitivity; do not expose the development Compose services.
+7. Give the process enough shutdown grace for pending document writes, and alert on PostgreSQL readiness, Redis availability, persistence errors, mail failures, and terminal resource use.
+8. Back up PostgreSQL and test restoration procedures.
+
+Invite and password-reset URLs are bearer credentials. They can appear in browser history and, for URL-token routes, request logs. Limit log access and retention, avoid forwarding full sensitive URLs to analytics, and rotate or expire exposed links.
