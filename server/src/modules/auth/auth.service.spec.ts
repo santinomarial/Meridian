@@ -9,6 +9,7 @@ import type { Response } from 'express';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { RealtimeAuthorizationService } from '../realtime-authorization/realtime-authorization.service';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -38,6 +39,7 @@ function makeService() {
   const transaction = mockDeep<Prisma.TransactionClient>();
   const jwtService = mockDeep<JwtService>();
   const mailService = mockDeep<MailService>();
+  const realtimeAuthorization = mockDeep<RealtimeAuthorizationService>();
   const configService = mockDeep<ConfigService>();
   const logger = {
     info: jest.fn(),
@@ -60,6 +62,8 @@ function makeService() {
   } as never);
 
   prisma.session.create.mockResolvedValue({} as never);
+  realtimeAuthorization.invalidateSession.mockResolvedValue(undefined);
+  realtimeAuthorization.invalidateUser.mockResolvedValue(undefined);
   (prisma.$transaction as unknown as jest.Mock).mockImplementation(
     async (callback: (tx: DeepMockProxy<Prisma.TransactionClient>) => Promise<unknown>) =>
       callback(transaction),
@@ -70,10 +74,18 @@ function makeService() {
     jwtService,
     mailService,
     configService,
+    realtimeAuthorization,
     logger as never,
   );
 
-  return { service, prisma, transaction, jwtService, mailService };
+  return {
+    service,
+    prisma,
+    transaction,
+    jwtService,
+    mailService,
+    realtimeAuthorization,
+  };
 }
 
 function makeTokenRecord(overrides?: Partial<{
@@ -200,7 +212,7 @@ describe('AuthService', () => {
 
   describe('logout', () => {
     it('revokes the session and clears the cookie', async () => {
-      const { service, prisma } = makeService();
+      const { service, prisma, realtimeAuthorization } = makeService();
       const res = makeRes();
 
       prisma.session.update.mockResolvedValue({} as never);
@@ -214,6 +226,9 @@ describe('AuthService', () => {
       expect(res.clearCookie).toHaveBeenCalledWith(
         'auth_token',
         expect.objectContaining({ httpOnly: true }),
+      );
+      expect(realtimeAuthorization.invalidateSession).toHaveBeenCalledWith(
+        'jti-abc',
       );
     });
   });
@@ -294,7 +309,8 @@ describe('AuthService', () => {
 
   describe('resetPassword', () => {
     it('atomically consumes the token, updates the password, and revokes every session', async () => {
-      const { service, prisma, transaction } = makeService();
+      const { service, prisma, transaction, realtimeAuthorization } =
+        makeService();
       const record = makeTokenRecord();
 
       prisma.passwordResetToken.findUnique.mockResolvedValue(record as never);
@@ -330,6 +346,9 @@ describe('AuthService', () => {
         where: { userId: 'user-1', revokedAt: null },
         data: { revokedAt: expect.any(Date) as Date },
       });
+      expect(realtimeAuthorization.invalidateUser).toHaveBeenCalledWith(
+        'user-1',
+      );
     });
 
     it('rejects a token lost to a concurrent reset before changing the password', async () => {

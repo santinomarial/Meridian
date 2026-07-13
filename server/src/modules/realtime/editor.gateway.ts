@@ -1,4 +1,10 @@
-import { Injectable, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleDestroy,
+  UseFilters,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -39,6 +45,13 @@ import { WsValidationFilter } from './filters/ws-exception.filter';
 import type { AuthUser, JwtPayload } from '../auth/types/auth-user.type';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
+import {
+  RealtimeAuthorizationService,
+  SOCKET_SESSION_JTI,
+  type RealtimeAuthorizationInvalidation,
+} from '../realtime-authorization/realtime-authorization.service';
+
+const AUTHORIZATION_SWEEP_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // Cross-instance Redis message shapes
@@ -77,7 +90,7 @@ export interface ChatMessagePayload {
 @UseFilters(new WsValidationFilter())
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
 export class EditorGateway
-  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit
+  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, OnModuleDestroy
 {
   @WebSocketServer()
   server!: Server;
@@ -88,6 +101,10 @@ export class EditorGateway
   // Cached at construction time to avoid per-message config lookups.
   private readonly wsMessageLimit: number;
   private readonly wsMaxUpdateBytes: number;
+  private readonly connectedClients = new Map<string, Socket>();
+  private readonly unsubscribeAuthorization: () => void;
+  private authorizationSweep: NodeJS.Timeout | undefined;
+  private authorizationSweepRunning = false;
 
   constructor(
     private readonly registry: ConnectionRegistryService,
@@ -99,6 +116,7 @@ export class EditorGateway
     private readonly prisma: PrismaService,
     private readonly workspaces: WorkspacesService,
     private readonly rateLimiter: WsRateLimiter,
+    private readonly realtimeAuthorization: RealtimeAuthorizationService,
     configService: ConfigService,
     @InjectPinoLogger(EditorGateway.name)
     private readonly logger: PinoLogger,
@@ -109,6 +127,9 @@ export class EditorGateway
     const isE2E = process.env['E2E_TEST'] === 'true';
     this.wsMessageLimit = isE2E ? 100_000 : config.wsMessageLimitPerSecond;
     this.wsMaxUpdateBytes = config.wsMaxYjsUpdateBytes;
+    this.unsubscribeAuthorization = this.realtimeAuthorization.onInvalidation(
+      (invalidation) => this.handleAuthorizationInvalidation(invalidation),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -152,6 +173,20 @@ export class EditorGateway
         'EditorGateway subscribed to Redis cross-instance channels',
       );
     }
+
+    this.authorizationSweep = setInterval(() => {
+      void this.auditConnectedClients();
+    }, AUTHORIZATION_SWEEP_MS);
+    this.authorizationSweep.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.authorizationSweep !== undefined) {
+      clearInterval(this.authorizationSweep);
+      this.authorizationSweep = undefined;
+    }
+    this.unsubscribeAuthorization();
+    this.connectedClients.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -166,6 +201,7 @@ export class EditorGateway
     // rejects unauthenticated sockets before handleConnection fires.
     const user = client.data['user'] as AuthUser;
     this.registry.register(client.id, user.id);
+    this.connectedClients.set(client.id, client);
 
     this.logger.info(
       { socketId: client.id, requestId: requestIdStr, userId: user.id },
@@ -187,6 +223,7 @@ export class EditorGateway
     }
 
     this.socketAwarenessIds.delete(client.id);
+    this.connectedClients.delete(client.id);
     this.registry.disconnect(client.id);
     // Release the per-socket rate-limit window to avoid memory leaks.
     this.rateLimiter.clear(client.id);
@@ -208,6 +245,13 @@ export class EditorGateway
     const user = client.data['user'] as AuthUser;
     const room = `document:${dto.documentId}`;
 
+    const accessInfo = await this.authorizeDocumentEvent(
+      client,
+      dto.documentId,
+      'joinDocument',
+    );
+    if (accessInfo === null) return;
+
     // Socket.IO room membership and DocumentManager reference counts must stay
     // one-to-one. A duplicate join from the same socket used to increment the
     // document ref-count twice while disconnect released it only once.
@@ -219,28 +263,16 @@ export class EditorGateway
       return;
     }
 
-    // Authorization: the user must be a workspace member.  getDocumentAccessInfo
-    // returns the role in the same query so we can cache it for yjs:update checks.
-    const accessInfo = await this.workspaces.getDocumentAccessInfo(
-      user.id,
-      dto.documentId,
-    );
-    if (!accessInfo) {
-      client.emit('error', {
-        message: `Access denied to document ${dto.documentId}`,
-      });
-      this.logger.warn(
-        { socketId: client.id, userId: user.id, documentId: dto.documentId },
-        'Unauthorized joinDocument attempt',
-      );
-      return;
-    }
-
-    // Cache the role so handleYjsUpdate can reject viewer writes without a DB hit.
+    // Cache current access metadata for passive-room reauthorization sweeps.
+    // Sensitive events still query the database and never trust this cache.
     const docRoles =
       (client.data['documentRoles'] as Record<string, WorkspaceRole> | undefined) ?? {};
     docRoles[dto.documentId] = accessInfo.role;
     client.data['documentRoles'] = docRoles;
+    const docWorkspaces =
+      (client.data['documentWorkspaces'] as Record<string, string> | undefined) ?? {};
+    docWorkspaces[dto.documentId] = accessInfo.workspaceId;
+    client.data['documentWorkspaces'] = docWorkspaces;
 
     await client.join(room);
     this.registry.join(client.id, dto.documentId);
@@ -253,6 +285,7 @@ export class EditorGateway
       await client.leave(room);
       this.registry.leave(client.id, dto.documentId);
       delete docRoles[dto.documentId];
+      delete docWorkspaces[dto.documentId];
       client.emit('error', {
         message: `Failed to load document ${dto.documentId}`,
       });
@@ -317,6 +350,10 @@ export class EditorGateway
     // Clean up cached role for this document.
     const docRoles = client.data['documentRoles'] as Record<string, WorkspaceRole> | undefined;
     if (docRoles !== undefined) delete docRoles[dto.documentId];
+    const docWorkspaces = client.data['documentWorkspaces'] as
+      | Record<string, string>
+      | undefined;
+    if (docWorkspaces !== undefined) delete docWorkspaces[dto.documentId];
 
     await client.leave(room);
     this.registry.leave(client.id, dto.documentId);
@@ -345,22 +382,15 @@ export class EditorGateway
     if (!this.checkRateLimit(client, 'joinWorkspace')) return;
 
     const user = client.data['user'] as AuthUser;
-    const authorized = await this.workspaces.canUserAccessWorkspace(
-      user.id,
+    const role = await this.authorizeWorkspaceEvent(
+      client,
       dto.workspaceId,
+      'joinWorkspace',
     );
-    if (!authorized) {
-      client.emit('error', {
-        message: `Access denied to workspace ${dto.workspaceId}`,
-      });
-      this.logger.warn(
-        { socketId: client.id, userId: user.id, workspaceId: dto.workspaceId },
-        'Unauthorized joinWorkspace attempt',
-      );
-      return;
-    }
+    if (role === null) return;
 
     await client.join(`workspace:${dto.workspaceId}`);
+    this.cacheWorkspaceRole(client, dto.workspaceId, role);
     client.emit('joinedWorkspace', { workspaceId: dto.workspaceId });
 
     this.logger.info(

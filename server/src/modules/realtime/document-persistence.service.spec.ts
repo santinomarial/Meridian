@@ -1,6 +1,7 @@
 import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
 import type { ConfigService } from '@nestjs/config';
 import type { PinoLogger } from 'nestjs-pino';
+import * as Y from 'yjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { DocumentManagerService } from './document-manager.service';
@@ -46,11 +47,22 @@ function makeService(
 ): DocumentPersistenceService {
   return new DocumentPersistenceService(
     prisma,
-    documentManager,
     redis,
     makeConfigService(snapshotEveryN),
     logger as unknown as PinoLogger,
   );
+}
+
+function makeIncrementalUpdates(count: number): Uint8Array[] {
+  const doc = new Y.Doc();
+  const updates: Uint8Array[] = [];
+  doc.on('update', (update: Uint8Array) => updates.push(update));
+  for (let i = 0; i < count; i++) {
+    const text = doc.getText('content');
+    text.insert(text.length, String(i));
+  }
+  doc.destroy();
+  return updates;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,9 +280,19 @@ describe('DocumentPersistenceService', () => {
   describe('compaction', () => {
     const THRESHOLD = 3;
     let cs: DocumentPersistenceService; // compact service with small threshold
+    let updates: Uint8Array[];
+    let durableRows: Array<{
+      id: string;
+      documentId: string;
+      update: Buffer;
+      seq: number;
+      createdAt: Date;
+    }>;
 
     beforeEach(() => {
       cs = makeService(prisma, logger, documentManager, THRESHOLD);
+      updates = makeIncrementalUpdates(THRESHOLD * 2 + 1);
+      durableRows = [];
 
       // Transaction mock: run the callback synchronously against the same
       // prisma mock so assertions on snapshot.create / deleteMany just work.
@@ -281,8 +303,22 @@ describe('DocumentPersistenceService', () => {
       prisma.documentUpdate.deleteMany.mockResolvedValue(
         { count: THRESHOLD } as never,
       );
-      // Return a non-empty state so the compaction guard passes.
-      documentManager.getState.mockReturnValue(new Uint8Array([1, 2, 3]));
+      prisma.snapshot.deleteMany.mockResolvedValue({ count: 0 } as never);
+      prisma.documentUpdate.create.mockImplementation(
+        ((args: {
+          data: { documentId: string; update: Buffer; seq: number };
+        }) => {
+          durableRows.push({
+            id: `update-${args.data.seq}`,
+            ...args.data,
+            createdAt: new Date(),
+          });
+          return Promise.resolve({});
+        }) as never,
+      );
+      prisma.documentUpdate.findMany.mockImplementation(
+        (() => Promise.resolve(durableRows)) as never,
+      );
     });
 
     it('does not compact before the threshold is reached', async () => {
