@@ -4,8 +4,7 @@ This document defines the current multi-replica behavior of the Meridian API
 server. It covers the coordination paths that use PostgreSQL and Redis, the
 state that remains local to each process, and the failure modes an operator must
 account for. For component setup and configuration, see the
-[server guide](../server/README.md). For the logical component layout, see the
-[architecture overview](architecture.md).
+[server guide](../server/README.md).
 
 ## Current support boundary
 

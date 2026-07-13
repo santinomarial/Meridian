@@ -49,11 +49,11 @@ accepted update can be lost once no client or server memory retains it.
 
 One API process is the recommended deployment topology for collaborative state.
 Redis is optional in that topology and enables cross-process event fan-out when
-present.
-Redis is necessary but not sufficient for safe horizontal API scaling: update
-sequence allocation can race cross-replica compaction, and version restore does
-not invalidate live Yjs state on other replicas. Treat multi-replica operation
-as an implementation boundary, not a production guarantee; see
+present. Redis is necessary but not sufficient for safe horizontal API
+scaling: update sequence allocation can race cross-replica compaction, and a
+version restore does not invalidate live Yjs state on other replicas. Treat
+multi-replica operation as an implementation boundary, not a production
+guarantee; see
 [Horizontal scaling](docs/scaling.md).
 
 Detailed diagrams and runtime sequences are available in
