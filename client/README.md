@@ -50,11 +50,11 @@ npm run dev
 
 The application is available at `http://localhost:5173`. In development, REST
 and Socket.IO connections default to `http://localhost:3000`. Follow the
-[server setup](../server/README.md#setup) to run the complete application.
+[server documentation](../server/README.md) to run the complete application.
 
 ## Configuration
 
-All client configuration is evaluated by Vite. Variables prefixed with
+Runtime endpoint configuration is evaluated by Vite. Variables prefixed with
 `VITE_` are embedded in browser assets and must never contain secrets.
 
 | Variable | Development default | Production default | Purpose |
@@ -69,9 +69,9 @@ VITE_API_URL=http://localhost:3001
 VITE_SOCKET_URL=http://localhost:3001
 ```
 
-Restart the development server after changing these values. Production values
-must be present when `npm run build` runs because Vite replaces them at build
-time.
+Restart the development server after changing these values. Any production
+overrides must be present when `npm run build` runs because Vite replaces them
+at build time.
 
 The HTTP client sends cookies with every request, and the Socket.IO client also
 enables credentials. The server's `CLIENT_ORIGIN` must match the browser origin
