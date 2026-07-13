@@ -8,6 +8,7 @@ import type { Workspace, WorkspaceMember } from '@prisma/client';
 import { WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService, type CreateWorkspaceData } from './workspaces.service';
+import { RealtimeAuthorizationService } from '../modules/realtime-authorization/realtime-authorization.service';
 
 const BASE_WORKSPACE: Workspace = {
   id: 'ws-1',
@@ -35,10 +36,12 @@ const EDITOR_MEMBER: WorkspaceMember = {
 describe('WorkspacesService', () => {
   let service: WorkspacesService;
   let prisma: DeepMockProxy<PrismaService>;
+  let realtimeAuthorization: DeepMockProxy<RealtimeAuthorizationService>;
 
   beforeEach(() => {
     prisma = mockDeep<PrismaService>();
-    service = new WorkspacesService(prisma);
+    realtimeAuthorization = mockDeep<RealtimeAuthorizationService>();
+    service = new WorkspacesService(prisma, realtimeAuthorization);
   });
 
   describe('createWorkspace', () => {
@@ -143,6 +146,7 @@ describe('WorkspacesService', () => {
     it('updates a regular member to another non-owner role', async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue({
         userId: 'user-2',
+        workspaceId: 'ws-1',
         role: WorkspaceRole.EDITOR,
         workspace: { ownerId: 'user-1' },
       } as never);
@@ -157,6 +161,10 @@ describe('WorkspacesService', () => {
         where: { id: 'member-2' },
         data: { role: WorkspaceRole.VIEWER },
       });
+      expect(realtimeAuthorization.invalidateWorkspaceAccess).toHaveBeenCalledWith(
+        'ws-1',
+        'user-2',
+      );
     });
 
     it('rejects promoting any membership to OWNER', async () => {
@@ -170,6 +178,7 @@ describe('WorkspacesService', () => {
     it('rejects demoting the canonical owner membership', async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue({
         userId: 'user-1',
+        workspaceId: 'ws-1',
         role: WorkspaceRole.OWNER,
         workspace: { ownerId: 'user-1' },
       } as never);
@@ -183,6 +192,7 @@ describe('WorkspacesService', () => {
     it('rejects mutating the canonical owner even if its role is malformed', async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue({
         userId: 'user-1',
+        workspaceId: 'ws-1',
         role: WorkspaceRole.EDITOR,
         workspace: { ownerId: 'user-1' },
       } as never);
@@ -197,6 +207,7 @@ describe('WorkspacesService', () => {
     it('removes a regular member', async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue({
         userId: 'user-2',
+        workspaceId: 'ws-1',
         role: WorkspaceRole.EDITOR,
         workspace: { ownerId: 'user-1' },
       } as never);
@@ -207,11 +218,16 @@ describe('WorkspacesService', () => {
       expect(prisma.workspaceMember.delete).toHaveBeenCalledWith({
         where: { id: 'member-2' },
       });
+      expect(realtimeAuthorization.invalidateWorkspaceAccess).toHaveBeenCalledWith(
+        'ws-1',
+        'user-2',
+      );
     });
 
     it('rejects removing the owner membership', async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue({
         userId: 'user-1',
+        workspaceId: 'ws-1',
         role: WorkspaceRole.OWNER,
         workspace: { ownerId: 'user-1' },
       } as never);

@@ -9,6 +9,7 @@ import type { AuthUser } from '../auth/types/auth-user.type';
 export const SOCKET_SESSION_JTI = 'sessionJti';
 
 const INVALIDATION_CHANNEL = 'realtime:authorization:invalidate';
+const SESSION_CACHE_TTL_MS = 1_000;
 
 export type RealtimeAuthorizationInvalidation =
   | { type: 'session'; jti: string }
@@ -38,6 +39,10 @@ export class RealtimeAuthorizationService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly listeners = new Set<InvalidationListener>();
+  private readonly sessionCache = new Map<
+    string,
+    { active: boolean; checkedAt: number; userId: string }
+  >();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -54,15 +59,31 @@ export class RealtimeAuthorizationService
 
   async onModuleDestroy(): Promise<void> {
     this.listeners.clear();
-    await this.redis.unsubscribe(INVALIDATION_CHANNEL);
+    this.sessionCache.clear();
+    try {
+      await this.redis.unsubscribe(INVALIDATION_CHANNEL);
+    } catch (err) {
+      this.logger.warn({ err }, 'Failed to unsubscribe realtime authorization channel');
+    }
   }
 
   /** Returns true only while the exact Session row behind this socket is active. */
-  async isSessionActive(socket: Socket): Promise<boolean> {
+  async isSessionActive(socket: Socket, force = false): Promise<boolean> {
     const user = socket.data['user'] as AuthUser | undefined;
     const jti = socket.data[SOCKET_SESSION_JTI] as string | undefined;
     if (user === undefined || typeof jti !== 'string' || jti.length === 0) {
       return false;
+    }
+
+    const now = Date.now();
+    const cached = this.sessionCache.get(jti);
+    if (
+      !force &&
+      cached !== undefined &&
+      cached.userId === user.id &&
+      now - cached.checkedAt < SESSION_CACHE_TTL_MS
+    ) {
+      return cached.active;
     }
 
     const session = await this.prisma.session.findUnique({
@@ -70,12 +91,14 @@ export class RealtimeAuthorizationService
       select: { userId: true, expiresAt: true, revokedAt: true },
     });
 
-    return (
+    const active = (
       session !== null &&
       session.userId === user.id &&
       session.revokedAt === null &&
       session.expiresAt > new Date()
     );
+    this.sessionCache.set(jti, { active, checkedAt: now, userId: user.id });
+    return active;
   }
 
   onInvalidation(listener: InvalidationListener): () => void {
@@ -103,6 +126,7 @@ export class RealtimeAuthorizationService
   ): Promise<void> {
     // Local delivery does not depend on Redis, so revocation remains immediate
     // in a single-instance deployment or during a Redis outage.
+    this.evict(invalidation);
     this.notify(invalidation);
 
     const envelope: InvalidationEnvelope = { originId: ORIGIN_ID, invalidation };
@@ -123,7 +147,20 @@ export class RealtimeAuthorizationService
       this.logger.warn('Ignored invalid realtime authorization invalidation');
       return;
     }
+    this.evict(envelope.invalidation);
     this.notify(envelope.invalidation);
+  }
+
+  private evict(invalidation: RealtimeAuthorizationInvalidation): void {
+    if (invalidation.type === 'session') {
+      this.sessionCache.delete(invalidation.jti);
+      return;
+    }
+    if (invalidation.type === 'user') {
+      for (const [jti, entry] of this.sessionCache) {
+        if (entry.userId === invalidation.userId) this.sessionCache.delete(jti);
+      }
+    }
   }
 
   private notify(invalidation: RealtimeAuthorizationInvalidation): void {
