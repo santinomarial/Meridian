@@ -35,7 +35,9 @@ describe('User account deletion (HTTP integration)', () => {
       .expect(201);
     const workspaceId = workspace.body.id as string;
 
-    await agent.delete(`/users/${userId}`).expect(204);
+    const deletion = await agent.delete(`/users/${userId}`).expect(204);
+    const setCookie = (deletion.headers['set-cookie'] as unknown as string[]) ?? [];
+    expect(setCookie.some((cookie) => cookie.startsWith('auth_token=;'))).toBe(true);
 
     const [deletedUser, deletedWorkspace] = await Promise.all([
       ctx.prisma.user.findUnique({ where: { id: userId } }),

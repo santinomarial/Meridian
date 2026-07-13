@@ -9,6 +9,7 @@ import {
   NotFoundException,
   Param,
   Patch,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -21,11 +22,16 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { User } from '@prisma/client';
+import type { Response } from 'express';
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthUser } from '../modules/auth/types/auth-user.type';
+import {
+  AUTH_COOKIE_NAME,
+  authCookieOptions,
+} from '../modules/auth/auth-cookie';
 
 /** Public projection of a user — never exposes passwordHash. */
 function toPublicUser(user: User) {
@@ -84,6 +90,7 @@ export class UsersController {
   async deleteUser(
     @CurrentUser() currentUser: AuthUser,
     @Param('userId') userId: string,
+    @Res({ passthrough: true }) res: Response,
   ) {
     if (currentUser.id !== userId) {
       throw new ForbiddenException('You can only delete your own account');
@@ -91,5 +98,6 @@ export class UsersController {
     const user = await this.usersService.findById(userId);
     if (user === null) throw new NotFoundException(`User ${userId} not found`);
     await this.usersService.deleteUser(userId);
+    res.clearCookie(AUTH_COOKIE_NAME, authCookieOptions());
   }
 }
