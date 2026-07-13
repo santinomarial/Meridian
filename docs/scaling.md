@@ -13,8 +13,8 @@ infrastructure** and **one routing rule**:
    document-sequence counter).
 3. **Sticky sessions for WebSocket connections** — a given Socket.IO connection
    must stay pinned to the instance that accepted it for its whole lifetime.
-   Plain HTTP requests can be load-balanced freely (auth is stateless JWT and
-   all state lives in Postgres/Redis).
+   Plain HTTP requests can be load-balanced freely because each request checks
+   its JWT against the shared PostgreSQL session record.
 
 With those in place, the components below are cross-instance safe. Without
 Redis, the server automatically degrades to correct **single-instance**
@@ -32,7 +32,7 @@ behavior.
 | **Terminal sandbox sync** | **Redis pub/sub fan-out** (`meridian:sandbox:*:sync`) of write/mkdir/delete/rename ops | ✅ Works (with caveats below) |
 | Terminal PTY session | Instance-local process; reattach re-materializes from the DB | ⚠️ Sticky-bound by nature |
 | WS message rate limiter | Per-socket, in-memory | ✅ Correct under sticky sessions |
-| HTTP auth / REST | Stateless JWT + shared Postgres | ✅ Stateless |
+| HTTP auth / REST | JWT plus a revocable shared PostgreSQL session row | ✅ Replica-local request handling |
 
 ## Details
 

@@ -290,7 +290,7 @@ flowchart TD
 | PostgreSQL `DocumentUpdate` | Yes | Append-only binary Yjs update log (sequential) |
 | PostgreSQL `Snapshot` | Yes | Compacted Y.Doc state at a specific sequence number |
 | PostgreSQL `Document.content` | Yes | Plain-text content updated on REST save (Cmd+S) |
-| Redis | No | Ephemeral pub/sub messages only; no document state |
+| Redis | No application durability | Pub/sub messages, authorization invalidations, and atomic per-document sequence counters; never authoritative document state |
 | In-memory Y.Doc | No | Hot working state; released after `DOC_TEARDOWN_GRACE_MS` with no clients |
 | Awareness (cursors/selections) | No | Ephemeral; never written to the database |
 
@@ -347,15 +347,48 @@ erDiagram
         datetime expiresAt
         datetime revokedAt
     }
+    Invite {
+        string id PK
+        string token UK
+        string workspaceId FK
+        string invitedById FK
+        string email
+        string role
+        datetime expiresAt
+        datetime acceptedAt
+    }
+    PasswordResetToken {
+        string id PK
+        string userId FK
+        string tokenHash UK
+        datetime expiresAt
+        datetime usedAt
+    }
+    DocumentVersion {
+        string id PK
+        string documentId FK
+        string workspaceId FK
+        string createdById FK
+        int versionNumber
+        string content
+        string message
+        datetime createdAt
+    }
 
     User ||--o{ Workspace : "owns"
     User ||--o{ WorkspaceMember : "member via"
     User ||--o{ Session : "authenticated via"
+    User ||--o{ Invite : "sends"
+    User ||--o{ PasswordResetToken : "resets with"
+    User o|--o{ DocumentVersion : "authors"
     Workspace ||--o{ WorkspaceMember : "has"
     Workspace ||--o{ Document : "contains"
+    Workspace ||--o{ Invite : "has"
+    Workspace ||--o{ DocumentVersion : "indexes"
     Document o|--o{ Document : "parent of"
     Document ||--o{ DocumentUpdate : "logged in"
     Document ||--o{ Snapshot : "snapshotted in"
+    Document ||--o{ DocumentVersion : "versioned in"
 ```
 
 **Schema notes:**
@@ -364,6 +397,9 @@ erDiagram
 - `Document.path` is unique within a workspace (`UNIQUE(workspaceId, path)`).
 - `DocumentUpdate.seq` is unique per document (`UNIQUE(documentId, seq)`), indexed for efficient cold-load queries.
 - `Session.jti` is the JWT ID claim — unique per token, used to revoke individual sessions without invalidating all tokens for a user.
+- `Invite.token` is a random bearer token with a seven-day expiry. Invitations may optionally target an email address and become workspace memberships when accepted.
+- `PasswordResetToken` stores a token hash rather than the bearer token. Tokens expire and are marked used after a successful reset.
+- `DocumentVersion.versionNumber` is unique per document. Versions contain plain text for history, diff, and restore independently of the Yjs update log.
 
 ---
 
@@ -509,8 +545,8 @@ flowchart TD
 ```
 
 **Scaling notes:**
-- The load balancer must support WebSocket upgrades (sticky sessions are **not** required — Redis handles cross-instance state).
-- Each server instance is stateless with respect to Postgres and Redis; horizontal scale-out requires only adding instances and pointing them at the same database and Redis.
+- The load balancer must support WebSocket upgrades and sticky Socket.IO connections. Redis distributes cross-instance events, but each live socket and room membership remains owned by the instance that accepted it.
+- Each server instance keeps active Yjs documents, socket state, rate limits, and terminal processes in memory. Horizontal scale-out requires shared PostgreSQL and Redis plus sticky WebSocket routing.
 - The frontend is fully static (Vite build output) and can be served from any CDN without server-side rendering.
 
 ---
@@ -556,7 +592,11 @@ Yjs update payloads larger than `WS_MAX_YJS_UPDATE_BYTES` (default 1 MB) are rej
 
 ### Graceful shutdown
 
-Not yet implemented. `app.enableShutdownHooks()` and SIGTERM handling are planned for production deployment.
+The server enables NestJS shutdown hooks. On application shutdown, pending Yjs
+write chains are drained before exit; Prisma and Redis connections are closed;
+realtime timers and subscriptions are released; and active terminal processes
+are terminated. The deployment platform must still allow enough termination
+grace time for these hooks to complete.
 
 ### Database migrations
 
