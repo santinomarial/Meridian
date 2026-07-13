@@ -169,19 +169,39 @@ export class AuthService {
       type: argon2.argon2id,
     });
 
-    await this.prisma.user.update({
-      where: { id: tokenRecord.userId },
-      data: { passwordHash },
-    });
+    const resetAt = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      // Atomically claim the token. The initial read above avoids doing an
+      // expensive password hash for obviously invalid links; this conditional
+      // update is what prevents two concurrent requests from both succeeding.
+      const claimed = await tx.passwordResetToken.updateMany({
+        where: {
+          id: tokenRecord.id,
+          userId: tokenRecord.userId,
+          usedAt: null,
+          expiresAt: { gt: resetAt },
+        },
+        data: { usedAt: resetAt },
+      });
+      if (claimed.count !== 1) {
+        throw new BadRequestException('Reset link is invalid or expired.');
+      }
 
-    // Mark this token used and invalidate any remaining ones for this user.
-    await this.prisma.passwordResetToken.update({
-      where: { id: tokenRecord.id },
-      data: { usedAt: new Date() },
-    });
-    await this.prisma.passwordResetToken.updateMany({
-      where: { userId: tokenRecord.userId, id: { not: tokenRecord.id }, usedAt: null },
-      data: { usedAt: new Date() },
+      await tx.user.update({
+        where: { id: tokenRecord.userId },
+        data: { passwordHash },
+      });
+
+      // Invalidate any sibling reset links and every browser/API session. If
+      // any step fails, the password and token claim roll back together.
+      await tx.passwordResetToken.updateMany({
+        where: { userId: tokenRecord.userId, id: { not: tokenRecord.id }, usedAt: null },
+        data: { usedAt: resetAt },
+      });
+      await tx.session.updateMany({
+        where: { userId: tokenRecord.userId, revokedAt: null },
+        data: { revokedAt: resetAt },
+      });
     });
 
     this.logger.info({ userId: tokenRecord.userId }, 'Password reset completed');

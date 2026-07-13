@@ -35,17 +35,27 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const httpError =
       exception instanceof HttpException ? exception.getResponse() : null;
 
+    // 5xx responses must never expose raw exception/database/provider details.
+    // Client-actionable 4xx HttpExceptions retain their intentional messages.
+    const isServerError = statusCode >= HttpStatus.INTERNAL_SERVER_ERROR;
+
     const message: string | string[] =
-      httpError !== null && typeof httpError === 'object' && 'message' in httpError
-        ? (httpError as { message: string | string[] }).message
-        : exception instanceof Error
-          ? exception.message
-          : 'Internal server error';
+      isServerError
+        ? 'Internal server error'
+        : typeof httpError === 'string'
+          ? httpError
+          : httpError !== null && typeof httpError === 'object' && 'message' in httpError
+            ? (httpError as { message: string | string[] }).message
+            : exception instanceof Error
+              ? exception.message
+              : 'Request failed';
 
     const errorLabel =
-      httpError !== null && typeof httpError === 'object' && 'error' in httpError
-        ? String((httpError as { error: string }).error)
-        : HttpStatus[statusCode] ?? 'Internal Server Error';
+      isServerError
+        ? 'Internal Server Error'
+        : httpError !== null && typeof httpError === 'object' && 'error' in httpError
+          ? String((httpError as { error: string }).error)
+          : HttpStatus[statusCode] ?? 'Request Error';
 
     const body: ErrorResponseBody = {
       statusCode,
@@ -58,8 +68,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     if (statusCode >= 500) {
       this.logger.error(
-        { requestId: body.requestId, statusCode, path: body.path },
-        exception instanceof Error ? exception.message : 'Unhandled exception',
+        { requestId: body.requestId, statusCode, path: body.path, err: exception },
+        'Unhandled HTTP exception',
       );
     } else {
       this.logger.warn(

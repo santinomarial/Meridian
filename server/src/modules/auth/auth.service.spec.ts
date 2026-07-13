@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, UnauthorizedException } from '@
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
-import type { User } from '@prisma/client';
+import type { Prisma, User } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { createHash } from 'crypto';
 import type { Response } from 'express';
@@ -35,6 +35,7 @@ function makeRes(): DeepMockProxy<Response> {
 
 function makeService() {
   const prisma = mockDeep<PrismaService>();
+  const transaction = mockDeep<Prisma.TransactionClient>();
   const jwtService = mockDeep<JwtService>();
   const mailService = mockDeep<MailService>();
   const configService = mockDeep<ConfigService>();
@@ -59,6 +60,10 @@ function makeService() {
   } as never);
 
   prisma.session.create.mockResolvedValue({} as never);
+  (prisma.$transaction as unknown as jest.Mock).mockImplementation(
+    async (callback: (tx: DeepMockProxy<Prisma.TransactionClient>) => Promise<unknown>) =>
+      callback(transaction),
+  );
 
   const service = new AuthService(
     prisma,
@@ -68,7 +73,7 @@ function makeService() {
     logger as never,
   );
 
-  return { service, prisma, jwtService, mailService };
+  return { service, prisma, transaction, jwtService, mailService };
 }
 
 function makeTokenRecord(overrides?: Partial<{
@@ -288,27 +293,56 @@ describe('AuthService', () => {
   // ── resetPassword ───────────────────────────────────────────────────────────
 
   describe('resetPassword', () => {
-    it('updates the password and marks the token used for a valid request', async () => {
-      const { service, prisma } = makeService();
+    it('atomically consumes the token, updates the password, and revokes every session', async () => {
+      const { service, prisma, transaction } = makeService();
       const record = makeTokenRecord();
 
       prisma.passwordResetToken.findUnique.mockResolvedValue(record as never);
-      prisma.user.update.mockResolvedValue(BASE_USER);
-      prisma.passwordResetToken.update.mockResolvedValue({} as never);
-      prisma.passwordResetToken.updateMany.mockResolvedValue({ count: 0 } as never);
+      transaction.passwordResetToken.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 2 });
+      transaction.user.update.mockResolvedValue(BASE_USER);
+      transaction.session.updateMany.mockResolvedValue({ count: 3 });
 
       await service.resetPassword({ token: 'valid-raw-token', password: STRONG_PASSWORD });
 
-      expect(prisma.user.update).toHaveBeenCalledWith({
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(transaction.passwordResetToken.updateMany).toHaveBeenNthCalledWith(1, {
+        where: {
+          id: 'token-1',
+          userId: 'user-1',
+          usedAt: null,
+          expiresAt: { gt: expect.any(Date) as Date },
+        },
+        data: { usedAt: expect.any(Date) as Date },
+      });
+      expect(transaction.user.update).toHaveBeenCalledWith({
         where: { id: 'user-1' },
         data: expect.objectContaining({
           passwordHash: expect.stringMatching(/^\$argon2id/) as string,
         }),
       });
-      expect(prisma.passwordResetToken.update).toHaveBeenCalledWith({
-        where: { id: 'token-1' },
-        data: expect.objectContaining({ usedAt: expect.any(Date) as Date }),
+      expect(transaction.passwordResetToken.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { userId: 'user-1', id: { not: 'token-1' }, usedAt: null },
+        data: { usedAt: expect.any(Date) as Date },
       });
+      expect(transaction.session.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) as Date },
+      });
+    });
+
+    it('rejects a token lost to a concurrent reset before changing the password', async () => {
+      const { service, prisma, transaction } = makeService();
+      prisma.passwordResetToken.findUnique.mockResolvedValue(makeTokenRecord() as never);
+      transaction.passwordResetToken.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.resetPassword({ token: 'valid-raw-token', password: STRONG_PASSWORD }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(transaction.user.update).not.toHaveBeenCalled();
+      expect(transaction.session.updateMany).not.toHaveBeenCalled();
     });
 
     it('throws BadRequestException for an unknown token', async () => {
@@ -341,14 +375,16 @@ describe('AuthService', () => {
     });
 
     it('cannot reuse a token after a successful reset', async () => {
-      const { service, prisma } = makeService();
+      const { service, prisma, transaction } = makeService();
 
       // First call: token is valid
       const record = makeTokenRecord();
       prisma.passwordResetToken.findUnique.mockResolvedValueOnce(record as never);
-      prisma.user.update.mockResolvedValue(BASE_USER);
-      prisma.passwordResetToken.update.mockResolvedValue({} as never);
-      prisma.passwordResetToken.updateMany.mockResolvedValue({ count: 0 } as never);
+      transaction.passwordResetToken.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+      transaction.user.update.mockResolvedValue(BASE_USER);
+      transaction.session.updateMany.mockResolvedValue({ count: 1 });
 
       await service.resetPassword({ token: 'valid-raw-token', password: STRONG_PASSWORD });
 
