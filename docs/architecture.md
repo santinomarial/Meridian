@@ -628,3 +628,173 @@ cleanup, and relays the opaque Yjs awareness data. It does not bind the
 awareness payload's displayed <code>user</code> metadata to the authenticated
 identity, so presence display identity is client-asserted by an authenticated
 workspace member.
+
+## 10. Persistence, compaction, and restore
+
+### 10.1 Storage roles
+
+| State | Location | Lifetime |
+|---|---|---|
+| Saved plain text | PostgreSQL <code>Document.content</code> | Durable |
+| User-visible versions | PostgreSQL <code>DocumentVersion</code> | Durable |
+| CRDT update log | PostgreSQL <code>DocumentUpdate</code> | Durable after asynchronous insert succeeds |
+| CRDT compacted state | PostgreSQL <code>Snapshot</code> | Durable after compaction succeeds |
+| Active CRDT and awareness | Server process memory | Until grace-period teardown or process exit |
+| Client CRDT and awareness | Browser module maps | Until page reload |
+| Chat and presence events | Socket.IO and Redis pub/sub | Ephemeral |
+| Document sequence counter | Redis, with process-local fallback | Coordination state, not document content |
+| Terminal projection | Host temporary directory | Disposable, process/host local |
+
+### 10.2 Sequence allocation and compaction
+
+When Redis is available, a Lua seed-and-increment operation allocates a unique
+sequence number from <code>meridian:doc:&lt;documentId&gt;:seq</code>. The seed
+uses the maximum sequence found in update and snapshot tables. Without Redis,
+each process uses an in-memory counter seeded from the database high-water
+mark; this fallback is safe only when exactly one server process can write the
+document.
+
+Each process serializes its own writes per document through a promise chain.
+Every <code>SNAPSHOT_EVERY_N_UPDATES</code> successful local writes, default
+100, that process attempts a serializable transaction:
+
+1. Read the latest durable snapshot.
+2. Read update rows after the base and through the last sequence persisted by
+   this process.
+3. Apply those rows to a temporary Yjs document.
+4. Insert a new snapshot tagged with the local cutoff sequence.
+5. Delete covered update rows and older snapshots.
+
+The threshold is per process, not a global count. More importantly, Redis
+allocation happens before each PostgreSQL insert while write chains are
+process-local. Across replicas, sequence 6 can commit and compact while an
+earlier allocated sequence 5 is still pending on another process. A snapshot
+tagged 6 can therefore omit 5; a later insert of 5 is then below the snapshot
+cutoff and cold load ignores it. Serializable isolation of the compaction
+transaction does not close that later-insert gap. Current compaction is not a
+safe cross-replica durability mechanism.
+
+Persistence bookkeeping maps and settled promise-chain entries are not evicted
+when a server-side <code>Y.Doc</code> is torn down. A long-lived process that
+touches many distinct documents accumulates per-document counters and chain
+entries until restart.
+
+### 10.3 Version restore
+
+Restore is not one atomic transaction across all representations:
+
+1. <code>DocumentsService</code> commits a transaction that writes
+   <code>Document.content</code> and creates a new
+   <code>DocumentVersion</code>.
+2. <code>DocumentRestoreService</code> runs after that commit.
+3. If this process has the document loaded, it replaces its Yjs text, emits a
+   local <code>yjs:update</code>, flushes this process's persistence chain,
+   replaces CRDT history with a sequence-zero snapshot, clears the Redis
+   sequence key, and emits <code>document:restored</code>.
+4. If this process does not have the document loaded, it deletes CRDT history
+   so the next local cold load seeds from <code>Document.content</code>.
+5. The controller then best-effort syncs restored text into active terminal
+   projections.
+
+A failure after step 1 can leave the content/version committed while CRDT state
+or terminal projections remain unreconciled. Restore broadcasts and CRDT reset
+are local to the handling process; they are not published through Redis.
+Another replica can retain and later persist its pre-restore <code>Y.Doc</code>
+or pending writes. Multi-replica restore is therefore not convergent.
+
+## 11. Redis and multiple server instances
+
+Redis uses separate publisher and subscriber clients with lazy connection,
+offline queues disabled, no command retries, and no automatic reconnection.
+Each client gets a three-second startup connection timeout.
+
+| Redis name | Purpose |
+|---|---|
+| <code>document:*:updates</code> | Cross-instance Yjs update relay |
+| <code>document:*:awareness</code> | Cross-instance awareness relay |
+| <code>workspace:*:chat</code> | Cross-instance workspace chat |
+| <code>realtime:authorization:invalidate</code> | Session, user, and membership invalidation |
+| <code>meridian:sandbox:*:sync</code> | Best-effort terminal projection changes |
+| <code>meridian:doc:&lt;id&gt;:seq</code> | Atomic document update sequence counter |
+
+Messages carry a process origin ID so the publisher ignores its own fan-out.
+Inbound document updates are applied only when that instance already has the
+document loaded. Pub/sub has no replay; an unloaded instance relies on the
+asynchronously written PostgreSQL history when it later loads the document.
+Loading concurrently with the original asynchronous write can temporarily
+miss that update.
+
+If Redis is unavailable at startup, the server logs a warning and continues.
+Readiness reports Redis as <code>disabled</code>, but remains ready when
+PostgreSQL works. The application does not enforce that only one replica is
+running.
+
+If Redis is lost after startup, there is no reconnect loop. The service can
+remain marked available while commands fail; readiness reports Redis
+<code>error</code>, publications are lost, and sequence allocation falls back
+to process-local counters on command failure. HTTP readiness still depends
+only on PostgreSQL. Multiple active replicas during either Redis failure mode
+can diverge, miss authorization invalidations, and allocate colliding
+sequences.
+
+Socket.IO connections and rooms are process-local, so any load balancer must
+support WebSocket upgrade and sticky routing for long-polling/session
+continuity. Shared PostgreSQL, Redis, and sticky routing are necessary for
+multiple replicas, but they are not sufficient to fix the sequence-compaction
+and restore defects above. Multi-replica collaborative editing should be
+treated as unsupported until those paths are redesigned and tested.
+
+See [scaling.md](scaling.md) for additional deployment discussion, but source
+code and the limitations in this document take precedence over broader design
+intent.
+
+## 12. Terminal execution
+
+The terminal is disabled by default and enabled with
+<code>ENABLE_TERMINAL=true</code>. It uses the authenticated Socket.IO
+connection. Owners and editors can start or use a terminal; viewers and
+non-members are rejected. Session and membership checks use the same
+one-second active-event cache and ten-second passive sweep used by the realtime
+authorization layer. Revocation kills the PTY.
+
+One terminal session is allowed per socket. Starting a session:
+
+1. Recreates a temporary directory under
+   <code>os.tmpdir()/meridian-terminal-sandboxes/&lt;workspace&gt;/&lt;user&gt;</code>.
+2. Materializes current <code>Document.content</code> paths from PostgreSQL.
+3. Spawns the server user's configured shell through <code>node-pty</code> with
+   that directory as <code>cwd</code>.
+4. Passes a reduced environment containing HOME, PATH, terminal/locale values,
+   shell, and optional USER/LOGNAME, rather than application secrets.
+
+REST file creates, updates, renames, deletes, and restores are projected into
+active terminal directories locally and over Redis on a best-effort basis.
+Terminal-created or terminal-modified files are not written back to
+PostgreSQL. The direction is saved database content to disposable projection,
+not bidirectional filesystem synchronization.
+
+Run-file dispatch supports:
+
+| Extension | Host command |
+|---|---|
+| <code>.py</code> | <code>python3</code> |
+| <code>.js</code> | <code>node</code> |
+| <code>.ts</code> | <code>npx --no-install tsx</code> |
+| <code>.sh</code> | <code>bash</code> |
+
+These executables must exist on the server host. Paths used by the projection
+and run-file helper reject absolute paths, traversal, control characters, and
+symlink escape, and file writes use no-follow flags where available.
+
+These checks do not confine the interactive shell. The PTY runs as the server
+OS user and can execute arbitrary commands, change directory, consume host
+resources, and access anything allowed to that account. HOME and <code>cwd</code>
+are convenience boundaries, not isolation. Production use requires a real
+container, VM, or comparable execution sandbox with CPU, memory, process,
+filesystem, network, and syscall controls.
+
+Sessions have a 30-minute idle limit and a four-hour absolute limit. They are
+killed on socket disconnect and module shutdown, with a force-kill attempt
+after three seconds. Terminal events use DTO validation and authorization but
+do not use <code>WsRateLimiter</code>; <code>terminal:input</code> also has no
+application-level string-length cap.
