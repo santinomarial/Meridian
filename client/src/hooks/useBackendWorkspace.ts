@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, createWorkspace, getCurrentUser, getDocumentTree, getWorkspaces, getWorkspaceMembers } from "../lib/api";
 import { getLanguageFromFilename, toLanguageMode } from "../lib/language";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
@@ -64,9 +64,15 @@ function findPreferredFileId(nodes: FileNode[]): string | null {
 
 export function useBackendWorkspace(): void {
   const navigate = useNavigate();
+  const { workspaceId, id: legacySessionId } = useParams<{
+    workspaceId?: string;
+    id?: string;
+  }>();
+  const requestedWorkspaceId = workspaceId ?? legacySessionId ?? null;
 
   useEffect(() => {
     let cancelled = false;
+    useWorkspaceStore.getState().resetWorkspace();
 
     async function load(): Promise<void> {
       try {
@@ -99,8 +105,17 @@ export function useBackendWorkspace(): void {
         if (cancelled) return;
 
         let workspace =
-          workspaces.find((w) => w.name.toLowerCase().includes("meridian")) ??
-          workspaces[0];
+          requestedWorkspaceId !== null
+            ? workspaces.find((w) => w.id === requestedWorkspaceId)
+            : (workspaces.find((w) => w.name.toLowerCase().includes("meridian")) ??
+              workspaces[0]);
+
+        // A deep link should never silently open a different workspace. Return
+        // to the default selector if the requested workspace is unavailable.
+        if (workspace === undefined && requestedWorkspaceId !== null) {
+          navigate("/workspace", { replace: true });
+          return;
+        }
 
         // Auto-create a default workspace when the user is authenticated
         // but has no workspaces yet (fresh account).
@@ -161,5 +176,5 @@ export function useBackendWorkspace(): void {
     return () => {
       cancelled = true;
     };
-  }, [navigate]);
+  }, [navigate, requestedWorkspaceId]);
 }

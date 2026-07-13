@@ -124,8 +124,8 @@ function AuthenticatedState({
     setAccepting(true);
     setError(null);
     try {
-      await acceptInvite(inviteId);
-      navigate("/workspace");
+      const acceptedInvite = await acceptInvite(inviteId);
+      navigate(`/workspace/${encodeURIComponent(acceptedInvite.workspaceId)}`);
     } catch {
       setError("Could not accept this invite. It may have expired or been revoked.");
       setAccepting(false);

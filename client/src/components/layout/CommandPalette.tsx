@@ -58,6 +58,7 @@ function CommandPaletteBody() {
   const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
   const setVersionHistoryOpen = useWorkspaceStore((s) => s.setVersionHistoryOpen);
   const setShareRequested = useWorkspaceStore((s) => s.setShareRequested);
+  const resetWorkspace = useWorkspaceStore((s) => s.resetWorkspace);
 
   const { createFile, createFolder } = useFileOperations();
   const { saveActiveFile, canSaveActiveFile } = useSaveActiveFile();
@@ -268,11 +269,16 @@ function CommandPaletteBody() {
       keywords: "logout exit leave",
       disabled: false,
       run: () => {
-        void logout().catch(() => {
-          // OK if the backend is unavailable — navigate away regardless.
-        });
-        navigate("/");
-        toast("Signed out.");
+        resetWorkspace();
+        void (async () => {
+          try {
+            await logout();
+          } catch {
+            // OK if the backend is unavailable — navigate away regardless.
+          }
+          navigate("/", { replace: true });
+          toast("Signed out.");
+        })();
       },
     });
 
@@ -303,6 +309,7 @@ function CommandPaletteBody() {
     togglePanel,
     setShareRequested,
     setSettingsOpen,
+    resetWorkspace,
     navigate,
   ]);
 

@@ -12,6 +12,7 @@ function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/forgot-password" element={<LandingPage />} />
         <Route path="/workspace" element={<WorkspacePage />} />
+        <Route path="/workspace/:workspaceId" element={<WorkspacePage />} />
         <Route path="/session/:id" element={<WorkspacePage />} />
         <Route path="/invite/:inviteId" element={<InvitePage />} />
         <Route path="/reset-password/:token" element={<ResetPasswordPage />} />

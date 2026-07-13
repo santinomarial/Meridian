@@ -171,6 +171,7 @@ export function Header() {
   const notifications = useWorkspaceStore((s) => s.notifications);
   const clearNotifications = useWorkspaceStore((s) => s.clearNotifications);
   const addNotification = useWorkspaceStore((s) => s.addNotification);
+  const resetWorkspace = useWorkspaceStore((s) => s.resetWorkspace);
   const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
   const toggleCommandPalette = useWorkspaceStore((s) => s.toggleCommandPalette);
   const shareRequested = useWorkspaceStore((s) => s.shareRequested);
@@ -355,14 +356,15 @@ export function Header() {
 
   const handleSignOut = useCallback(async () => {
     setOpenPanel(null);
+    resetWorkspace();
     try {
       await logout();
     } catch {
       // OK if backend is unavailable — navigate away anyway.
     }
-    navigate("/");
+    navigate("/", { replace: true });
     toast("Signed out.");
-  }, [navigate]);
+  }, [navigate, resetWorkspace]);
 
   const handleCopyPath = useCallback(async () => {
     setOpenPanel(null);

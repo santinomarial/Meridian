@@ -148,6 +148,7 @@ function toggleFolderInTree(nodes: FileNode[], folderId: string): FileNode[] {
 }
 
 function applyThemeToDocument(theme: WorkspaceTheme): void {
+  if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.classList.toggle("dark", theme === "dark");
   root.style.colorScheme = theme;
@@ -425,6 +426,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   setWorkspaceId: (id) => set({ workspaceId: id }),
 
+  resetWorkspace: () => {
+    set((state) => createWorkspaceSessionState(state.theme));
+  },
+
   addFileNode: (file, content) => {
     set((state) => {
       const isLocal = (id: string): boolean => id.startsWith("local-");
@@ -543,19 +548,22 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   batchLoadBackend: ({ files, editorContent, defaultFileId }) => {
-    set((state) => {
-      let openTabs = state.openTabs;
-      let activeFileId = state.activeFileId;
+    set(() => {
+      const file = defaultFileId !== null ? findFileInTree(files, defaultFileId) : null;
+      const openTabs =
+        file !== null
+          ? [{ fileId: file.id, name: file.name, language: file.language, dirty: false }]
+          : [];
 
-      if (defaultFileId !== null) {
-        const file = findFileInTree(files, defaultFileId);
-        if (file !== null) {
-          openTabs = [{ fileId: file.id, name: file.name, language: file.language, dirty: false }];
-          activeFileId = defaultFileId;
-        }
-      }
-
-      return { files, editorContentByFileId: editorContent, openTabs, activeFileId };
+      return {
+        files,
+        editorContentByFileId: editorContent,
+        openTabs,
+        activeFileId: file?.id ?? null,
+        cursorPosition: { line: 1, column: 1 },
+        diagnosticCounts: { errors: 0, warnings: 0 },
+        saveStatus: "saved" as const,
+      };
     });
   },
 }));
