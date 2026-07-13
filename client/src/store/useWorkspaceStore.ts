@@ -64,6 +64,7 @@ type WorkspaceActions = {
   setBackendStatus: (status: BackendStatus) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
   setWorkspaceId: (id: string) => void;
+  resetWorkspace: () => void;
   batchLoadBackend: (data: BackendLoadData) => void;
   clearTabDirty: (fileId: string) => void;
   addFileNode: (file: Extract<FileNode, { kind: "file" }>, content: string) => void;
@@ -177,6 +178,39 @@ const INITIAL_OPEN_TABS: OpenTab[] = [
   { fileId: "file-auth", name: "auth.ts", language: "typescript", dirty: false },
   { fileId: "file-database", name: "database.ts", language: "typescript", dirty: false },
 ];
+
+function createWorkspaceSessionState(theme: WorkspaceTheme): WorkspaceData {
+  return {
+    workspaceId: null,
+    workspaceName: null,
+    currentUser: null,
+    files: mockFiles,
+    activeFileId: "file-auth",
+    openTabs: INITIAL_OPEN_TABS.map((tab) => ({ ...tab })),
+    editorContentByFileId: { ...mockFileContents },
+    collaborators: [],
+    chatMessages: [],
+    notifications: [],
+    diagnosticCounts: { errors: 0, warnings: 0 },
+    selectedActivityItem: "explorer",
+    isExplorerOpen: true,
+    isCollaborationPanelOpen: true,
+    isSettingsOpen: false,
+    isVersionHistoryOpen: false,
+    isCommandPaletteOpen: false,
+    shareRequested: false,
+    theme,
+    cursorPosition: { line: 1, column: 1 },
+    saveStatus: "saved",
+    userRole: null,
+    memberRoles: {},
+    isTerminalOpen: false,
+    terminalStatus: "idle",
+    terminalSyncStatus: null,
+    backendStatus: "pending",
+    connectionStatus: "disconnected",
+  };
+}
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // ── Data state ────────────────────────────────────────────────────────────
