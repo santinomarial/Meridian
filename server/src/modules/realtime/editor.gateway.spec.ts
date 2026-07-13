@@ -612,7 +612,13 @@ describe('EditorGateway.handleYjsSync — authorization and mutation safety', ()
 
 describe('EditorGateway.handleYjsUpdate — payload cap', () => {
   function makeAuthenticatedSocket(): DeepMockProxy<Socket> {
-    const socket = makeSocket({ data: { user: AUTH_USER } });
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+      },
+      rooms: ['document:doc-1'],
+    });
     socket.to.mockReturnValue({ emit: jest.fn() } as never);
     return socket;
   }
@@ -666,7 +672,13 @@ describe('EditorGateway — WebSocket rate limiting', () => {
   it('drops a yjs:update that exceeds the per-second limit', () => {
     const wsLimit = 3;
     const { gateway, documentManager } = makeGateway({ wsLimit });
-    const socket = makeSocket({ data: { user: AUTH_USER } });
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+      },
+      rooms: ['document:doc-1'],
+    });
     socket.to.mockReturnValue({ emit: jest.fn() } as never);
 
     const smallUpdate = new Uint8Array(10);

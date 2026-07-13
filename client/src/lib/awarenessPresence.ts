@@ -1,5 +1,6 @@
 import type { Awareness } from "y-protocols/awareness";
 import type { Collaborator } from "../types";
+import { colorForUser } from "./collabColors";
 
 /**
  * Helpers that turn Yjs awareness states into UI state:
@@ -17,14 +18,28 @@ export type AwarenessUser = {
 
 const REMOTE_SELECTION_STYLE_ID = "meridian-remote-selection-styles";
 
-function getAwarenessUser(state: Record<string, unknown>): AwarenessUser | null {
+const SAFE_HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+export function normalizeAwarenessUser(
+  state: Record<string, unknown>,
+): AwarenessUser | null {
   const user = state["user"];
   if (typeof user !== "object" || user === null) return null;
   const { id, name, color } = user as Record<string, unknown>;
   if (typeof id !== "string" || typeof name !== "string" || typeof color !== "string") {
     return null;
   }
-  return { id, name, color };
+  const safeId = id.trim().slice(0, 128);
+  if (safeId.length === 0) return null;
+  const safeName =
+    name
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .trim()
+      .slice(0, 80) || "Collaborator";
+  const safeColor = SAFE_HEX_COLOR.test(color)
+    ? color.toLowerCase()
+    : colorForUser(safeId);
+  return { id: safeId, name: safeName, color: safeColor };
 }
 
 /** Remote collaborators (excluding the local client), deduped by user id. */
@@ -37,7 +52,7 @@ export function collaboratorsFromAwareness(
 
   for (const [clientId, state] of awareness.getStates()) {
     if (clientId === awareness.clientID) continue;
-    const user = getAwarenessUser(state as Record<string, unknown>);
+    const user = normalizeAwarenessUser(state as Record<string, unknown>);
     if (user === null) continue;
     if (localUserId !== null && user.id === localUserId) continue;
 
@@ -57,8 +72,8 @@ export function collaboratorsFromAwareness(
 }
 
 function hexToRgba(hex: string, alpha: number): string {
-  const match = /^#?([0-9a-f]{6})$/i.exec(hex);
-  if (match === null) return hex;
+  const match = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (match === null) return `rgba(128, 128, 128, ${alpha})`;
   const value = parseInt(match[1]!, 16);
   const r = (value >> 16) & 0xff;
   const g = (value >> 8) & 0xff;
@@ -87,7 +102,7 @@ export function syncRemoteSelectionStyles(awareness: Awareness): void {
   const rules: string[] = [];
   for (const [clientId, state] of awareness.getStates()) {
     if (clientId === awareness.clientID) continue;
-    const user = getAwarenessUser(state as Record<string, unknown>);
+    const user = normalizeAwarenessUser(state as Record<string, unknown>);
     if (user === null) continue;
 
     rules.push(`

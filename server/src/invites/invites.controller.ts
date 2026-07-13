@@ -120,12 +120,18 @@ export class InvitesController {
     @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
   ): Promise<InviteResponse[]> {
-    const isMember = await this.workspacesService.canUserAccessWorkspace(
+    const role = await this.workspacesService.getMemberRole(
       user.id,
       workspaceId,
     );
-    if (!isMember) {
+    if (role === null) {
       throw new NotFoundException(`Workspace ${workspaceId} not found`);
+    }
+    // Invite tokens are bearer credentials. Returning them to editors/viewers
+    // lets a low-privilege member share a higher-privilege invite with another
+    // account, effectively escalating access. Only owners may enumerate them.
+    if (role !== WorkspaceRole.OWNER) {
+      throw new ForbiddenException('Only workspace owners can list invites');
     }
     const invites = await this.invitesService.listForWorkspace(workspaceId);
     return invites.map((invite) => this.toResponse(invite));

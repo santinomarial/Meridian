@@ -4,6 +4,7 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { randomUUID } from 'crypto';
 import * as os from 'os';
 import * as fs from 'fs/promises';
+import { constants as fsConstants } from 'fs';
 import * as path from 'path';
 import { DocumentType } from '@prisma/client';
 import type { Socket } from 'socket.io';
@@ -99,12 +100,12 @@ export class TerminalSandboxService implements OnModuleInit {
   }
 
   /**
-   * Creates/reuses the sandbox dir and writes every document in the workspace
-   * into it, preserving folder structure. Returns the sandbox root.
+   * Rebuilds the sandbox dir and writes every document in the workspace into
+   * it, preserving folder structure. Returns the sandbox root.
    */
   async materialize(workspaceId: string, userId: string): Promise<string> {
     const root = this.getSandboxDir(workspaceId, userId);
-    await fs.mkdir(root, { recursive: true });
+    await this.recreateSandboxRoot(root);
 
     const docs = await this.prisma.document.findMany({
       where: { workspaceId },
@@ -119,7 +120,7 @@ export class TerminalSandboxService implements OnModuleInit {
         } else {
           const target = safeJoin(root, doc.path);
           await fs.mkdir(path.dirname(target), { recursive: true });
-          await fs.writeFile(target, doc.content ?? '', 'utf8');
+          await this.writeFileNoFollow(target, doc.content ?? '');
         }
       } catch (err) {
         // Skip any single unsafe/oddly-named document rather than failing the
@@ -133,6 +134,72 @@ export class TerminalSandboxService implements OnModuleInit {
 
     this.logger.info({ workspaceId, userId, root, count: docs.length }, 'Sandbox materialized');
     return root;
+  }
+
+  /**
+   * Removes the previous disposable projection before recreating it. The base
+   * and workspace directories must be real directories: accepting a symlink
+   * at either level would let mkdir materialize a workspace outside the temp
+   * sandbox tree. fs.rm removes a root symlink itself rather than traversing it.
+   */
+  private async recreateSandboxRoot(root: string): Promise<void> {
+    const base = path.resolve(this.sandboxBaseDir());
+    const workspaceRoot = path.dirname(root);
+
+    await this.ensureRealDirectory(base);
+    await this.ensureRealDirectory(workspaceRoot);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.mkdir(root, { mode: 0o700 });
+
+    const [realWorkspaceRoot, realRoot] = await Promise.all([
+      fs.realpath(workspaceRoot),
+      fs.realpath(root),
+    ]);
+    if (path.dirname(realRoot) !== realWorkspaceRoot) {
+      await fs.rm(root, { recursive: true, force: true });
+      throw new Error('Invalid sandbox root: escapes the workspace sandbox directory');
+    }
+  }
+
+  private async ensureRealDirectory(dir: string): Promise<void> {
+    try {
+      const stat = await fs.lstat(dir);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error(`Invalid sandbox directory: ${dir}`);
+      }
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+
+    try {
+      await fs.mkdir(dir, { mode: 0o700 });
+    } catch (err) {
+      // Another materialization may have created the shared base/workspace dir.
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+
+    const stat = await fs.lstat(dir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`Invalid sandbox directory: ${dir}`);
+    }
+  }
+
+  /** Opens the destination atomically without following a final symlink. */
+  private async writeFileNoFollow(target: string, content: string): Promise<void> {
+    const handle = await fs.open(
+      target,
+      fsConstants.O_WRONLY |
+        fsConstants.O_CREAT |
+        fsConstants.O_TRUNC |
+        fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      await handle.writeFile(content, 'utf8');
+    } finally {
+      await handle.close();
+    }
   }
 
   /** Registers an active sandbox so document edits can be synced into it. */
@@ -239,7 +306,7 @@ export class TerminalSandboxService implements OnModuleInit {
       try {
         const target = safeJoin(sandbox.root, relPath);
         await fs.mkdir(path.dirname(target), { recursive: true });
-        await fs.writeFile(target, content, 'utf8');
+        await this.writeFileNoFollow(target, content);
         sandbox.socket.emit('terminal:sync', { status: 'synced' });
       } catch (err) {
         this.logger.warn({ workspaceId, relPath, err }, 'Sandbox file write sync failed');
@@ -279,10 +346,7 @@ export class TerminalSandboxService implements OnModuleInit {
         const from = safeJoin(sandbox.root, oldPath);
         const to = safeJoin(sandbox.root, newPath);
         await fs.mkdir(path.dirname(to), { recursive: true });
-        // Tolerate a missing source: the destination is what matters.
-        await fs.rename(from, to).catch(async () => {
-          await fs.mkdir(path.dirname(to), { recursive: true });
-        });
+        await fs.rename(from, to);
         sandbox.socket.emit('terminal:sync', { status: 'synced' });
       } catch (err) {
         this.logger.warn({ workspaceId, oldPath, newPath, err }, 'Sandbox rename sync failed');

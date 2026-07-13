@@ -87,6 +87,43 @@ describe('TerminalSandboxService', () => {
     expect(fs.existsSync(path.join(service.sandboxBaseDir(), wsId, 'escape.txt'))).toBe(false);
   });
 
+  it('rebuilds the sandbox from the database and removes stale runtime files', async () => {
+    setDocs([{ type: DocumentType.FILE, path: 'main.py', content: 'old database content' }]);
+    await service.materialize(wsId, userId);
+    const outside = path.join(path.dirname(root), `${userId}-outside`);
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'sentinel.txt'), 'untouched');
+    fs.writeFileSync(path.join(root, 'terminal-created.txt'), 'stale');
+    fs.mkdirSync(path.join(root, 'generated'));
+    fs.writeFileSync(path.join(root, 'generated/cache.bin'), 'stale');
+    fs.symlinkSync(outside, path.join(root, 'outside-link'), 'dir');
+
+    setDocs([{ type: DocumentType.FILE, path: 'main.py', content: 'current database content' }]);
+    await service.materialize(wsId, userId);
+
+    expect(fs.readFileSync(path.join(root, 'main.py'), 'utf8')).toBe('current database content');
+    expect(fs.existsSync(path.join(root, 'terminal-created.txt'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'generated'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'outside-link'))).toBe(false);
+    expect(fs.readFileSync(path.join(outside, 'sentinel.txt'), 'utf8')).toBe('untouched');
+  });
+
+  it('replaces a symlinked sandbox root without touching its target', async () => {
+    const outside = path.join(path.dirname(root), `${userId}-outside`);
+    fs.mkdirSync(path.dirname(root), { recursive: true });
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'sentinel.txt'), 'untouched');
+    fs.symlinkSync(outside, root, 'dir');
+    setDocs([{ type: DocumentType.FILE, path: 'main.py', content: 'inside' }]);
+
+    await service.materialize(wsId, userId);
+
+    expect(fs.lstatSync(root).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(path.join(root, 'main.py'), 'utf8')).toBe('inside');
+    expect(fs.readFileSync(path.join(outside, 'sentinel.txt'), 'utf8')).toBe('untouched');
+    expect(fs.existsSync(path.join(outside, 'main.py'))).toBe(false);
+  });
+
   it('rejects invalid workspace/user ids for the sandbox path', () => {
     expect(() => service.getSandboxDir('../evil', userId)).toThrow();
     expect(() => service.getSandboxDir(wsId, '../../etc')).toThrow();
@@ -134,6 +171,69 @@ describe('TerminalSandboxService', () => {
       expect(
         emitted.some(
           ([e, d]) => e === 'terminal:output' && String((d as { data: string }).data).includes('Could not sync'),
+        ),
+      ).toBe(true);
+    });
+
+    it('rejects writes through a final-component symlink', async () => {
+      const outside = path.join(path.dirname(root), `${userId}-outside.txt`);
+      fs.writeFileSync(outside, 'original');
+      fs.symlinkSync(outside, path.join(root, 'linked.txt'));
+
+      await service.syncWriteFile(wsId, 'linked.txt', 'overwritten');
+
+      expect(fs.readFileSync(outside, 'utf8')).toBe('original');
+      expect(fs.lstatSync(path.join(root, 'linked.txt')).isSymbolicLink()).toBe(true);
+      expect(emitted).toContainEqual(['terminal:sync', { status: 'failed' }]);
+      expect(emitted).not.toContainEqual(['terminal:sync', { status: 'synced' }]);
+    });
+
+    it('rejects renaming either a source or destination final-component symlink', async () => {
+      const outside = path.join(path.dirname(root), `${userId}-outside.txt`);
+      fs.writeFileSync(outside, 'outside');
+      fs.symlinkSync(outside, path.join(root, 'linked-source.txt'));
+
+      await service.syncRename(wsId, 'linked-source.txt', 'moved.txt');
+
+      expect(fs.lstatSync(path.join(root, 'linked-source.txt')).isSymbolicLink()).toBe(true);
+      expect(fs.existsSync(path.join(root, 'moved.txt'))).toBe(false);
+
+      emitted.length = 0;
+      fs.writeFileSync(path.join(root, 'source.txt'), 'inside');
+      fs.symlinkSync(outside, path.join(root, 'linked-destination.txt'));
+      await service.syncRename(wsId, 'source.txt', 'linked-destination.txt');
+
+      expect(fs.readFileSync(path.join(root, 'source.txt'), 'utf8')).toBe('inside');
+      expect(fs.lstatSync(path.join(root, 'linked-destination.txt')).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(outside, 'utf8')).toBe('outside');
+      expect(emitted).toContainEqual(['terminal:sync', { status: 'failed' }]);
+      expect(emitted).not.toContainEqual(['terminal:sync', { status: 'synced' }]);
+    });
+
+    it('rejects deleting a final-component symlink', async () => {
+      const outside = path.join(path.dirname(root), `${userId}-outside.txt`);
+      fs.writeFileSync(outside, 'outside');
+      fs.symlinkSync(outside, path.join(root, 'linked.txt'));
+
+      await service.syncDelete(wsId, 'linked.txt');
+
+      expect(fs.lstatSync(path.join(root, 'linked.txt')).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(outside, 'utf8')).toBe('outside');
+      expect(emitted).toContainEqual(['terminal:sync', { status: 'failed' }]);
+      expect(emitted).not.toContainEqual(['terminal:sync', { status: 'synced' }]);
+    });
+
+    it('reports a missing rename source as failed instead of synced', async () => {
+      await service.syncRename(wsId, 'missing.txt', 'destination.txt');
+
+      expect(fs.existsSync(path.join(root, 'destination.txt'))).toBe(false);
+      expect(emitted).toContainEqual(['terminal:sync', { status: 'failed' }]);
+      expect(emitted).not.toContainEqual(['terminal:sync', { status: 'synced' }]);
+      expect(
+        emitted.some(
+          ([event, data]) =>
+            event === 'terminal:output' &&
+            String((data as { data: string }).data).includes('Could not sync'),
         ),
       ).toBe(true);
     });

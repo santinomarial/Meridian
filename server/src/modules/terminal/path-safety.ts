@@ -58,6 +58,18 @@ export function safeJoin(root: string, relPath: string): string {
     throw new Error('Invalid path: escapes the sandbox root');
   }
 
+  // A final-component symlink is different from a symlinked ancestor: calls
+  // such as writeFile follow it and can therefore modify a file outside the
+  // sandbox. Reject both valid and dangling links. Mutation callers still use
+  // syscall-level protections where available to close the lstat/open race.
+  try {
+    if (fs.lstatSync(resolved).isSymbolicLink()) {
+      throw new Error('Invalid path: final component is a symlink');
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+
   // Reject if the nearest existing ancestor is a symlink pointing outside the
   // sandbox (prevents writing through a symlink the user created at runtime).
   let realRoot: string;
