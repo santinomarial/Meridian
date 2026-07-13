@@ -16,15 +16,10 @@ function buildMinimalZip(filename: string, content: string): Buffer {
   const nameBytes = Buffer.from(filename, "utf8");
   const dataBytes = Buffer.from(content, "utf8");
   const crc = crc32(dataBytes);
-  const now = new Date();
-  const dosDate =
-    (((now.getFullYear() - 1980) & 0x7f) << 9) |
-    (((now.getMonth() + 1) & 0x0f) << 5) |
-    (now.getDate() & 0x1f);
-  const dosTime =
-    ((now.getHours() & 0x1f) << 11) |
-    ((now.getMinutes() & 0x3f) << 5) |
-    ((now.getSeconds() >> 1) & 0x1f);
+  // ZIP timestamps are deliberately fixed so running the suite never rewrites
+  // the tracked fixture with time-only binary changes.
+  const dosDate = (1 << 5) | 1; // 1980-01-01
+  const dosTime = 0;
 
   // Local file header
   const lh = Buffer.alloc(30 + nameBytes.length);

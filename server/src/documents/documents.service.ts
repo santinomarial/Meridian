@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { Document, DocumentVersion, Prisma } from '@prisma/client';
 import { DocumentType } from '@prisma/client';
 import JSZip from 'jszip';
@@ -85,12 +90,42 @@ export interface PatchDocumentData extends UpdateDocumentData {
 
 export type DocumentNode = Document & { children: DocumentNode[] };
 
+interface PathChange {
+  document: Document;
+  path: string;
+}
+
 @Injectable()
 export class DocumentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createDocument(data: CreateDocumentData): Promise<Document> {
-    return this.prisma.document.create({ data });
+    const name = this.validateDocumentName(data.name);
+    const suppliedPath = this.validateDocumentPath(data.path);
+    let parent: Document | null = null;
+
+    if (data.parentId !== undefined) {
+      parent = await this.prisma.document.findUnique({
+        where: { id: data.parentId },
+      });
+      this.assertValidParent(parent, data.workspaceId);
+    }
+
+    const path = this.buildChildPath(parent, name);
+    if (suppliedPath !== path) {
+      throw new BadRequestException(
+        `Document path must match its parent and name (expected "${path}")`,
+      );
+    }
+
+    return this.prisma.document.create({
+      data: {
+        ...data,
+        parentId: parent?.id ?? null,
+        name,
+        path,
+      },
+    });
   }
 
   /**
@@ -104,21 +139,44 @@ export class DocumentsService {
     workspaceId: string,
     documents: Omit<CreateDocumentData, 'workspaceId'>[],
   ): Promise<Document[]> {
+    const normalized = documents.map((input) => {
+      const path = this.validateDocumentPath(input.path);
+      const name = this.validateDocumentName(input.name);
+      if (path.split('/').at(-1) !== name) {
+        throw new BadRequestException(
+          `Document name must match the final path segment for "${path}"`,
+        );
+      }
+      return { ...input, path, name };
+    });
     const segmentCount = (path: string): number => path.split('/').length;
-    const sorted = [...documents].sort(
+    const sorted = [...normalized].sort(
       (a, b) => segmentCount(a.path) - segmentCount(b.path) || a.path.localeCompare(b.path),
     );
 
     return this.prisma.$transaction(
       async (tx: Prisma.TransactionClient) => {
-        const idByPath = new Map<string, string>();
+        const documentByPath = new Map<string, Document>();
         const results: Document[] = [];
 
         for (const input of sorted) {
           const slashIdx = input.path.lastIndexOf('/');
           const parentPath = slashIdx > 0 ? input.path.slice(0, slashIdx) : null;
-          const parentId =
-            parentPath !== null ? (idByPath.get(parentPath) ?? null) : null;
+          let parent: Document | null = null;
+          if (parentPath !== null) {
+            parent = documentByPath.get(parentPath) ?? null;
+            if (parent === null) {
+              parent = await tx.document.findUnique({
+                where: { workspaceId_path: { workspaceId, path: parentPath } },
+              });
+            }
+            if (parent === null) {
+              throw new BadRequestException(
+                `Parent folder "${parentPath}" must exist before "${input.path}"`,
+              );
+            }
+            this.assertValidParent(parent, workspaceId);
+          }
 
           const existing = await tx.document.findUnique({
             where: { workspaceId_path: { workspaceId, path: input.path } },
@@ -126,21 +184,29 @@ export class DocumentsService {
 
           let doc: Document;
           if (existing !== null) {
-            doc =
-              input.type === DocumentType.FILE
-                ? await tx.document.update({
-                    where: { id: existing.id },
-                    data: {
+            if (existing.type !== input.type) {
+              throw new ConflictException(
+                `Cannot import ${input.type.toLowerCase()} "${input.path}" over an existing ${existing.type.toLowerCase()}`,
+              );
+            }
+            doc = await tx.document.update({
+              where: { id: existing.id },
+              data: {
+                parentId: parent?.id ?? null,
+                name: input.name,
+                ...(input.type === DocumentType.FILE
+                  ? {
                       content: input.content ?? existing.content,
                       language: input.language ?? existing.language,
-                    },
-                  })
-                : existing;
+                    }
+                  : {}),
+              },
+            });
           } else {
             doc = await tx.document.create({
               data: {
                 workspaceId,
-                parentId,
+                parentId: parent?.id ?? null,
                 type: input.type,
                 path: input.path,
                 name: input.name,
@@ -150,7 +216,7 @@ export class DocumentsService {
             });
           }
 
-          idByPath.set(input.path, doc.id);
+          documentByPath.set(input.path, doc);
           results.push(doc);
         }
 
@@ -264,10 +330,7 @@ export class DocumentsService {
     documentId: string,
     data: UpdateDocumentData,
   ): Promise<Document> {
-    return this.prisma.document.update({
-      where: { id: documentId },
-      data,
-    });
+    return this.patchDocument(documentId, data);
   }
 
   /**
@@ -289,16 +352,110 @@ export class DocumentsService {
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const current = await tx.document.findUnique({
         where: { id: documentId },
-        select: { content: true, workspaceId: true },
       });
       if (current === null) {
         throw new NotFoundException(`Document ${documentId} not found`);
       }
 
+      const hierarchyChanged =
+        data.name !== undefined ||
+        data.path !== undefined ||
+        data.parentId !== undefined;
+      let updateData: PatchDocumentData = { ...data };
+      let descendantChanges: PathChange[] = [];
+
+      if (hierarchyChanged) {
+        const allDocuments = await tx.document.findMany({
+          where: { workspaceId: current.workspaceId },
+        });
+        const byId = new Map(allDocuments.map((document) => [document.id, document]));
+        byId.set(current.id, current);
+
+        const nextParentId =
+          data.parentId !== undefined ? data.parentId : current.parentId;
+        let nextParent: Document | null = null;
+        if (nextParentId !== null) {
+          if (nextParentId === current.id) {
+            throw new BadRequestException('A document cannot be its own parent');
+          }
+          nextParent = byId.get(nextParentId) ?? null;
+          this.assertValidParent(nextParent, current.workspaceId);
+          this.assertParentIsNotDescendant(current.id, nextParent, byId);
+        }
+
+        const suppliedPath =
+          data.path !== undefined ? this.validateDocumentPath(data.path) : undefined;
+        const name = this.validateDocumentName(
+          data.name ?? suppliedPath?.split('/').at(-1) ?? current.name,
+        );
+        const path = this.buildChildPath(nextParent, name);
+
+        // The web client historically sends a leaf path on rename. Accept that
+        // representation, but never accept a conflicting directory prefix.
+        if (
+          suppliedPath !== undefined &&
+          suppliedPath !== name &&
+          suppliedPath !== path
+        ) {
+          throw new BadRequestException(
+            `Document path must match its parent and name (expected "${path}")`,
+          );
+        }
+
+        updateData = {
+          ...data,
+          parentId: nextParent?.id ?? null,
+          name,
+          path,
+        };
+
+        if (current.type === DocumentType.FOLDER && path !== current.path) {
+          descendantChanges = this.buildDescendantPathChanges(
+            current,
+            path,
+            allDocuments,
+          );
+        }
+
+        const changes: PathChange[] = [
+          { document: current, path },
+          ...descendantChanges,
+        ];
+        this.assertNoPathCollisions(changes, allDocuments);
+
+        // A final path can overlap another moved node's old path. Move every
+        // changed node to a transaction-local temporary path first so the
+        // workspace/path unique constraint never observes an intermediate
+        // collision.
+        const changedPaths = changes.filter(
+          (change) => change.document.path !== change.path,
+        );
+        if (changedPaths.length > 1) {
+          const occupied = new Set(allDocuments.map((document) => document.path));
+          for (const [index, change] of changedPaths.entries()) {
+            let temporaryPath = `.__meridian_move__/${documentId}/${index}`;
+            while (occupied.has(temporaryPath)) temporaryPath += '_';
+            occupied.add(temporaryPath);
+            await tx.document.update({
+              where: { id: change.document.id },
+              data: { path: temporaryPath },
+            });
+          }
+        }
+      }
+
       const updated = await tx.document.update({
         where: { id: documentId },
-        data,
+        data: updateData,
       });
+
+      for (const change of descendantChanges) {
+        if (change.document.path === change.path) continue;
+        await tx.document.update({
+          where: { id: change.document.id },
+          data: { path: change.path },
+        });
+      }
 
       const contentChanged =
         data.content !== undefined &&
@@ -316,6 +473,131 @@ export class DocumentsService {
 
       return updated;
     });
+  }
+
+  private validateDocumentName(name: string): string {
+    if (name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+      throw new BadRequestException('Document name must be a single safe path segment');
+    }
+    let normalized: string;
+    try {
+      normalized = assertSafeRelPath(name);
+    } catch {
+      throw new BadRequestException('Document name must be a single safe path segment');
+    }
+    if (normalized !== name) {
+      throw new BadRequestException('Document name must be a single safe path segment');
+    }
+    return name;
+  }
+
+  private validateDocumentPath(path: string): string {
+    if (path.split(/[\\/]/).some((segment) => segment === '.' || segment === '..')) {
+      throw new BadRequestException('Document path contains an unsafe segment');
+    }
+    try {
+      return assertSafeRelPath(path);
+    } catch {
+      throw new BadRequestException('Document path is invalid');
+    }
+  }
+
+  private assertValidParent(
+    parent: Document | null,
+    workspaceId: string,
+  ): asserts parent is Document {
+    if (parent === null || parent.workspaceId !== workspaceId) {
+      throw new BadRequestException(
+        'Parent document must exist in the same workspace',
+      );
+    }
+    if (parent.type !== DocumentType.FOLDER) {
+      throw new BadRequestException('Parent document must be a folder');
+    }
+  }
+
+  private buildChildPath(parent: Document | null, name: string): string {
+    if (parent === null) return name;
+    const parentPath = this.validateDocumentPath(parent.path);
+    if (parentPath !== parent.path) {
+      throw new BadRequestException('Parent document has an invalid path');
+    }
+    return `${parentPath}/${name}`;
+  }
+
+  private assertParentIsNotDescendant(
+    documentId: string,
+    parent: Document,
+    byId: Map<string, Document>,
+  ): void {
+    const visited = new Set<string>();
+    let cursor: Document | undefined = parent;
+    while (cursor !== undefined) {
+      if (cursor.id === documentId) {
+        throw new BadRequestException('A folder cannot be moved into its descendant');
+      }
+      if (visited.has(cursor.id)) {
+        throw new BadRequestException('Document hierarchy contains a cycle');
+      }
+      visited.add(cursor.id);
+      cursor = cursor.parentId === null ? undefined : byId.get(cursor.parentId);
+    }
+  }
+
+  private buildDescendantPathChanges(
+    root: Document,
+    rootPath: string,
+    documents: Document[],
+  ): PathChange[] {
+    const childrenByParent = new Map<string, Document[]>();
+    for (const document of documents) {
+      if (document.parentId === null) continue;
+      const children = childrenByParent.get(document.parentId) ?? [];
+      children.push(document);
+      childrenByParent.set(document.parentId, children);
+    }
+
+    const changes: PathChange[] = [];
+    const visited = new Set<string>([root.id]);
+    const queue = (childrenByParent.get(root.id) ?? []).map((document) => ({
+      document,
+      parentPath: rootPath,
+    }));
+    while (queue.length > 0) {
+      const next = queue.shift()!;
+      if (visited.has(next.document.id)) {
+        throw new BadRequestException('Document hierarchy contains a cycle');
+      }
+      visited.add(next.document.id);
+      const name = this.validateDocumentName(next.document.name);
+      const path = `${next.parentPath}/${name}`;
+      changes.push({ document: next.document, path });
+      for (const child of childrenByParent.get(next.document.id) ?? []) {
+        queue.push({ document: child, parentPath: path });
+      }
+    }
+    return changes;
+  }
+
+  private assertNoPathCollisions(
+    changes: PathChange[],
+    documents: Document[],
+  ): void {
+    const movedIds = new Set(changes.map((change) => change.document.id));
+    const occupied = new Set(
+      documents
+        .filter((document) => !movedIds.has(document.id))
+        .map((document) => document.path),
+    );
+    const proposed = new Set<string>();
+    for (const change of changes) {
+      if (occupied.has(change.path) || proposed.has(change.path)) {
+        throw new ConflictException(
+          `A document already exists at path "${change.path}"`,
+        );
+      }
+      proposed.add(change.path);
+    }
   }
 
   async deleteDocument(documentId: string): Promise<void> {
