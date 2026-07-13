@@ -288,3 +288,343 @@ still returns the shareable link; the delivery failure is logged.
 The cookie policy is suitable for a same-site frontend/API deployment. A
 cross-site deployment requires a deliberate cookie and CSRF design change.
 There is no separate CSRF token mechanism in this code.
+
+## 6. Authorization and resource semantics
+
+Workspace access uses <code>OWNER</code>, <code>EDITOR</code>, and
+<code>VIEWER</code>. <code>Workspace.ownerId</code> and its owner membership
+are the canonical ownership records. Generic member APIs cannot assign
+<code>OWNER</code> or change/remove the canonical owner.
+
+| Operation | OWNER | EDITOR | VIEWER |
+|---|:---:|:---:|:---:|
+| Read workspace, tree, documents, versions, and ZIP export | Yes | Yes | Yes |
+| Join document/workspace realtime rooms and chat | Yes | Yes | Yes |
+| Send awareness | Yes | Yes | Yes |
+| Create, update, delete, import, save, or restore documents | Yes | Yes | No |
+| Send Yjs document mutations | Yes | Yes | No |
+| Start or use terminal when enabled | Yes | Yes | No |
+| Rename/delete workspace or manage membership/invites | Yes | No | No |
+
+REST helpers generally return 404 to a non-member so private workspace and
+document IDs are not enumerable; a member with insufficient role receives 403.
+Socket handlers return error events and revoke room access when reauthorization
+fails.
+
+Invite creation and token listing are owner-only. An invite token is a random
+24-byte base64url bearer credential stored in plaintext with a seven-day
+expiry. <code>Invite.email</code> is delivery metadata, not an acceptance
+restriction. Any authenticated holder can accept the token, and the token is
+reusable until expiry. The first acceptance stamps <code>acceptedAt</code>;
+later acceptances can add other users, while an existing member receives an
+idempotent success response.
+
+The authenticated <code>GET /users/:userId</code> endpoint is not
+workspace-scoped and returns the target user's email and profile fields to any
+authenticated caller who knows the ID.
+
+Account deletion removes the user's owned workspaces and then the user in one
+database transaction because the owner foreign key is restrictive. Workspace
+and document descendants are otherwise removed through cascade relations.
+Realtime invalidations are published after relevant session, member,
+workspace, or account mutations.
+
+## 7. Data model
+
+~~~mermaid
+erDiagram
+    USER ||--o{ WORKSPACE : owns
+    USER ||--o{ WORKSPACE_MEMBER : has
+    USER ||--o{ SESSION : has
+    USER ||--o{ PASSWORD_RESET_TOKEN : has
+    USER ||--o{ INVITE : sends
+    USER o|--o{ DOCUMENT_VERSION : authors
+    WORKSPACE ||--o{ WORKSPACE_MEMBER : contains
+    WORKSPACE ||--o{ INVITE : has
+    WORKSPACE ||--o{ DOCUMENT : contains
+    WORKSPACE ||--o{ DOCUMENT_VERSION : indexes
+    DOCUMENT o|--o{ DOCUMENT : contains
+    DOCUMENT ||--o{ DOCUMENT_VERSION : has
+    DOCUMENT ||--o{ DOCUMENT_UPDATE : has
+    DOCUMENT ||--o{ SNAPSHOT : has
+
+    USER {
+        string id PK
+        string email UK
+        string passwordHash
+        string displayName
+        string avatarUrl
+        datetime createdAt
+        datetime updatedAt
+    }
+    WORKSPACE {
+        string id PK
+        string name
+        string ownerId FK
+        datetime createdAt
+        datetime updatedAt
+    }
+    WORKSPACE_MEMBER {
+        string id PK
+        string workspaceId FK
+        string userId FK
+        WorkspaceRole role
+        datetime createdAt
+    }
+    INVITE {
+        string id PK
+        string token UK
+        string workspaceId FK
+        string invitedById FK
+        string email
+        WorkspaceRole role
+        datetime expiresAt
+        datetime acceptedAt
+        datetime createdAt
+    }
+    DOCUMENT {
+        string id PK
+        string workspaceId FK
+        string parentId FK
+        DocumentType type
+        string path
+        string name
+        string language
+        string content
+        datetime createdAt
+        datetime updatedAt
+    }
+    DOCUMENT_VERSION {
+        string id PK
+        string documentId FK
+        string workspaceId FK
+        string createdById FK
+        int versionNumber
+        string content
+        string message
+        datetime createdAt
+    }
+    DOCUMENT_UPDATE {
+        string id PK
+        string documentId FK
+        bytes update
+        int seq
+        datetime createdAt
+    }
+    SNAPSHOT {
+        string id PK
+        string documentId FK
+        bytes state
+        int seq
+        datetime createdAt
+    }
+    SESSION {
+        string id PK
+        string userId FK
+        string jti UK
+        datetime expiresAt
+        datetime revokedAt
+        datetime createdAt
+    }
+    PASSWORD_RESET_TOKEN {
+        string id PK
+        string userId FK
+        string tokenHash UK
+        datetime expiresAt
+        datetime usedAt
+        datetime createdAt
+        datetime updatedAt
+    }
+~~~
+
+Nullable columns are shown without Mermaid-specific optional syntax:
+<code>User.passwordHash</code>, <code>User.avatarUrl</code>,
+<code>Invite.email</code>, <code>Invite.acceptedAt</code>,
+<code>Document.parentId</code>, <code>Document.language</code>,
+<code>Document.content</code>, <code>DocumentVersion.createdById</code>,
+<code>DocumentVersion.message</code>, <code>Session.revokedAt</code>, and
+<code>PasswordResetToken.usedAt</code>.
+
+Important constraints and delete behavior:
+
+- Membership is unique by <code>(workspaceId, userId)</code>.
+- Document path is unique by <code>(workspaceId, path)</code>.
+- Version number is unique by <code>(documentId, versionNumber)</code>.
+- Update sequence is unique by <code>(documentId, seq)</code>.
+- Session <code>jti</code>, invite token, reset-token hash, and user email are
+  individually unique.
+- Documents are a recursive tree. Root documents have no parent; deleting a
+  parent cascades to descendants.
+- Deleting a workspace cascades to its members, invites, documents, and
+  workspace-indexed versions.
+- Deleting a document cascades to versions, CRDT updates, and snapshots.
+- Deleting a version author sets <code>createdById</code> to null.
+- Deleting a user cascades memberships, sessions, reset tokens, and sent
+  invites, but owned workspaces must be deleted first by the account service.
+
+## 8. Document model and REST behavior
+
+### 8.1 Two document representations
+
+Meridian does not have one continuously synchronized document authority. It
+maintains parallel representations:
+
+| Representation | Used by |
+|---|---|
+| <code>Document.content</code> | REST tree/content reads, manual saves, version creation, ZIP export, and terminal materialization |
+| In-memory <code>Y.Doc</code> plus <code>Snapshot</code>/<code>DocumentUpdate</code> | Live collaborative text and collaborative cold-load recovery |
+| <code>DocumentVersion.content</code> | User-visible save history, detail, diff input, and restore source |
+
+The normal browser flow often aligns the first two: edits enter the Yjs
+document, then an explicit save PATCH writes the visible Monaco text to
+<code>Document.content</code> and creates a version when content changed.
+However, server-side Yjs persistence does not update
+<code>Document.content</code>. Unsaved collaborative edits therefore do not
+appear in REST export or a newly materialized terminal.
+
+The reverse direction is also not general. Arbitrary REST content PATCHes and
+bulk import updates do not reset or update existing Yjs history. Bulk import
+can overwrite an existing file's <code>Document.content</code> without making a
+version and without reconciling a loaded or persisted CRDT. If any CRDT history
+already exists, a later collaborative cold load uses that history rather than
+the newer plain-text column.
+
+Version restore is the only specialized reconciliation path, and it is a
+multi-step, local-instance operation described in section 10.
+
+### 8.2 File tree invariants and limits
+
+The server validates names, normalized relative paths, parent workspace, parent
+folder type, cycles, descendant moves, and path collisions. Moving or renaming
+a folder updates descendant paths in a transaction.
+
+| Limit | Value and enforcement |
+|---|---|
+| Saved content per file | 1 MiB of UTF-8 bytes on create, update, and bulk import |
+| Bulk import | At most 1,000 files, 2,000 total documents, and 25 MiB of decoded text |
+| Bulk transaction | 60-second Prisma transaction timeout |
+| Document path | 4,096 UTF-8 bytes, 255 bytes per segment, 64 segments |
+| Client ZIP input | 100 MiB compressed; 25 MiB decoded text; same file/document/path limits before JSON upload |
+| Bulk JSON request | 26 MiB Express wire limit |
+| Single document JSON request | 7 MiB Express wire limit |
+| Other JSON and URL-encoded requests | 100 KiB Express wire limit |
+
+The client accepts supported text files and skips common dependency, VCS,
+build, cache, and virtual-environment directories during import. These client
+filters are not security controls; server semantic limits are independent.
+
+Workspace export builds a ZIP in server memory from
+<code>Document.content</code>. It skips unsafe paths and the reserved
+<code>.meridian-build</code> and <code>.terminal-sandboxes</code> prefixes.
+There is no server-side export size cap or streaming ZIP construction.
+
+A meaningful content PATCH creates the next plain-text version in the same
+transaction as the content change. Version numbers are selected as
+<code>max + 1</code>; the unique constraint detects concurrent duplication,
+but the service has no conflict retry.
+
+## 9. Realtime protocol
+
+### 9.1 Rooms, authentication, and authorization
+
+The default Socket.IO namespace and path are used. Rooms are named
+<code>document:&lt;documentId&gt;</code> and
+<code>workspace:&lt;workspaceId&gt;</code>.
+
+After handshake authentication, every editor-gateway event checks the socket's
+session and relevant membership. Active-event checks may use a one-second
+authorization cache. Local and Redis invalidations evict cached access and can
+disconnect sockets or remove room access. A ten-second sweep rechecks passive
+connections so a socket that sends nothing does not retain room delivery
+indefinitely.
+
+The editor gateway applies a per-socket fixed one-second rate limit, default 50
+events per second, to document join, workspace join, chat, Yjs sync/update, and
+awareness handlers. It does not cover terminal gateway events.
+
+### 9.2 Initial document synchronization
+
+~~~mermaid
+sequenceDiagram
+    participant Client as Browser client
+    participant Gateway as EditorGateway
+    participant Manager as DocumentManager
+    participant Pg as PostgreSQL
+
+    Note over Client: Monaco initially contains REST-loaded saved text
+    Client->>Gateway: joinDocument(documentId)
+    Gateway->>Gateway: validate session and membership
+    Gateway->>Manager: acquire(documentId)
+    alt document is not loaded
+        Manager->>Pg: latest Snapshot and later DocumentUpdate rows
+        Pg-->>Manager: persisted CRDT state
+        Manager->>Manager: replay or seed from Document.content
+    end
+    Manager-->>Gateway: process-local Y.Doc
+    Gateway-->>Client: yjs:sync server SyncStep1
+    Gateway-->>Client: existing awareness, if any
+    Gateway-->>Client: joinedDocument
+    Client->>Gateway: automatic SyncStep2 response
+    Note over Gateway: SyncStep2 is ignored and cannot mutate server state
+    Client->>Gateway: client SyncStep1
+    Gateway-->>Client: server SyncStep2 with missing state
+    Client->>Client: apply state, then bind Monaco to Y.Text
+~~~
+
+The server's <code>yjs:sync</code> handler is intentionally read-only. It
+accepts only client SyncStep1, silently ignores the protocol's automatic
+SyncStep2 response, and rejects other mutating sync messages. Document
+mutation must use <code>yjs:update</code>, where write roles, relay, and
+persistence are enforced.
+
+The first collaborative open loads the newest snapshot, then update rows with
+sequence greater than that snapshot. When neither exists, the manager seeds
+<code>Y.Text("content")</code> from <code>Document.content</code>. A
+deterministic Yjs client ID makes concurrent first seeds identical, and a
+sequence-zero insert uses <code>createMany(skipDuplicates)</code>. Empty
+content creates no seed row.
+
+Concurrent acquires in one process share the same loading promise and
+<code>Y.Doc</code>. A loaded document is reference-counted and destroyed 30
+seconds after its last socket leaves by default.
+
+### 9.3 Live update path
+
+~~~mermaid
+sequenceDiagram
+    participant Sender as Editing client
+    participant Gateway as EditorGateway
+    participant Doc as Process Y.Doc
+    participant Peer as Local peer
+    participant Persist as Persistence queue
+    participant Pg as PostgreSQL
+    participant Redis as Redis
+
+    Sender->>Gateway: yjs:update(documentId, bytes)
+    Gateway->>Gateway: rate, room, session, role, and 1 MiB checks
+    Gateway->>Doc: Y.applyUpdate
+    Gateway-->>Peer: yjs:update
+    Gateway->>Persist: enqueue update
+    Gateway->>Redis: publish cross-instance update
+    Persist->>Pg: allocate seq, then insert DocumentUpdate
+    Note over Sender,Gateway: No success acknowledgement or durable-write acknowledgement
+~~~
+
+The sender is excluded from the local relay because it already applied the
+update. Persistence is asynchronous and process-local: the gateway does not
+wait for PostgreSQL, and failures are logged and swallowed. An acknowledged
+Socket.IO send therefore does not mean the update is durable. Graceful shutdown
+waits for currently known write-chain tails, but a crash or failed write can
+lose changes after all live copies disappear.
+
+Yjs sync messages, Yjs updates, and awareness updates each have a configurable
+one MiB default cap. Chat is limited to 2,000 characters. Chat sender ID and
+name are built from the authenticated server-side user, but the sender adds its
+own optimistic local message because the server relays only to peers.
+
+Awareness is ephemeral and not written to PostgreSQL. The server verifies room
+membership and payload size, tracks awareness client IDs for disconnect
+cleanup, and relays the opaque Yjs awareness data. It does not bind the
+awareness payload's displayed <code>user</code> metadata to the authenticated
+identity, so presence display identity is client-asserted by an authenticated
+workspace member.

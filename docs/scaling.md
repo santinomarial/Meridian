@@ -4,7 +4,8 @@ This document defines the current multi-replica behavior of the Meridian API
 server. It covers the coordination paths that use PostgreSQL and Redis, the
 state that remains local to each process, and the failure modes an operator must
 account for. For component setup and configuration, see the
-[server guide](../server/README.md).
+[server guide](../server/README.md). For the logical component layout, see the
+[architecture overview](architecture.md).
 
 ## Current support boundary
 
@@ -150,9 +151,9 @@ write a second copy to PostgreSQL. A replica that does not have the document
 loaded can reconstruct later from PostgreSQL.
 
 Redis Pub/Sub has no replay or acknowledgement. If a loaded replica misses an
-update, its in-memory `Y.Doc` and connected clients can diverge until the socket
-rejoins and synchronizes or the process reloads durable state. Redis recovery
-alone does not repair a missed live update.
+update, its in-memory `Y.Doc` and connected clients can diverge until that
+process evicts the document and reloads durable state. Redis recovery alone
+does not repair a missed live update.
 
 ### Awareness and chat
 
@@ -260,7 +261,7 @@ fail closed.
 multi-replica deployment therefore needs an external Redis health gate and
 alerting; the built-in readiness endpoint alone is insufficient.
 
-A safe Redis recovery procedure is:
+A recommended containment and recovery sequence is:
 
 1. Stop admitting HTTP mutations and Socket.IO collaboration traffic.
 2. Gracefully drain or stop all API replicas so local write queues get a chance
@@ -269,17 +270,19 @@ A safe Redis recovery procedure is:
 4. Restart the entire API fleet and require Redis `ok` before admitting it.
 5. Reconnect clients so Socket.IO rooms and passive realtime state are rebuilt.
 
-Reconnect and Yjs sync do not provide a durable recovery protocol for an update
-the server accepted and then failed to persist. If persistence failed before
-the outage, restarting cannot recreate updates that existed only in process or
-client memory. Recover those through explicit client export, backups, or an
-application-specific repair procedure.
+This sequence limits further divergence but cannot guarantee recovery of writes
+that were already queued when Redis failed; those writes may already have used
+process-local sequence allocation. Reconnect and Yjs sync do not provide a
+durable recovery protocol for an update the server accepted and then failed to
+persist. If persistence failed before the outage, restarting cannot recreate
+updates that existed only in process or client memory. Recover those through
+explicit client export, backups, or an application-specific repair procedure.
 
 ## Other failure modes
 
 | Failure | Actual behavior | Operational consequence |
 |---|---|---|
-| PostgreSQL unavailable | `/ready` returns 503; HTTP data paths fail; protected socket events lose their database reauthorization path; asynchronous persistence errors are logged without retry | Remove the replica from traffic and stop writes until PostgreSQL is healthy; do not treat in-memory Yjs state as durable |
+| PostgreSQL unavailable | `/ready` returns 503; HTTP data paths fail; protected socket events fail reauthorization after their short caches expire; an event accepted from cache can still encounter an asynchronous persistence failure with no retry | Remove the replica from traffic and stop writes until PostgreSQL is healthy; do not treat in-memory Yjs state as durable |
 | Graceful replica termination | Nest shutdown hooks drain that process's write chains, close its PTYs, and close database and Redis clients | Allow enough termination grace; clients must reconnect and rejoin rooms on another replica |
 | Crash, `SIGKILL`, or host loss | No drain occurs; pending Yjs writes, awareness, chat, sockets, and PTYs on that process are lost | Durable rows can be reloaded, but accepted asynchronous updates may be unrecoverable |
 | Socket.IO affinity loss | Polling and upgrade requests can reach a process that does not own the Socket.IO session; local rooms, authorization caches, and PTYs do not follow the client | Expect connection errors or reconnects; fix affinity before relying on realtime behavior |
