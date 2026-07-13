@@ -21,7 +21,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from './types/auth-user.type';
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request.type';
 import { E2eResetTokenDto } from '../../e2e/e2e.dto';
-import { assertE2eTestMode, assertTestEmail } from '../../e2e/e2e-safety';
+import { assertTestEmail, E2eOnlyGuard } from '../../e2e/e2e-safety';
 
 const FORGOT_SUCCESS =
   'If an account exists for this email, a reset link has been sent.';
@@ -97,10 +97,10 @@ export class AuthController {
   @ApiExcludeEndpoint()
   @Post('e2e/password-reset-token')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(E2eOnlyGuard)
   async e2eGetResetToken(
     @Body() dto: E2eResetTokenDto,
   ): Promise<{ token: string; resetUrl: string }> {
-    assertE2eTestMode();
     const email = assertTestEmail(dto.email);
     return this.authService.generateResetTokenForE2E(email);
   }

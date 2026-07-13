@@ -22,6 +22,7 @@ import { MailService } from '../mail/mail.service';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 import { AUTH_COOKIE_NAME, authCookieOptions } from './auth-cookie';
+import { assertTestEmail } from '../../e2e/e2e-safety';
 
 @Injectable()
 export class AuthService {
@@ -220,22 +221,24 @@ export class AuthService {
   async generateResetTokenForE2E(
     email: string,
   ): Promise<{ token: string; resetUrl: string }> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const testEmail = assertTestEmail(email);
+    const user = await this.prisma.user.findUnique({ where: { email: testEmail } });
     if (user === null) {
       throw new BadRequestException('User not found');
     }
-
-    await this.prisma.passwordResetToken.updateMany({
-      where: { userId: user.id, usedAt: null },
-      data: { usedAt: new Date() },
-    });
 
     const rawToken = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
     const expiresAt = new Date(Date.now() + this.resetTokenTtlMs);
 
-    await this.prisma.passwordResetToken.create({
-      data: { userId: user.id, tokenHash, expiresAt },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      await tx.passwordResetToken.create({
+        data: { userId: user.id, tokenHash, expiresAt },
+      });
     });
 
     const resetUrl = `${this.clientOrigin}/reset-password/${rawToken}`;

@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MailModule } from '../mail/mail.module';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
+import { E2eOnlyGuard } from '../../e2e/e2e-safety';
 
 // @Global ensures JwtService and JwtAuthGuard are injectable in every module
 // without each feature module needing to import AuthModule explicitly.
@@ -33,8 +34,8 @@ import { APP_CONFIG_KEY } from '../../config/app.config';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard],
-  exports: [AuthService, JwtAuthGuard],
+  providers: [AuthService, JwtAuthGuard, E2eOnlyGuard],
+  exports: [AuthService, JwtAuthGuard, E2eOnlyGuard],
 })
 export class AuthModule {}
 

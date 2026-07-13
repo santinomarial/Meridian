@@ -4,6 +4,7 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -11,19 +12,19 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { CleanupE2eUsersDto } from './e2e.dto';
 import {
-  assertE2eTestMode,
   assertTestEmailPrefix,
+  E2eOnlyGuard,
 } from './e2e-safety';
 
 /**
  * Test-only endpoints used by the Playwright E2E suite to keep the database
  * from accumulating throwaway accounts across runs.
  *
- * Every handler returns 404 unless E2E_TEST=true, so these routes are
- * completely inert in development and production.
+ * Every handler returns 404 unless E2E_TEST=true in a non-production process.
  */
 @ApiExcludeController()
 @SkipThrottle({ auth: true })
+@UseGuards(E2eOnlyGuard)
 @Controller('e2e')
 export class E2eController {
   constructor(
@@ -37,7 +38,6 @@ export class E2eController {
   async cleanup(
     @Body() dto: CleanupE2eUsersDto,
   ): Promise<{ deletedUsers: number }> {
-    assertE2eTestMode();
     const prefix = assertTestEmailPrefix(dto.emailPrefix);
 
     const deletedUsers = await this.prisma.$transaction(async (tx) => {
