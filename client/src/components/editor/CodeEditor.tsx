@@ -6,6 +6,7 @@ import { EditorSkeleton } from "../ui/Skeleton";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useYjsMonaco } from "../../hooks/useYjsMonaco";
 import { registerEditor, unregisterEditor } from "../../lib/editorRegistry";
+import { isApplyingRemoteDocumentUpdate } from "../../lib/yjsDocs";
 import { mockCollaborators } from "../../data/mock";
 import type { LanguageMode, WorkspaceTheme } from "../../types";
 import {
@@ -81,6 +82,9 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   const openTabs = useWorkspaceStore((state) => state.openTabs);
   const editorContentByFileId = useWorkspaceStore((state) => state.editorContentByFileId);
   const updateFileContent = useWorkspaceStore((state) => state.updateFileContent);
+  const applyRemoteFileContent = useWorkspaceStore(
+    (state) => state.applyRemoteFileContent,
+  );
   const setCursorPosition = useWorkspaceStore((state) => state.setCursorPosition);
   const backendStatus = useWorkspaceStore((state) => state.backendStatus);
   const userRole = useWorkspaceStore((state) => state.userRole);
@@ -190,7 +194,12 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   const content = editorContentByFileId[activeFileId] ?? "";
 
   const handleChange = (value: string | undefined): void => {
-    updateFileContent(activeFileId, value ?? "");
+    const nextContent = value ?? "";
+    if (isApplyingRemoteDocumentUpdate(activeFileId)) {
+      applyRemoteFileContent(activeFileId, nextContent);
+    } else {
+      updateFileContent(activeFileId, nextContent);
+    }
     if (editorRef.current) {
       syncCursorPosition(editorRef.current);
     }

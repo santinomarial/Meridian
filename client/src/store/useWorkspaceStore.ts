@@ -34,6 +34,7 @@ type WorkspaceActions = {
   closeTab: (fileId: string) => void;
   setActiveFile: (fileId: string) => void;
   updateFileContent: (fileId: string, content: string) => void;
+  applyRemoteFileContent: (fileId: string, content: string) => void;
   toggleFolder: (folderId: string) => void;
   setSelectedActivityItem: (item: ActivityItem) => void;
   togglePanel: (panel: PanelKey) => void;
@@ -301,6 +302,15 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
         tab.fileId === fileId ? { ...tab, dirty: true } : tab,
       ),
       saveStatus: "unsaved",
+    }));
+  },
+
+  applyRemoteFileContent: (fileId, content) => {
+    set((state) => ({
+      editorContentByFileId: {
+        ...state.editorContentByFileId,
+        [fileId]: content,
+      },
     }));
   },
 

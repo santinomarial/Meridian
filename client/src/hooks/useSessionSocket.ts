@@ -5,7 +5,11 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { getSocket } from "../lib/socket";
-import { getOrCreateAwareness, getOrCreateDoc } from "../lib/yjsDocs";
+import {
+  getOrCreateAwareness,
+  getOrCreateDoc,
+  runWithRemoteDocumentUpdate,
+} from "../lib/yjsDocs";
 import { colorForUser } from "../lib/collabColors";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 
@@ -65,11 +69,13 @@ export function useSessionSocket(): void {
       const doc = getOrCreateDoc(documentId);
       const decoder = decoding.createDecoder(bytes);
       const responseEncoder = encoding.createEncoder();
-      const messageType = syncProtocol.readSyncMessage(
-        decoder,
-        responseEncoder,
-        doc,
-        "remote",
+      const messageType = runWithRemoteDocumentUpdate(documentId, () =>
+        syncProtocol.readSyncMessage(
+          decoder,
+          responseEncoder,
+          doc,
+          "remote",
+        ),
       );
 
       if (encoding.length(responseEncoder) > 0) {
@@ -96,7 +102,9 @@ export function useSessionSocket(): void {
     const onYjsUpdate = ({ documentId, update }: UpdatePayload): void => {
       const bytes = toUint8Array(update);
       if (bytes === null) return;
-      Y.applyUpdate(getOrCreateDoc(documentId), bytes, "remote");
+      runWithRemoteDocumentUpdate(documentId, () => {
+        Y.applyUpdate(getOrCreateDoc(documentId), bytes, "remote");
+      });
     };
 
     // A document was restored to an earlier version on the server. The restored
