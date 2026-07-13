@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeAuthorizationService } from '../modules/realtime-authorization/realtime-authorization.service';
 
 export interface CreateUserData {
   email: string;
@@ -16,7 +17,10 @@ export interface UpdateUserData {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtimeAuthorization: RealtimeAuthorizationService,
+  ) {}
 
   async createUser(data: CreateUserData): Promise<User> {
     return this.prisma.user.create({ data });
@@ -42,9 +46,19 @@ export class UsersService {
     // Workspace.ownerId intentionally uses RESTRICT semantics so an owner can
     // never disappear while their workspace survives. Account deletion owns
     // the broader lifecycle: remove owned workspaces and the user atomically.
-    await this.prisma.$transaction([
+    const [affectedMemberships] = await this.prisma.$transaction([
+      this.prisma.workspaceMember.findMany({
+        where: { workspace: { ownerId: id } },
+        select: { workspaceId: true, userId: true },
+      }),
       this.prisma.workspace.deleteMany({ where: { ownerId: id } }),
       this.prisma.user.delete({ where: { id } }),
+    ]);
+    await Promise.all([
+      this.realtimeAuthorization.invalidateUser(id),
+      ...affectedMemberships.map(({ workspaceId, userId }) =>
+        this.realtimeAuthorization.invalidateWorkspaceAccess(workspaceId, userId),
+      ),
     ]);
   }
 }

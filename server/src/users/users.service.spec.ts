@@ -1,6 +1,7 @@
 import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeAuthorizationService } from '../modules/realtime-authorization/realtime-authorization.service';
 import { UsersService, type CreateUserData } from './users.service';
 
 const BASE_USER: User = {
@@ -16,10 +17,13 @@ const BASE_USER: User = {
 describe('UsersService', () => {
   let service: UsersService;
   let prisma: DeepMockProxy<PrismaService>;
+  let realtimeAuthorization: DeepMockProxy<RealtimeAuthorizationService>;
 
   beforeEach(() => {
     prisma = mockDeep<PrismaService>();
-    service = new UsersService(prisma);
+    realtimeAuthorization = mockDeep<RealtimeAuthorizationService>();
+    realtimeAuthorization.invalidateUser.mockResolvedValue(undefined);
+    service = new UsersService(prisma, realtimeAuthorization);
   });
 
   describe('createUser', () => {
@@ -105,7 +109,14 @@ describe('UsersService', () => {
     it('atomically deletes owned workspaces before deleting the account', async () => {
       prisma.workspace.deleteMany.mockResolvedValue({ count: 2 });
       prisma.user.delete.mockResolvedValue(BASE_USER);
-      prisma.$transaction.mockResolvedValue([{ count: 2 }, BASE_USER]);
+      prisma.workspaceMember.findMany.mockResolvedValue([
+        { workspaceId: 'workspace-1', userId: 'collaborator-1' },
+      ] as never);
+      prisma.$transaction.mockResolvedValue([
+        [{ workspaceId: 'workspace-1', userId: 'collaborator-1' }],
+        { count: 2 },
+        BASE_USER,
+      ]);
 
       await service.deleteUser(BASE_USER.id);
 
@@ -118,7 +129,12 @@ describe('UsersService', () => {
       expect(prisma.$transaction).toHaveBeenCalledWith([
         expect.anything(),
         expect.anything(),
+        expect.anything(),
       ]);
+      expect(realtimeAuthorization.invalidateUser).toHaveBeenCalledWith(BASE_USER.id);
+      expect(
+        realtimeAuthorization.invalidateWorkspaceAccess,
+      ).toHaveBeenCalledWith('workspace-1', 'collaborator-1');
     });
   });
 });

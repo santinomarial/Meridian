@@ -58,7 +58,16 @@ export class WorkspacesService {
   }
 
   async deleteWorkspace(workspaceId: string): Promise<void> {
+    const members = await this.prisma.workspaceMember.findMany({
+      where: { workspaceId },
+      select: { userId: true },
+    });
     await this.prisma.workspace.delete({ where: { id: workspaceId } });
+    await Promise.all(
+      members.map(({ userId }) =>
+        this.realtimeAuthorization.invalidateWorkspaceAccess(workspaceId, userId),
+      ),
+    );
   }
 
   async listMembers(workspaceId: string): Promise<WorkspaceMember[]> {

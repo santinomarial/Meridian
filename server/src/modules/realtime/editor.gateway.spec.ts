@@ -441,8 +441,12 @@ describe('EditorGateway.handleJoinDocument', () => {
 // ---------------------------------------------------------------------------
 
 describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
-  it('rejects a yjs:update from a VIEWER and emits error', () => {
-    const { gateway } = makeGateway();
+  it('rejects a yjs:update from a current VIEWER and emits error', async () => {
+    const { gateway, workspaces } = makeGateway();
+    workspaces.getDocumentAccessInfo.mockResolvedValue({
+      workspaceId: 'ws-1',
+      role: WorkspaceRole.VIEWER,
+    });
     const socket = makeSocket({
       data: {
         user: AUTH_USER,
@@ -452,7 +456,10 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     });
     socket.to.mockReturnValue({ emit: jest.fn() } as never);
 
-    gateway.handleYjsUpdate({ documentId: 'doc-1', update: new Uint8Array(10) }, socket);
+    await gateway.handleYjsUpdate(
+      { documentId: 'doc-1', update: new Uint8Array(10) },
+      socket,
+    );
 
     expect(socket.emit).toHaveBeenCalledWith(
       'error',
@@ -460,7 +467,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     );
   });
 
-  it('allows a yjs:update from an EDITOR', () => {
+  it('allows a yjs:update from an EDITOR', async () => {
     const { gateway, documentManager } = makeGateway();
     const socket = makeSocket({
       data: {
@@ -474,13 +481,20 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     documentManager.hasDocument.mockReturnValue(true);
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
-    gateway.handleYjsUpdate({ documentId: 'doc-1', update: new Uint8Array(10) }, socket);
+    await gateway.handleYjsUpdate(
+      { documentId: 'doc-1', update: new Uint8Array(10) },
+      socket,
+    );
 
     expect(documentManager.applyUpdate).toHaveBeenCalled();
   });
 
-  it('allows a yjs:update from an OWNER', () => {
-    const { gateway, documentManager } = makeGateway();
+  it('allows a yjs:update from an OWNER', async () => {
+    const { gateway, documentManager, workspaces } = makeGateway();
+    workspaces.getDocumentAccessInfo.mockResolvedValue({
+      workspaceId: 'ws-1',
+      role: WorkspaceRole.OWNER,
+    });
     const socket = makeSocket({
       data: {
         user: AUTH_USER,
@@ -493,17 +507,20 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     documentManager.hasDocument.mockReturnValue(true);
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
-    gateway.handleYjsUpdate({ documentId: 'doc-1', update: new Uint8Array(10) }, socket);
+    await gateway.handleYjsUpdate(
+      { documentId: 'doc-1', update: new Uint8Array(10) },
+      socket,
+    );
 
     expect(documentManager.applyUpdate).toHaveBeenCalled();
   });
 
-  it('rejects an authenticated socket that never joined the target document', () => {
+  it('rejects an authenticated socket that never joined the target document', async () => {
     const { gateway, documentManager } = makeGateway();
     const socket = makeSocket({ data: { user: AUTH_USER } });
     documentManager.hasDocument.mockReturnValue(true);
 
-    gateway.handleYjsUpdate(
+    await gateway.handleYjsUpdate(
       { documentId: 'another-users-loaded-doc', update: new Uint8Array(10) },
       socket,
     );
@@ -515,7 +532,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     expect(documentManager.applyUpdate).not.toHaveBeenCalled();
   });
 
-  it('rejects a cached editor role when the socket is not in the document room', () => {
+  it('rejects a cached editor role when the socket is not in the document room', async () => {
     const { gateway, documentManager } = makeGateway();
     const socket = makeSocket({
       data: {
@@ -525,7 +542,10 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     });
     documentManager.hasDocument.mockReturnValue(true);
 
-    gateway.handleYjsUpdate({ documentId: 'doc-1', update: new Uint8Array(10) }, socket);
+    await gateway.handleYjsUpdate(
+      { documentId: 'doc-1', update: new Uint8Array(10) },
+      socket,
+    );
 
     expect(documentManager.applyUpdate).not.toHaveBeenCalled();
   });
@@ -548,14 +568,14 @@ describe('EditorGateway.handleYjsSync — authorization and mutation safety', ()
     return encoding.toUint8Array(encoder);
   }
 
-  it('rejects sync for a globally loaded document the socket did not join', () => {
+  it('rejects sync for a globally loaded document the socket did not join', async () => {
     const { gateway, documentManager } = makeGateway();
     const socket = makeSocket({ data: { user: AUTH_USER } });
     const clientDoc = new Doc();
     const serverDoc = new Doc();
     documentManager.getDoc.mockReturnValue(serverDoc);
 
-    gateway.handleYjsSync(
+    await gateway.handleYjsSync(
       { documentId: 'another-users-loaded-doc', message: syncStep1(clientDoc) },
       socket,
     );
@@ -569,8 +589,12 @@ describe('EditorGateway.handleYjsSync — authorization and mutation safety', ()
     serverDoc.destroy();
   });
 
-  it('answers a joined viewer SyncStep1 with server state', () => {
-    const { gateway, documentManager } = makeGateway();
+  it('answers a joined viewer SyncStep1 with server state', async () => {
+    const { gateway, documentManager, workspaces } = makeGateway();
+    workspaces.getDocumentAccessInfo.mockResolvedValue({
+      workspaceId: 'ws-1',
+      role: WorkspaceRole.VIEWER,
+    });
     const socket = makeSocket({
       data: {
         user: AUTH_USER,
@@ -583,7 +607,7 @@ describe('EditorGateway.handleYjsSync — authorization and mutation safety', ()
     serverDoc.getText('content').insert(0, 'server content');
     documentManager.getDoc.mockReturnValue(serverDoc);
 
-    gateway.handleYjsSync(
+    await gateway.handleYjsSync(
       { documentId: 'doc-1', message: syncStep1(clientDoc) },
       socket,
     );
@@ -600,7 +624,7 @@ describe('EditorGateway.handleYjsSync — authorization and mutation safety', ()
     serverDoc.destroy();
   });
 
-  it('never applies client SyncStep2 mutations, even for an editor', () => {
+  it('never applies client SyncStep2 mutations, even for an editor', async () => {
     const { gateway, documentManager } = makeGateway();
     const socket = makeSocket({
       data: {
@@ -614,7 +638,7 @@ describe('EditorGateway.handleYjsSync — authorization and mutation safety', ()
     const serverDoc = new Doc();
     documentManager.getDoc.mockReturnValue(serverDoc);
 
-    gateway.handleYjsSync(
+    await gateway.handleYjsSync(
       { documentId: 'doc-1', message: syncStep2(clientDoc) },
       socket,
     );
@@ -643,13 +667,13 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
     return socket;
   }
 
-  it('rejects an oversized Yjs update and emits error', () => {
+  it('rejects an oversized Yjs update and emits error', async () => {
     const maxBytes = 100;
     const { gateway, documentManager } = makeGateway({ maxBytes });
     const socket = makeAuthenticatedSocket();
 
     const oversized = new Uint8Array(maxBytes + 1);
-    gateway.handleYjsUpdate({ documentId: 'doc-1', update: oversized }, socket);
+    await gateway.handleYjsUpdate({ documentId: 'doc-1', update: oversized }, socket);
 
     expect(socket.emit).toHaveBeenCalledWith(
       'error',
@@ -658,18 +682,18 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
     expect(documentManager.applyUpdate).not.toHaveBeenCalled();
   });
 
-  it('does not persist or relay an oversized update', () => {
+  it('does not persist or relay an oversized update', async () => {
     const maxBytes = 100;
     const { gateway, documentManager } = makeGateway({ maxBytes });
     const socket = makeAuthenticatedSocket();
 
     const oversized = new Uint8Array(maxBytes + 1);
-    gateway.handleYjsUpdate({ documentId: 'doc-1', update: oversized }, socket);
+    await gateway.handleYjsUpdate({ documentId: 'doc-1', update: oversized }, socket);
 
     expect(documentManager.applyUpdate).not.toHaveBeenCalled();
   });
 
-  it('accepts an update at exactly the byte limit', () => {
+  it('accepts an update at exactly the byte limit', async () => {
     const maxBytes = 100;
     const { gateway, documentManager } = makeGateway({ maxBytes });
     const socket = makeAuthenticatedSocket();
@@ -678,7 +702,7 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
     const exactly = new Uint8Array(maxBytes);
-    gateway.handleYjsUpdate({ documentId: 'doc-1', update: exactly }, socket);
+    await gateway.handleYjsUpdate({ documentId: 'doc-1', update: exactly }, socket);
 
     expect(documentManager.applyUpdate).toHaveBeenCalledWith('doc-1', exactly);
   });
@@ -689,7 +713,7 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
 // ---------------------------------------------------------------------------
 
 describe('EditorGateway — WebSocket rate limiting', () => {
-  it('drops a yjs:update that exceeds the per-second limit', () => {
+  it('drops a yjs:update that exceeds the per-second limit', async () => {
     const wsLimit = 3;
     const { gateway, documentManager } = makeGateway({ wsLimit });
     const socket = makeSocket({
@@ -707,11 +731,17 @@ describe('EditorGateway — WebSocket rate limiting', () => {
 
     // First 3 calls should pass
     for (let i = 0; i < wsLimit; i++) {
-      gateway.handleYjsUpdate({ documentId: 'doc-1', update: smallUpdate }, socket);
+      await gateway.handleYjsUpdate(
+        { documentId: 'doc-1', update: smallUpdate },
+        socket,
+      );
     }
 
     // The 4th call exceeds the limit
-    gateway.handleYjsUpdate({ documentId: 'doc-1', update: smallUpdate }, socket);
+    await gateway.handleYjsUpdate(
+      { documentId: 'doc-1', update: smallUpdate },
+      socket,
+    );
 
     // applyUpdate called exactly wsLimit times (not on the rate-limited 4th)
     expect(documentManager.applyUpdate).toHaveBeenCalledTimes(wsLimit);
