@@ -38,13 +38,14 @@ async function runInTerminal(page: Page, command: string): Promise<void> {
 
 /** Creates a file via the explorer, opens it, replaces its content, and saves. */
 async function createFileWithContent(page: Page, name: string, content: string): Promise<void> {
+  const displayedName = name.replace(/\\/g, "/").split("/").pop()!;
   await page.getByTestId("new-file-button").click();
   const input = page.getByTestId("new-item-input");
   await expect(input).toBeVisible();
   await input.fill(name);
   await input.press("Enter");
-  await expect(fileItem(page, name)).toBeVisible({ timeout: 8_000 });
-  await fileItem(page, name).click();
+  await expect(fileItem(page, displayedName)).toBeVisible({ timeout: 8_000 });
+  await fileItem(page, displayedName).click();
 
   await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({ timeout: 10_000 });
   await page.locator(".monaco-editor .view-lines").click();

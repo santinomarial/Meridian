@@ -121,7 +121,10 @@ export function isImportPathSafe(path: string): boolean {
   if (
     slashPath.startsWith("/") ||
     /^[A-Za-z]:\//.test(slashPath) ||
-    /[\u0000-\u001f\u007f]/.test(slashPath)
+    [...slashPath].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127;
+    })
   ) {
     return false;
   }
