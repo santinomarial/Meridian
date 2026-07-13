@@ -1,7 +1,12 @@
 import cookieParser from 'cookie-parser';
-import { ValidationPipe } from '@nestjs/common';
+import {
+  BadRequestException,
+  PayloadTooLargeException,
+  ValidationPipe,
+} from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { json, urlencoded } from 'express';
+import type { ErrorRequestHandler } from 'express';
 
 const DEFAULT_JSON_LIMIT = '100kb';
 const BULK_IMPORT_JSON_LIMIT = '26mb';
@@ -22,6 +27,22 @@ export function configureApp(app: INestApplication): void {
   );
   app.use(json({ limit: DEFAULT_JSON_LIMIT }));
   app.use(urlencoded({ extended: true, limit: DEFAULT_JSON_LIMIT }));
+  const normalizeParserError: ErrorRequestHandler = (error, _req, _res, next) => {
+    const type =
+      error !== null && typeof error === 'object' && 'type' in error
+        ? error.type
+        : undefined;
+    if (type === 'entity.too.large') {
+      next(new PayloadTooLargeException('Request body is too large'));
+      return;
+    }
+    if (type === 'entity.parse.failed') {
+      next(new BadRequestException('Malformed JSON request body'));
+      return;
+    }
+    next(error);
+  };
+  app.use(normalizeParserError);
   app.use(cookieParser());
   app.useGlobalPipes(
     new ValidationPipe({
