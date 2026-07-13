@@ -206,6 +206,18 @@ export class EditorGateway
     if (!this.checkRateLimit(client, 'joinDocument')) return;
 
     const user = client.data['user'] as AuthUser;
+    const room = `document:${dto.documentId}`;
+
+    // Socket.IO room membership and DocumentManager reference counts must stay
+    // one-to-one. A duplicate join from the same socket used to increment the
+    // document ref-count twice while disconnect released it only once.
+    if (client.rooms.has(room)) {
+      client.emit('joinedDocument', {
+        documentId: dto.documentId,
+        socketId: client.id,
+      });
+      return;
+    }
 
     // Authorization: the user must be a workspace member.  getDocumentAccessInfo
     // returns the role in the same query so we can cache it for yjs:update checks.
@@ -230,8 +242,6 @@ export class EditorGateway
     docRoles[dto.documentId] = accessInfo.role;
     client.data['documentRoles'] = docRoles;
 
-    const room = `document:${dto.documentId}`;
-
     await client.join(room);
     this.registry.join(client.id, dto.documentId);
 
@@ -242,6 +252,7 @@ export class EditorGateway
       // Roll back the room join so the socket isn't left in a broken state.
       await client.leave(room);
       this.registry.leave(client.id, dto.documentId);
+      delete docRoles[dto.documentId];
       client.emit('error', {
         message: `Failed to load document ${dto.documentId}`,
       });
@@ -296,6 +307,10 @@ export class EditorGateway
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
     const room = `document:${dto.documentId}`;
+
+    // Ignore forged/duplicate leave events. Releasing a globally loaded
+    // document that this socket never acquired corrupts its reference count.
+    if (!client.rooms.has(room)) return;
 
     this.removeAwarenessForSocket(client, dto.documentId);
 
@@ -401,9 +416,48 @@ export class EditorGateway
   ): void {
     if (!this.checkRateLimit(client, 'yjs:sync')) return;
 
+    // A document being loaded by some other socket is not authorization. Every
+    // document event must be scoped to a room this socket successfully joined.
+    const role = this.joinedDocumentRole(client, dto.documentId);
+    if (role === null) {
+      client.emit('error', {
+        message: 'yjs:sync — send joinDocument and wait for joinedDocument first',
+      });
+      return;
+    }
+
     const message = toUint8Array(dto.message);
     if (message === null) {
       client.emit('error', { message: 'yjs:sync — message must be binary data' });
+      return;
+    }
+
+    if (message.byteLength > this.wsMaxUpdateBytes) {
+      client.emit('error', {
+        message: `Payload too large: ${message.byteLength} bytes (limit ${this.wsMaxUpdateBytes})`,
+      });
+      return;
+    }
+
+    let messageType: number;
+    try {
+      messageType = decoding.readVarUint(decoding.createDecoder(message));
+    } catch {
+      client.emit('error', { message: 'yjs:sync — malformed sync message' });
+      return;
+    }
+
+    // This endpoint is deliberately read-only on the server. The client sends
+    // SyncStep1 to request the server's missing state; all actual mutations must
+    // use yjs:update, which enforces write roles, broadcasts, and persists.
+    // SyncStep2 is the protocol's automatic response to the server's opening
+    // Step1, so it is safe to ignore silently. Applying it here used to provide
+    // an unpersisted write path (including for viewers).
+    if (messageType === syncProtocol.messageYjsSyncStep2) return;
+    if (messageType !== syncProtocol.messageYjsSyncStep1) {
+      client.emit('error', {
+        message: 'yjs:sync — mutating sync messages are not accepted; use yjs:update',
+      });
       return;
     }
 
@@ -418,7 +472,12 @@ export class EditorGateway
     const decoder = decoding.createDecoder(message);
     const responseEncoder = encoding.createEncoder();
 
-    syncProtocol.readSyncMessage(decoder, responseEncoder, doc, null);
+    try {
+      syncProtocol.readSyncMessage(decoder, responseEncoder, doc, null);
+    } catch {
+      client.emit('error', { message: 'yjs:sync — malformed sync message' });
+      return;
+    }
 
     if (encoding.length(responseEncoder) > 0) {
       client.emit('yjs:sync', {
@@ -441,10 +500,20 @@ export class EditorGateway
 
     const user = client.data['user'] as AuthUser;
 
+    // A cached role without room membership (or room membership without a
+    // cached role) is never sufficient. This prevents an authenticated socket
+    // from editing any document that merely happens to be loaded in this
+    // process by another user.
+    const role = this.joinedDocumentRole(client, dto.documentId);
+    if (role === null) {
+      client.emit('error', {
+        message: 'yjs:update — send joinDocument and wait for joinedDocument first',
+      });
+      return;
+    }
+
     // Viewers may receive updates but must not persist or relay edits.
-    const docRoles =
-      (client.data['documentRoles'] as Record<string, WorkspaceRole> | undefined) ?? {};
-    if (docRoles[dto.documentId] === WorkspaceRole.VIEWER) {
+    if (role === WorkspaceRole.VIEWER) {
       this.logger.warn(
         { socketId: client.id, userId: user.id, documentId: dto.documentId },
         'Viewer yjs:update rejected',
@@ -512,9 +581,23 @@ export class EditorGateway
   ): void {
     if (!this.checkRateLimit(client, 'awareness:update')) return;
 
+    if (this.joinedDocumentRole(client, dto.documentId) === null) {
+      client.emit('error', {
+        message: 'awareness:update — send joinDocument and wait for joinedDocument first',
+      });
+      return;
+    }
+
     const update = toUint8Array(dto.update);
     if (update === null) {
       client.emit('error', { message: 'awareness:update — update must be binary data' });
+      return;
+    }
+
+    if (update.byteLength > this.wsMaxUpdateBytes) {
+      client.emit('error', {
+        message: `Payload too large: ${update.byteLength} bytes (limit ${this.wsMaxUpdateBytes})`,
+      });
       return;
     }
 
@@ -761,6 +844,18 @@ export class EditorGateway
     });
 
     void this.publishAwareness(documentId, removalUpdate);
+  }
+
+  /** Returns the cached role only when this exact socket joined the document. */
+  private joinedDocumentRole(
+    client: Socket,
+    documentId: string,
+  ): WorkspaceRole | null {
+    if (!client.rooms.has(`document:${documentId}`)) return null;
+    const roles = client.data['documentRoles'] as
+      | Record<string, WorkspaceRole>
+      | undefined;
+    return roles?.[documentId] ?? null;
   }
 }
 
