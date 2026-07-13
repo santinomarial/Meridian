@@ -29,6 +29,7 @@ describe('Documents & workspace permissions (HTTP integration)', () => {
   let viewer: TestAgent;
   let nonMember: TestAgent;
   let workspaceId: string;
+  let sourceFolderId: string;
   let documentId: string;
 
   beforeAll(async () => {
@@ -40,9 +41,21 @@ describe('Documents & workspace permissions (HTTP integration)', () => {
     const ws = await owner.post('/workspaces').send({ name: 'Integration WS' }).expect(201);
     workspaceId = ws.body.id;
 
+    const sourceFolder = await owner
+      .post(`/workspaces/${workspaceId}/documents`)
+      .send({ type: 'FOLDER', name: 'src', path: 'src' })
+      .expect(201);
+    sourceFolderId = sourceFolder.body.id;
+
     const doc = await owner
       .post(`/workspaces/${workspaceId}/documents`)
-      .send({ type: 'FILE', name: 'main.py', path: 'src/main.py', content: 'print("hi")' })
+      .send({
+        parentId: sourceFolderId,
+        type: 'FILE',
+        name: 'main.py',
+        path: 'src/main.py',
+        content: 'print("hi")',
+      })
       .expect(201);
     documentId = doc.body.id;
 
@@ -99,6 +112,84 @@ describe('Documents & workspace permissions (HTTP integration)', () => {
       .post(`/workspaces/${workspaceId}/documents`)
       .send({ type: 'FILE', name: 'x.txt', path: 'x.txt', bogusField: true });
     expect(res.status).toBe(400);
+  });
+
+  it('rejects cross-workspace parents and file parents', async () => {
+    const secondWorkspace = await owner
+      .post('/workspaces')
+      .send({ name: 'Other Integration WS' })
+      .expect(201);
+    const otherFolder = await owner
+      .post(`/workspaces/${secondWorkspace.body.id}/documents`)
+      .send({ type: 'FOLDER', name: 'other', path: 'other' })
+      .expect(201);
+
+    await owner
+      .post(`/workspaces/${workspaceId}/documents`)
+      .send({
+        parentId: otherFolder.body.id,
+        type: 'FILE',
+        name: 'cross.txt',
+        path: 'other/cross.txt',
+      })
+      .expect(400);
+
+    await owner
+      .post(`/workspaces/${workspaceId}/documents`)
+      .send({
+        parentId: documentId,
+        type: 'FILE',
+        name: 'child.txt',
+        path: 'src/main.py/child.txt',
+      })
+      .expect(400);
+  });
+
+  it('rejects self/cyclic moves and rewrites every path on folder rename', async () => {
+    const tree = await owner
+      .post(`/workspaces/${workspaceId}/documents`)
+      .send({ type: 'FOLDER', name: 'tree', path: 'tree' })
+      .expect(201);
+    const nested = await owner
+      .post(`/workspaces/${workspaceId}/documents`)
+      .send({
+        parentId: tree.body.id,
+        type: 'FOLDER',
+        name: 'nested',
+        path: 'tree/nested',
+      })
+      .expect(201);
+    const leaf = await owner
+      .post(`/workspaces/${workspaceId}/documents`)
+      .send({
+        parentId: nested.body.id,
+        type: 'FILE',
+        name: 'leaf.txt',
+        path: 'tree/nested/leaf.txt',
+      })
+      .expect(201);
+
+    await owner
+      .patch(`/documents/${tree.body.id}`)
+      .send({ parentId: tree.body.id })
+      .expect(400);
+    await owner
+      .patch(`/documents/${tree.body.id}`)
+      .send({ parentId: nested.body.id })
+      .expect(400);
+
+    const renamed = await owner
+      .patch(`/documents/${tree.body.id}`)
+      .send({ name: 'renamed-tree', path: 'renamed-tree' })
+      .expect(200);
+    expect(renamed.body.path).toBe('renamed-tree');
+
+    const [storedNested, storedLeaf] = await Promise.all([
+      ctx.prisma.document.findUnique({ where: { id: nested.body.id } }),
+      ctx.prisma.document.findUnique({ where: { id: leaf.body.id } }),
+    ]);
+    expect(storedNested?.path).toBe('renamed-tree/nested');
+    expect(storedLeaf?.path).toBe('renamed-tree/nested/leaf.txt');
   });
 
   // ── Workspace export ───────────────────────────────────────────────────────
