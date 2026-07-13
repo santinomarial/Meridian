@@ -46,7 +46,7 @@ async function acceptInvite(page: Page, inviteLink: string): Promise<void> {
   await page
     .getByRole("button", { name: "Accept & Open Workspace" })
     .click({ timeout: 10_000 });
-  await page.waitForURL("/workspace", { timeout: 15_000 });
+  await page.waitForURL(/\/workspace\/[^/?#]+(?:[?#].*)?$/, { timeout: 15_000 });
   await page.waitForSelector(
     '[data-testid="workspace-root"][data-backend-status="available"]',
     { timeout: 20_000 },

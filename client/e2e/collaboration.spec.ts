@@ -89,7 +89,7 @@ test.describe("collaboration (backend required)", () => {
       // The invite page shows the inviter and workspace context.
       await expect(bob.locator("body")).toContainText("Alice E2E");
       await bob.getByRole("button", { name: "Accept & Open Workspace" }).click();
-      await bob.waitForURL("/workspace", { timeout: 15_000 });
+      await bob.waitForURL(/\/workspace\/[^/?#]+(?:[?#].*)?$/, { timeout: 15_000 });
       await bob.waitForSelector(
         '[data-testid="workspace-root"][data-backend-status="available"]',
         { timeout: 20_000 },

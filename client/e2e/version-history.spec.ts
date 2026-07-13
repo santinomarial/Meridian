@@ -175,7 +175,7 @@ test.describe("version history (backend required)", () => {
       await freshWorkspace(viewer, `Viewer-${uid()}`);
       await viewer.goto(inviteLink);
       await viewer.getByRole("button", { name: "Accept & Open Workspace" }).click({ timeout: 10_000 });
-      await viewer.waitForURL("/workspace", { timeout: 15_000 });
+      await viewer.waitForURL(/\/workspace\/[^/?#]+(?:[?#].*)?$/, { timeout: 15_000 });
       await viewer.waitForSelector(
         '[data-testid="workspace-root"][data-backend-status="available"]',
         { timeout: 20_000 },
