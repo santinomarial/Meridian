@@ -962,9 +962,8 @@ npm run test:e2e
 The server integration suite requires its PostgreSQL/Redis environment and
 applied migrations. Playwright starts the Vite dev server itself;
 backend-dependent groups can skip when the API is unavailable. CI provisions
-PostgreSQL, Redis,
-the compiled API, E2E helpers, and terminal support so those groups execute in
-the full run.
+PostgreSQL, Redis, the compiled API, E2E helpers, and terminal support so those
+groups execute in the full run.
 
 CI does not currently exercise a multi-replica deployment, out-of-order
 cross-replica persistence, Redis loss/recovery, cross-replica restore, terminal
