@@ -138,6 +138,19 @@ describe('DocumentsService', () => {
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
+
+    it('rejects a single document with more than 1 MiB of content', async () => {
+      await expect(
+        service.createDocument({
+          workspaceId: 'ws-1',
+          type: DocumentType.FILE,
+          path: 'large.txt',
+          name: 'large.txt',
+          content: 'x'.repeat(1024 * 1024 + 1),
+        }),
+      ).rejects.toBeInstanceOf(PayloadTooLargeException);
+      expect(prisma.document.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('bulkCreateDocuments', () => {
@@ -327,6 +340,13 @@ describe('DocumentsService', () => {
       });
       expect(result.content).toBe('const x = 1;');
     });
+
+    it('rejects content larger than 1 MiB', async () => {
+      await expect(
+        service.updateContent('doc-1', 'x'.repeat(1024 * 1024 + 1)),
+      ).rejects.toBeInstanceOf(PayloadTooLargeException);
+      expect(prisma.document.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('updateMetadata', () => {
@@ -391,6 +411,17 @@ describe('DocumentsService', () => {
           message: null,
         }),
       });
+    });
+
+    it('rejects content larger than 1 MiB before opening a transaction', async () => {
+      await expect(
+        service.patchDocument(
+          'doc-1',
+          { content: 'x'.repeat(1024 * 1024 + 1) },
+          'user-1',
+        ),
+      ).rejects.toBeInstanceOf(PayloadTooLargeException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('does NOT create a version when content is unchanged (no duplicates)', async () => {

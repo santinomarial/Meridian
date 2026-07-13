@@ -129,7 +129,8 @@ export class TerminalGateway
       return;
     }
 
-    const role = await this.workspaces.getMemberRole(user.id, dto.workspaceId);
+    const role = await this.currentWorkspaceRole(client, dto.workspaceId);
+    if (role === undefined) return;
     if (role === null) {
       client.emit('terminal:error', { message: 'Not a member of this workspace' });
       this.logger.warn(
@@ -149,12 +150,21 @@ export class TerminalGateway
     }
 
     if (this.terminalService.hasSession(client.id)) {
-      client.emit('terminal:status', { status: 'running' });
-      return;
+      const session = this.terminalService.getSession(client.id);
+      if (
+        session?.workspaceId === dto.workspaceId &&
+        session.userId === user.id
+      ) {
+        this.terminalClients.set(client.id, client);
+        client.emit('terminal:status', { status: 'running' });
+        return;
+      }
+      this.terminalService.killSession(client.id);
     }
 
     try {
       await this.terminalService.createSession(client.id, user.id, dto.workspaceId, client);
+      this.terminalClients.set(client.id, client);
       client.emit('terminal:status', { status: 'ready' });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to start terminal';
@@ -179,7 +189,8 @@ export class TerminalGateway
       return;
     }
 
-    const role = await this.workspaces.getMemberRole(user.id, dto.workspaceId);
+    const role = await this.currentWorkspaceRole(client, dto.workspaceId);
+    if (role === undefined) return;
     if (role === null) {
       client.emit('terminal:error', { message: 'Not a member of this workspace' });
       return;
@@ -223,9 +234,19 @@ export class TerminalGateway
 
     // Ensure a session exists (create + materialize if the terminal was closed),
     // then send the command to the PTY so output appears naturally.
+    const existingSession = this.terminalService.getSession(client.id);
+    if (
+      existingSession !== undefined &&
+      (existingSession.workspaceId !== dto.workspaceId ||
+        existingSession.userId !== user.id)
+    ) {
+      this.terminalService.killSession(client.id);
+    }
+
     if (!this.terminalService.hasSession(client.id)) {
       try {
         await this.terminalService.createSession(client.id, user.id, dto.workspaceId, client);
+        this.terminalClients.set(client.id, client);
         client.emit('terminal:status', { status: 'ready' });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to start terminal';
@@ -234,30 +255,55 @@ export class TerminalGateway
       }
     }
 
+    this.terminalClients.set(client.id, client);
     this.terminalService.writeToSession(client.id, `${command}\n`);
   }
 
   @SubscribeMessage('terminal:input')
-  handleInput(
+  async handleInput(
     @MessageBody() dto: TerminalInputDto,
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     if (!this.enabled) return;
 
-    if (!this.terminalService.hasSession(client.id)) {
+    const session = this.terminalService.getSession(client.id);
+    if (session === undefined) {
+      this.terminalClients.delete(client.id);
       client.emit('terminal:error', { message: 'No active terminal session; send terminal:start first' });
       return;
     }
 
+    const role = await this.currentWorkspaceRole(client, session.workspaceId);
+    if (role === undefined) return;
+    if (role === null || role === WorkspaceRole.VIEWER) {
+      this.revokeTerminalAccess(
+        client,
+        role === WorkspaceRole.VIEWER
+          ? 'Viewers cannot use the terminal'
+          : 'Not a member of this workspace',
+      );
+      return;
+    }
+
+    this.terminalClients.set(client.id, client);
     this.terminalService.writeToSession(client.id, dto.data);
   }
 
   @SubscribeMessage('terminal:resize')
-  handleResize(
+  async handleResize(
     @MessageBody() dto: TerminalResizeDto,
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     if (!this.enabled) return;
+
+    const session = this.terminalService.getSession(client.id);
+    if (session === undefined) return;
+    const role = await this.currentWorkspaceRole(client, session.workspaceId);
+    if (role === undefined) return;
+    if (role === null || role === WorkspaceRole.VIEWER) {
+      this.revokeTerminalAccess(client, 'Terminal access was revoked');
+      return;
+    }
 
     // Resize the PTY so the shell's TIOCGWINSZ reflects the client viewport.
     // No-ops safely when there is no active session.
@@ -271,7 +317,95 @@ export class TerminalGateway
     if (!this.terminalService.hasSession(client.id)) return;
 
     this.terminalService.killSession(client.id);
+    this.terminalClients.delete(client.id);
     client.emit('terminal:exit', { code: null });
     this.logger.info({ socketId: client.id }, 'Terminal session stopped by client');
+  }
+
+  private async currentWorkspaceRole(
+    client: Socket,
+    workspaceId: string,
+  ): Promise<WorkspaceRole | null | undefined> {
+    const user = client.data['user'] as AuthUser | undefined;
+    const [sessionActive, role] = await Promise.all([
+      this.realtimeAuthorization.isSessionActive(client),
+      user === undefined
+        ? Promise.resolve(null)
+        : this.workspaces.getMemberRole(user.id, workspaceId),
+    ]);
+    if (!sessionActive || user === undefined) {
+      this.revokeTerminalAccess(client, 'Session is no longer active');
+      client.disconnect(true);
+      return undefined;
+    }
+    return role;
+  }
+
+  private revokeTerminalAccess(client: Socket, message: string): void {
+    if (this.terminalService.hasSession(client.id)) {
+      this.terminalService.killSession(client.id);
+      client.emit('terminal:exit', { code: null });
+    }
+    this.terminalClients.delete(client.id);
+    client.emit('terminal:error', { message });
+    this.logger.warn(
+      { socketId: client.id },
+      'Terminal session closed after authorization changed',
+    );
+  }
+
+  private handleAuthorizationInvalidation(
+    invalidation: RealtimeAuthorizationInvalidation,
+  ): void {
+    for (const client of this.terminalClients.values()) {
+      const user = client.data['user'] as AuthUser | undefined;
+      const jti = client.data[SOCKET_SESSION_JTI] as string | undefined;
+      const session = this.terminalService.getSession(client.id);
+      if (session === undefined) {
+        this.terminalClients.delete(client.id);
+        continue;
+      }
+
+      if (
+        (invalidation.type === 'session' && invalidation.jti === jti) ||
+        (invalidation.type === 'user' && invalidation.userId === user?.id)
+      ) {
+        this.revokeTerminalAccess(client, 'Session is no longer active');
+        client.disconnect(true);
+        continue;
+      }
+      if (
+        invalidation.type === 'workspace' &&
+        invalidation.userId === user?.id &&
+        invalidation.workspaceId === session.workspaceId
+      ) {
+        void this.auditTerminalClient(client);
+      }
+    }
+  }
+
+  private async auditTerminalClient(client: Socket): Promise<void> {
+    const session = this.terminalService.getSession(client.id);
+    if (session === undefined) {
+      this.terminalClients.delete(client.id);
+      return;
+    }
+    const role = await this.currentWorkspaceRole(client, session.workspaceId);
+    if (role === undefined) return;
+    if (role === null || role === WorkspaceRole.VIEWER) {
+      this.revokeTerminalAccess(client, 'Terminal access was revoked');
+    }
+  }
+
+  private async auditTerminalClients(): Promise<void> {
+    if (this.authorizationSweepRunning) return;
+    this.authorizationSweepRunning = true;
+    try {
+      for (const client of [...this.terminalClients.values()]) {
+        await this.auditTerminalClient(client);
+      }
+    } finally {
+      this.authorizationSweepRunning = false;
+    }
   }
 }

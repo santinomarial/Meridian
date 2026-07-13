@@ -108,6 +108,7 @@ export class DocumentsService {
   async createDocument(data: CreateDocumentData): Promise<Document> {
     const name = this.validateDocumentName(data.name);
     const suppliedPath = this.validateDocumentPath(data.path);
+    this.assertDocumentContentLimit(data.content, suppliedPath);
     let parent: Document | null = null;
 
     if (data.parentId !== undefined) {
@@ -327,6 +328,7 @@ export class DocumentsService {
   }
 
   async updateContent(documentId: string, content: string): Promise<Document> {
+    this.assertDocumentContentLimit(content);
     return this.prisma.document.update({
       where: { id: documentId },
       data: { content },
@@ -356,6 +358,7 @@ export class DocumentsService {
     data: PatchDocumentData,
     userId?: string,
   ): Promise<Document> {
+    this.assertDocumentContentLimit(data.content);
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const current = await tx.document.findUnique({
         where: { id: documentId },
@@ -521,12 +524,10 @@ export class DocumentsService {
           );
         }
       }
-      const contentBytes = Buffer.byteLength(document.content ?? '', 'utf8');
-      if (contentBytes > BULK_IMPORT_MAX_CONTENT_BYTES) {
-        throw new PayloadTooLargeException(
-          `Document "${document.path}" exceeds the 1 MiB content limit`,
-        );
-      }
+      const contentBytes = this.assertDocumentContentLimit(
+        document.content,
+        document.path,
+      );
       totalContentBytes += contentBytes;
       if (totalContentBytes > BULK_IMPORT_MAX_TOTAL_CONTENT_BYTES) {
         throw new PayloadTooLargeException(
@@ -534,6 +535,20 @@ export class DocumentsService {
         );
       }
     }
+  }
+
+  private assertDocumentContentLimit(
+    content: string | null | undefined,
+    path?: string,
+  ): number {
+    const contentBytes = Buffer.byteLength(content ?? '', 'utf8');
+    if (contentBytes > BULK_IMPORT_MAX_CONTENT_BYTES) {
+      const subject = path === undefined ? 'Document' : `Document "${path}"`;
+      throw new PayloadTooLargeException(
+        `${subject} exceeds the 1 MiB content limit`,
+      );
+    }
+    return contentBytes;
   }
 
   private validateDocumentPath(path: string): string {
