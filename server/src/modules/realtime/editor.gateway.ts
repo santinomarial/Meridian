@@ -52,6 +52,7 @@ import {
 } from '../realtime-authorization/realtime-authorization.service';
 
 const AUTHORIZATION_SWEEP_MS = 10_000;
+const AUTHORIZATION_EVENT_CACHE_MS = 1_000;
 
 // ---------------------------------------------------------------------------
 // Cross-instance Redis message shapes
@@ -885,11 +886,31 @@ export class EditorGateway
     event: string,
   ): Promise<{ workspaceId: string; role: WorkspaceRole } | null> {
     const user = client.data['user'] as AuthUser | undefined;
+    const cachedRoles = client.data['documentRoles'] as
+      | Record<string, WorkspaceRole>
+      | undefined;
+    const cachedWorkspaces = client.data['documentWorkspaces'] as
+      | Record<string, string>
+      | undefined;
+    const checkedAt = client.data['documentAuthorizationCheckedAt'] as
+      | Record<string, number>
+      | undefined;
+    const useCachedAccess =
+      cachedRoles?.[documentId] !== undefined &&
+      cachedWorkspaces?.[documentId] !== undefined &&
+      checkedAt?.[documentId] !== undefined &&
+      Date.now() - checkedAt[documentId] < AUTHORIZATION_EVENT_CACHE_MS;
+    const accessPromise = useCachedAccess
+      ? Promise.resolve({
+          workspaceId: cachedWorkspaces[documentId]!,
+          role: cachedRoles[documentId]!,
+        })
+      : user === undefined
+        ? Promise.resolve(null)
+        : this.workspaces.getDocumentAccessInfo(user.id, documentId);
     const [sessionActive, accessInfo] = await Promise.all([
       this.realtimeAuthorization.isSessionActive(client),
-      user === undefined
-        ? Promise.resolve(null)
-        : this.workspaces.getDocumentAccessInfo(user.id, documentId),
+      accessPromise,
     ]);
 
     if (!sessionActive || user === undefined) {
@@ -918,6 +939,9 @@ export class EditorGateway
       (client.data['documentWorkspaces'] as Record<string, string> | undefined) ?? {};
     workspaces[documentId] = accessInfo.workspaceId;
     client.data['documentWorkspaces'] = workspaces;
+    const accessTimes = checkedAt ?? {};
+    accessTimes[documentId] = Date.now();
+    client.data['documentAuthorizationCheckedAt'] = accessTimes;
 
     return accessInfo;
   }
@@ -928,11 +952,24 @@ export class EditorGateway
     event: string,
   ): Promise<WorkspaceRole | null> {
     const user = client.data['user'] as AuthUser | undefined;
+    const cachedRoles = client.data['workspaceRoles'] as
+      | Record<string, WorkspaceRole>
+      | undefined;
+    const checkedAt = client.data['workspaceAuthorizationCheckedAt'] as
+      | Record<string, number>
+      | undefined;
+    const useCachedRole =
+      cachedRoles?.[workspaceId] !== undefined &&
+      checkedAt?.[workspaceId] !== undefined &&
+      Date.now() - checkedAt[workspaceId] < AUTHORIZATION_EVENT_CACHE_MS;
+    const rolePromise = useCachedRole
+      ? Promise.resolve(cachedRoles[workspaceId]!)
+      : user === undefined
+        ? Promise.resolve(null)
+        : this.workspaces.getMemberRole(user.id, workspaceId);
     const [sessionActive, role] = await Promise.all([
       this.realtimeAuthorization.isSessionActive(client),
-      user === undefined
-        ? Promise.resolve(null)
-        : this.workspaces.getMemberRole(user.id, workspaceId),
+      rolePromise,
     ]);
 
     if (!sessionActive || user === undefined) {
@@ -948,6 +985,9 @@ export class EditorGateway
       );
       return null;
     }
+    const accessTimes = checkedAt ?? {};
+    accessTimes[workspaceId] = Date.now();
+    client.data['workspaceAuthorizationCheckedAt'] = accessTimes;
     return role;
   }
 
@@ -984,6 +1024,10 @@ export class EditorGateway
       | undefined;
     if (roles !== undefined) delete roles[documentId];
     if (workspaces !== undefined) delete workspaces[documentId];
+    const checkedAt = client.data['documentAuthorizationCheckedAt'] as
+      | Record<string, number>
+      | undefined;
+    if (checkedAt !== undefined) delete checkedAt[documentId];
 
     await client.leave(room);
     this.registry.leave(client.id, documentId);
@@ -1002,6 +1046,10 @@ export class EditorGateway
       | Record<string, WorkspaceRole>
       | undefined;
     if (workspaceRoles !== undefined) delete workspaceRoles[workspaceId];
+    const workspaceCheckedAt = client.data['workspaceAuthorizationCheckedAt'] as
+      | Record<string, number>
+      | undefined;
+    if (workspaceCheckedAt !== undefined) delete workspaceCheckedAt[workspaceId];
 
     const documentWorkspaces = client.data['documentWorkspaces'] as
       | Record<string, string>
@@ -1032,6 +1080,7 @@ export class EditorGateway
         invalidation.type === 'workspace' &&
         invalidation.userId === user?.id
       ) {
+        this.evictWorkspaceAuthorizationCache(client, invalidation.workspaceId);
         void this.refreshWorkspaceAccess(client, invalidation.workspaceId);
       }
     }
@@ -1048,7 +1097,7 @@ export class EditorGateway
     }
 
     const [sessionActive, role] = await Promise.all([
-      this.realtimeAuthorization.isSessionActive(client),
+      this.realtimeAuthorization.isSessionActive(client, true),
       this.workspaces.getMemberRole(user.id, workspaceId),
     ]);
     if (!sessionActive) {
@@ -1061,6 +1110,13 @@ export class EditorGateway
     }
 
     this.cacheWorkspaceRole(client, workspaceId, role);
+    const now = Date.now();
+    const workspaceCheckedAt =
+      (client.data['workspaceAuthorizationCheckedAt'] as
+        | Record<string, number>
+        | undefined) ?? {};
+    workspaceCheckedAt[workspaceId] = now;
+    client.data['workspaceAuthorizationCheckedAt'] = workspaceCheckedAt;
     const documentRoles = client.data['documentRoles'] as
       | Record<string, WorkspaceRole>
       | undefined;
@@ -1068,9 +1124,17 @@ export class EditorGateway
       | Record<string, string>
       | undefined;
     if (documentRoles === undefined || documentWorkspaces === undefined) return;
+    const documentCheckedAt =
+      (client.data['documentAuthorizationCheckedAt'] as
+        | Record<string, number>
+        | undefined) ?? {};
     for (const [documentId, cachedWorkspaceId] of Object.entries(documentWorkspaces)) {
-      if (cachedWorkspaceId === workspaceId) documentRoles[documentId] = role;
+      if (cachedWorkspaceId === workspaceId) {
+        documentRoles[documentId] = role;
+        documentCheckedAt[documentId] = now;
+      }
     }
+    client.data['documentAuthorizationCheckedAt'] = documentCheckedAt;
   }
 
   private async auditConnectedClients(): Promise<void> {
@@ -1078,7 +1142,7 @@ export class EditorGateway
     this.authorizationSweepRunning = true;
     try {
       for (const client of this.connectedClients.values()) {
-        if (!(await this.realtimeAuthorization.isSessionActive(client))) {
+        if (!(await this.realtimeAuthorization.isSessionActive(client, true))) {
           this.disconnectForInvalidSession(client, 'authorization:sweep');
           continue;
         }
@@ -1103,6 +1167,27 @@ export class EditorGateway
       }
     } finally {
       this.authorizationSweepRunning = false;
+    }
+  }
+
+  private evictWorkspaceAuthorizationCache(
+    client: Socket,
+    workspaceId: string,
+  ): void {
+    const workspaceCheckedAt = client.data['workspaceAuthorizationCheckedAt'] as
+      | Record<string, number>
+      | undefined;
+    if (workspaceCheckedAt !== undefined) delete workspaceCheckedAt[workspaceId];
+
+    const documentCheckedAt = client.data['documentAuthorizationCheckedAt'] as
+      | Record<string, number>
+      | undefined;
+    const documentWorkspaces = client.data['documentWorkspaces'] as
+      | Record<string, string>
+      | undefined;
+    if (documentCheckedAt === undefined || documentWorkspaces === undefined) return;
+    for (const [documentId, cachedWorkspaceId] of Object.entries(documentWorkspaces)) {
+      if (cachedWorkspaceId === workspaceId) delete documentCheckedAt[documentId];
     }
   }
 
