@@ -21,6 +21,9 @@ export const BULK_IMPORT_MAX_FILES = 1_000;
 export const BULK_IMPORT_MAX_DOCUMENTS = 2_000;
 export const BULK_IMPORT_MAX_CONTENT_BYTES = 1024 * 1024;
 export const BULK_IMPORT_MAX_TOTAL_CONTENT_BYTES = 25 * 1024 * 1024;
+export const DOCUMENT_MAX_PATH_BYTES = 4096;
+export const DOCUMENT_MAX_SEGMENT_BYTES = 255;
+export const DOCUMENT_MAX_DEPTH = 64;
 
 /** Result of building a workspace export. */
 export interface WorkspaceExport {
@@ -501,6 +504,11 @@ export class DocumentsService {
     if (normalized !== name) {
       throw new BadRequestException('Document name must be a single safe path segment');
     }
+    if (Buffer.byteLength(name, 'utf8') > DOCUMENT_MAX_SEGMENT_BYTES) {
+      throw new BadRequestException(
+        `Document name exceeds ${DOCUMENT_MAX_SEGMENT_BYTES} UTF-8 bytes`,
+      );
+    }
     return name;
   }
 
@@ -556,7 +564,23 @@ export class DocumentsService {
       throw new BadRequestException('Document path contains an unsafe segment');
     }
     try {
-      return assertSafeRelPath(path);
+      const clean = assertSafeRelPath(path);
+      const segments = clean.split('/');
+      if (Buffer.byteLength(clean, 'utf8') > DOCUMENT_MAX_PATH_BYTES) {
+        throw new Error('path too long');
+      }
+      if (segments.length > DOCUMENT_MAX_DEPTH) {
+        throw new Error('path too deep');
+      }
+      if (
+        segments.some(
+          (segment) =>
+            Buffer.byteLength(segment, 'utf8') > DOCUMENT_MAX_SEGMENT_BYTES,
+        )
+      ) {
+        throw new Error('path segment too long');
+      }
+      return clean;
     } catch {
       throw new BadRequestException('Document path is invalid');
     }

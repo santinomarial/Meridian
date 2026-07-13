@@ -36,6 +36,7 @@ import {
 } from '../realtime-authorization/realtime-authorization.service';
 
 const AUTHORIZATION_SWEEP_MS = 10_000;
+const AUTHORIZATION_EVENT_CACHE_MS = 1_000;
 
 /**
  * Maps a file extension to the shell command that runs it. Returns null for
@@ -325,18 +326,41 @@ export class TerminalGateway
   private async currentWorkspaceRole(
     client: Socket,
     workspaceId: string,
+    force = false,
   ): Promise<WorkspaceRole | null | undefined> {
     const user = client.data['user'] as AuthUser | undefined;
-    const [sessionActive, role] = await Promise.all([
-      this.realtimeAuthorization.isSessionActive(client),
-      user === undefined
+    const cachedRoles = client.data['terminalWorkspaceRoles'] as
+      | Record<string, WorkspaceRole>
+      | undefined;
+    const checkedAt = client.data['terminalAuthorizationCheckedAt'] as
+      | Record<string, number>
+      | undefined;
+    const useCachedRole =
+      !force &&
+      cachedRoles?.[workspaceId] !== undefined &&
+      checkedAt?.[workspaceId] !== undefined &&
+      Date.now() - checkedAt[workspaceId] < AUTHORIZATION_EVENT_CACHE_MS;
+    const rolePromise = useCachedRole
+      ? Promise.resolve(cachedRoles[workspaceId]!)
+      : user === undefined
         ? Promise.resolve(null)
-        : this.workspaces.getMemberRole(user.id, workspaceId),
+        : this.workspaces.getMemberRole(user.id, workspaceId);
+    const [sessionActive, role] = await Promise.all([
+      this.realtimeAuthorization.isSessionActive(client, force),
+      rolePromise,
     ]);
     if (!sessionActive || user === undefined) {
       this.revokeTerminalAccess(client, 'Session is no longer active');
       client.disconnect(true);
       return undefined;
+    }
+    if (role !== null) {
+      const roles = cachedRoles ?? {};
+      const accessTimes = checkedAt ?? {};
+      roles[workspaceId] = role;
+      accessTimes[workspaceId] = Date.now();
+      client.data['terminalWorkspaceRoles'] = roles;
+      client.data['terminalAuthorizationCheckedAt'] = accessTimes;
     }
     return role;
   }
@@ -379,18 +403,19 @@ export class TerminalGateway
         invalidation.userId === user?.id &&
         invalidation.workspaceId === session.workspaceId
       ) {
-        void this.auditTerminalClient(client);
+        this.evictWorkspaceAuthorizationCache(client, invalidation.workspaceId);
+        void this.auditTerminalClient(client, true);
       }
     }
   }
 
-  private async auditTerminalClient(client: Socket): Promise<void> {
+  private async auditTerminalClient(client: Socket, force = false): Promise<void> {
     const session = this.terminalService.getSession(client.id);
     if (session === undefined) {
       this.terminalClients.delete(client.id);
       return;
     }
-    const role = await this.currentWorkspaceRole(client, session.workspaceId);
+    const role = await this.currentWorkspaceRole(client, session.workspaceId, force);
     if (role === undefined) return;
     if (role === null || role === WorkspaceRole.VIEWER) {
       this.revokeTerminalAccess(client, 'Terminal access was revoked');
@@ -402,10 +427,20 @@ export class TerminalGateway
     this.authorizationSweepRunning = true;
     try {
       for (const client of [...this.terminalClients.values()]) {
-        await this.auditTerminalClient(client);
+        await this.auditTerminalClient(client, true);
       }
     } finally {
       this.authorizationSweepRunning = false;
     }
+  }
+
+  private evictWorkspaceAuthorizationCache(
+    client: Socket,
+    workspaceId: string,
+  ): void {
+    const checkedAt = client.data['terminalAuthorizationCheckedAt'] as
+      | Record<string, number>
+      | undefined;
+    if (checkedAt !== undefined) delete checkedAt[workspaceId];
   }
 }

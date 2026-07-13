@@ -24,7 +24,11 @@ const MAX_FILE_BYTES = 1024 * 1024; // 1 MB per file
 const MAX_ZIP_BYTES = 100 * 1024 * 1024; // 100 MB ZIP total
 const MAX_IMPORTED_BYTES = 25 * 1024 * 1024; // 25 MB after decompression
 const MAX_IMPORTED_FILES = 1_000;
+const MAX_IMPORTED_DOCUMENTS = 2_000;
 const MAX_BULK_REQUEST_BYTES = 26 * 1024 * 1024;
+const MAX_PATH_BYTES = 4_096;
+const MAX_SEGMENT_BYTES = 255;
+const MAX_PATH_DEPTH = 64;
 
 const IGNORED_DIR_SEGMENTS = new Set([
   "node_modules",
@@ -131,6 +135,33 @@ function pruneExistingNodes(nodes: FileNode[], existingIds: Set<string>): FileNo
 /** Normalized path: no leading/trailing slashes or empty segments. */
 function normalizePath(path: string): string {
   return path.split("/").filter(Boolean).join("/");
+}
+
+function isImportPathSafe(path: string): boolean {
+  const normalized = normalizePath(path);
+  const segments = normalized.split("/");
+  const encoder = new TextEncoder();
+  return (
+    normalized.length > 0 &&
+    encoder.encode(normalized).byteLength <= MAX_PATH_BYTES &&
+    segments.length <= MAX_PATH_DEPTH &&
+    segments.every(
+      (segment) =>
+        segment !== "." &&
+        segment !== ".." &&
+        encoder.encode(segment).byteLength <= MAX_SEGMENT_BYTES,
+    )
+  );
+}
+
+function declaredUncompressedSize(entry: JSZip.JSZipObject): number | null {
+  const internal = entry as JSZip.JSZipObject & {
+    _data?: { uncompressedSize?: unknown };
+  };
+  const value = internal._data?.uncompressedSize;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
 }
 
 function findNodePath(
@@ -339,6 +370,12 @@ export function useFileOperations() {
           const fileName = segments[segments.length - 1] ?? "";
           if (!fileName || fileName === ".DS_Store") continue;
 
+          if (!isImportPathSafe(path)) {
+            skippedCount++;
+            firstSkipReason ??= `${fileName} (invalid or overly deep path)`;
+            continue;
+          }
+
           if (segments.some((s) => IGNORED_DIR_SEGMENTS.has(s))) {
             skippedCount++;
             firstSkipReason ??= `${fileName} (ignored directory)`;
@@ -349,6 +386,18 @@ export function useFileOperations() {
             skippedCount++;
             firstSkipReason ??= `${fileName} (unsupported type)`;
             continue;
+          }
+
+          const declaredBytes = declaredUncompressedSize(entry);
+          if (declaredBytes !== null) {
+            if (declaredBytes > MAX_FILE_BYTES) {
+              skippedCount++;
+              firstSkipReason ??= `${fileName} (>1 MB)`;
+              continue;
+            }
+            if (importedBytes + declaredBytes > MAX_IMPORTED_BYTES) {
+              return { error: "ZIP expands beyond the 25 MB import limit." };
+            }
           }
 
           let content: string;
@@ -375,7 +424,7 @@ export function useFileOperations() {
 
           entries.push({
             id: generateId(),
-            path,
+            path: normalizePath(path),
             name: fileName,
             language: toLanguageMode(getLanguageFromFilename(fileName)),
             content,
@@ -409,6 +458,11 @@ export function useFileOperations() {
                 content: entry.content,
               })),
             ];
+            if (documents.length > MAX_IMPORTED_DOCUMENTS) {
+              return {
+                error: `ZIP creates too many files and folders (max ${MAX_IMPORTED_DOCUMENTS}).`,
+              };
+            }
             const payload = { documents };
             const requestBytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
             if (requestBytes > MAX_BULK_REQUEST_BYTES) {

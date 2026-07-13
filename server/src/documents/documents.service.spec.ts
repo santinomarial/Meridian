@@ -151,6 +151,29 @@ describe('DocumentsService', () => {
       ).rejects.toBeInstanceOf(PayloadTooLargeException);
       expect(prisma.document.create).not.toHaveBeenCalled();
     });
+
+    it('rejects filesystem-impossible names and excessively deep paths', async () => {
+      const longName = `${'a'.repeat(256)}.txt`;
+      await expect(
+        service.createDocument({
+          workspaceId: 'ws-1',
+          type: DocumentType.FILE,
+          path: longName,
+          name: longName,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      const deepPath = `${Array.from({ length: 65 }, () => 'd').join('/')}/x.txt`;
+      await expect(
+        service.createDocument({
+          workspaceId: 'ws-1',
+          type: DocumentType.FILE,
+          path: deepPath,
+          name: 'x.txt',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.document.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('bulkCreateDocuments', () => {
