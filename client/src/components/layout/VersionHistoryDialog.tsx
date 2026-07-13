@@ -180,8 +180,21 @@ function VersionHistoryDialogBody() {
   ]);
 
   const beforeMount = registerMeridianMonacoThemes;
-  const onDiffMount: DiffOnMount = (_editor, monaco) => {
+  const onDiffMount: DiffOnMount = (diffEditor, monaco) => {
     monaco.editor.setTheme(monacoTheme);
+
+    // @monaco-editor/react disposes DiffEditor models before the widget, which
+    // makes Monaco throw while the widget is still observing those models.
+    // Keep them through the library cleanup and release them immediately after
+    // the widget itself reports disposal.
+    const models = diffEditor.getModel();
+    diffEditor.onDidDispose(() => {
+      queueMicrotask(() => {
+        for (const model of [models?.original, models?.modified]) {
+          if (model && !model.isDisposed()) model.dispose();
+        }
+      });
+    });
   };
 
   return (
@@ -395,7 +408,7 @@ function VersionHistoryDialogBody() {
                 {/* Editor */}
                 <div className="min-h-0 flex-1" data-testid={showDiff ? "version-diff" : "version-preview"}>
                   <DiffEditor
-                    key={`${selectedDetail.id}:${showDiff ? "diff" : "preview"}`}
+                    key={selectedDetail.id}
                     height="100%"
                     language={language}
                     theme={monacoTheme}
@@ -406,6 +419,8 @@ function VersionHistoryDialogBody() {
                     options={DIFF_OPTIONS}
                     beforeMount={beforeMount}
                     onMount={onDiffMount}
+                    keepCurrentOriginalModel
+                    keepCurrentModifiedModel
                   />
                 </div>
               </>
