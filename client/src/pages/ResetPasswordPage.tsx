@@ -117,7 +117,7 @@ export function ResetPasswordPage() {
                   {/* Invalid/expired token: offer a way back to the forgot form */}
                   {isTokenError(error) ? (
                     <Link
-                      to="/"
+                      to="/forgot-password"
                       className="mt-1 block text-primary hover:underline"
                       data-testid="back-to-forgot"
                     >

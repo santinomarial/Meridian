@@ -103,50 +103,21 @@ test("password requirements list is visible in sign-up mode", async ({ page }) =
 // ── 7. Forgot password flow (no backend needed) ────────────────────────────────
 
 test("forgot password flow shows professional success message", async ({ page }) => {
-  await page.goto("/");
-  // Simulate a failed login first by navigating directly to forgot mode
-  // (the link appears after a failed login, but we can also test it via the
-  //  direct flow: submit invalid creds → see the link)
-  // For offline testing we skip the actual login step and just click through.
+  await page.route("**/auth/forgot-password", (route) =>
+    route.abort("connectionrefused"),
+  );
+  await page.goto("/forgot-password");
 
-  // Because clicking "Forgot password?" only appears after a 401 response
-  // from the backend, we navigate to forgot mode by hacking the submit —
-  // but only the "Back to Log in" → "Don't have account" path is backend-free.
-  // We test the route that the ForgotSuccess state is reachable without backend
-  // by directly calling onModeChange("forgot") through the "Forgot password?" button
-  // that appears when showForgotLink=true.  Without a real 401 response that
-  // button won't appear, so we instead verify the back-to-login navigation
-  // and that the forgot form and success message render correctly when reached.
+  await expect(page.getByTestId("auth-submit")).toContainText("Send reset link");
+  await page.getByLabel("Email Address").fill("person@example.com");
+  await page.getByTestId("auth-submit").click();
 
-  // Reach the forgot state: go to signin, open the account-less path by
-  // exploiting that the URL stays "/" regardless of auth-mode — so we use
-  // page.evaluate to trigger the React state change.
-  // TODO: expose a direct URL /forgot-password to reach this state without JS hacks.
-
-  // Practical smoke test: submit the login form with wrong credentials,
-  // then check the forgot link appears (requires backend OR we check the
-  // frontend rendering path):
-  // Without backend the request will fail with a network error, not a 401,
-  // so the "Forgot password?" link won't appear. We therefore just confirm
-  // the forgot form renders correctly once reached via a synthetic eval.
-
-  // Instead, verify that when the backend IS unavailable the forgot button
-  // itself is never shown (network error ≠ 401) and that the form still
-  // works for the pure-frontend forgot path by reloading in demo mode.
-  // Full coverage of this flow with a real 401 is in the backend test below.
-  await page.goto("/");
-  // The forgot form is reachable even without a 401 — just not via the UI
-  // "Forgot password?" shortcut.  Use evaluate to switch mode directly.
-  await page.evaluate(() => {
-    // Dispatch a custom event the app can't listen to, but we can manipulate
-    // the React state indirectly by clicking the switch buttons multiple times.
-    // Instead just navigate to the landed page with a param that React would
-    // pick up — but the app doesn't support that yet.
-    // We use a best-effort: fill a wrong password, submit,
-    // then if the error link appears (backend up) click it, else skip.
-  });
-  // Minimal smoke: the page stays at "/" without crashing.
+  await expect(page.getByTestId("forgot-success")).toContainText(
+    "reset link has been sent",
+  );
+  await page.getByTestId("back-to-login").click();
   await expect(page).toHaveURL("/");
+  await expect(page.getByTestId("auth-submit")).toContainText("Log in");
 });
 
 // ── 8–10. Backend-required tests ───────────────────────────────────────────────
@@ -203,9 +174,7 @@ test.describe("backend required — auth", () => {
 
   test("forgot password flow: enter email, get success message", async ({ page }) => {
     await page.goto("/");
-    // Trigger the forgot link via a failed login
-    await fillLogin(page, "nobody@example.com", "WrongPass@1!");
-    await expect(page.getByTestId("forgot-password-link")).toBeVisible();
+    await page.getByLabel("Email Address").fill("nobody@example.com");
     await page.getByTestId("forgot-password-link").click();
 
     // Should switch to the forgot-password form, email pre-filled

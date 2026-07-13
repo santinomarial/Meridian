@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { PasswordStrength } from "../components/ui/PasswordStrength";
-import { ApiError, login, register, forgotPassword } from "../lib/api";
+import { login, register, forgotPassword } from "../lib/api";
 import { getAuthErrorMessage } from "../lib/authErrors";
 import { getPasswordRequirements } from "../lib/passwordPolicy";
 
@@ -55,8 +55,6 @@ function AmbientBackground() {
 }
 
 function LandingHeader({ onGetStarted }: { onGetStarted: () => void }) {
-  const navLinks = ["Docs", "Pricing", "Changelog"] as const;
-
   return (
     <header className="fixed top-0 z-50 flex w-full items-center justify-between border-b border-outline-variant bg-surface-dim/80 px-6 py-3 backdrop-blur-md">
       <div className="flex items-center gap-3">
@@ -65,17 +63,6 @@ function LandingHeader({ onGetStarted }: { onGetStarted: () => void }) {
         </div>
         <span className="text-display-lg font-bold text-on-surface">Meridian</span>
       </div>
-      <nav className="hidden gap-6 md:flex" aria-label="Site">
-        {navLinks.map((link) => (
-          <a
-            key={link}
-            href="#"
-            className="text-body-md text-on-surface-variant transition-colors duration-200 hover:text-primary"
-          >
-            {link}
-          </a>
-        ))}
-      </nav>
       <button
         type="button"
         onClick={onGetStarted}
@@ -137,19 +124,20 @@ function IconField({
 function AuthCard({
   mode,
   onModeChange,
+  initialEmail = "",
 }: {
   mode: AuthMode;
-  onModeChange: (mode: AuthMode) => void;
+  onModeChange: (mode: AuthMode, email?: string) => void;
+  initialEmail?: string;
 }) {
   const navigate = useNavigate();
-  const prevModeRef = useRef<AuthMode>(mode);
+  const prevModeRef = useRef<AuthMode | null>(null);
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showForgotLink, setShowForgotLink] = useState(false);
   const [forgotSuccess, setForgotSuccess] = useState(false);
 
   // Keep email when switching signin ↔ forgot so the forgot-password form is pre-filled.
@@ -157,6 +145,7 @@ function AuthCard({
   useEffect(() => {
     const prevMode = prevModeRef.current;
     prevModeRef.current = mode;
+    if (prevMode === null) return;
     const keepEmail =
       (prevMode === "signin" && mode === "forgot") ||
       (prevMode === "forgot" && mode === "signin");
@@ -166,7 +155,6 @@ function AuthCard({
     setPassword("");
     setConfirmPassword("");
     setError(null);
-    setShowForgotLink(false);
     setForgotSuccess(false);
     if (!keepEmail) {
       setEmail("");
@@ -176,7 +164,6 @@ function AuthCard({
   const handleSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     setError(null);
-    setShowForgotLink(false);
 
     if (mode === "forgot") {
       setLoading(true);
@@ -216,9 +203,6 @@ function AuthCard({
       navigate(getSafeRedirect());
     } catch (err) {
       setError(getAuthErrorMessage(err, { invalidCredentialsFor401: mode === "signin" }));
-      if (mode === "signin" && err instanceof ApiError && err.status === 401) {
-        setShowForgotLink(true);
-      }
     } finally {
       setLoading(false);
     }
@@ -279,9 +263,21 @@ function AuthCard({
 
           {!isForgot ? (
             <div className="space-y-1.5">
-              <label htmlFor="password" className="label-caps ml-1 text-on-surface-variant">
-                Password
-              </label>
+              <div className="flex items-center justify-between gap-3">
+                <label htmlFor="password" className="label-caps ml-1 text-on-surface-variant">
+                  Password
+                </label>
+                {!isSignUp ? (
+                  <button
+                    type="button"
+                    onClick={() => onModeChange("forgot", email)}
+                    className="text-[11px] font-medium text-primary hover:underline"
+                    data-testid="forgot-password-link"
+                  >
+                    Forgot password?
+                  </button>
+                ) : null}
+              </div>
               <div className="group relative">
                 <MaterialIcon
                   name="lock"
@@ -332,16 +328,6 @@ function AuthCard({
           {error !== null ? (
             <div role="alert" className="rounded-lg bg-error/10 px-3 py-2 text-[12px] text-error" data-testid="auth-error">
               <p>{error}</p>
-              {showForgotLink ? (
-                <button
-                  type="button"
-                  onClick={() => onModeChange("forgot")}
-                  className="mt-1 text-primary hover:underline"
-                  data-testid="forgot-password-link"
-                >
-                  Forgot password?
-                </button>
-              ) : null}
             </div>
           ) : null}
 
@@ -400,15 +386,7 @@ function AuthCard({
         )}
         {isSignUp ? (
           <p className="text-center text-[11px] leading-relaxed text-outline">
-            By creating an account, you agree to our{" "}
-            <a href="#" className="text-on-surface-variant underline">
-              Terms of Service
-            </a>{" "}
-            and{" "}
-            <a href="#" className="text-on-surface-variant underline">
-              Privacy Policy
-            </a>
-            .
+            Your account is protected with a secure, revocable session.
           </p>
         ) : null}
       </div>
@@ -417,39 +395,63 @@ function AuthCard({
 }
 
 function LandingFooter() {
-  const links = ["Privacy Policy", "Terms of Service", "Status"] as const;
-
   return (
     <footer className="relative z-10 flex w-full flex-col items-center justify-between gap-4 border-t border-outline-variant bg-surface-container-lowest/50 px-8 py-6 backdrop-blur-sm md:flex-row">
       <div className="flex items-center gap-6">
-        <span className="text-on-surface-variant label-caps">© 2024 Meridian Systems Inc.</span>
+        <span className="text-on-surface-variant label-caps">
+          © {new Date().getFullYear()} Meridian Systems Inc.
+        </span>
       </div>
-      <div className="flex gap-6">
-        {links.map((link) => (
-          <a
-            key={link}
-            href="#"
-            className="text-body-sm text-on-surface-variant transition-colors hover:text-primary"
-          >
-            {link}
-          </a>
-        ))}
-      </div>
+      <p className="text-body-sm text-on-surface-variant">
+        Realtime collaboration · Version history · Secure sharing
+      </p>
     </footer>
   );
 }
 
 export function LandingPage() {
   const navigate = useNavigate();
-  const [authMode, setAuthMode] = useState<AuthMode>("signin");
+  const location = useLocation();
+  const isForgotRoute = location.pathname === "/forgot-password";
+  const [standardAuthMode, setStandardAuthMode] = useState<Exclude<AuthMode, "forgot">>(
+    "signin",
+  );
+  const authMode: AuthMode = isForgotRoute ? "forgot" : standardAuthMode;
+  const initialEmail =
+    typeof location.state === "object" &&
+    location.state !== null &&
+    "email" in location.state &&
+    typeof location.state.email === "string"
+      ? location.state.email
+      : "";
+
+  const handleModeChange = (mode: AuthMode, email = ""): void => {
+    if (mode === "forgot") {
+      navigate(
+        { pathname: "/forgot-password", search: location.search },
+        { state: { email } },
+      );
+      return;
+    }
+    setStandardAuthMode(mode);
+    if (isForgotRoute) {
+      navigate({ pathname: "/", search: location.search }, { replace: true });
+    }
+  };
 
   useEffect(() => {
     const html = document.documentElement;
     const body = document.body;
     const root = document.getElementById("root");
 
-    html.classList.add("dark");
-    html.style.colorScheme = "dark";
+    let theme: "light" | "dark" = "dark";
+    try {
+      if (localStorage.getItem("meridian-theme") === "light") theme = "light";
+    } catch {
+      // localStorage unavailable; retain the dark default.
+    }
+    html.classList.toggle("dark", theme === "dark");
+    html.style.colorScheme = theme;
 
     const prevHtmlOverflow = html.style.overflow;
     const prevBodyOverflow = body.style.overflow;
@@ -478,10 +480,15 @@ export function LandingPage() {
   return (
     <div className="flex min-h-screen flex-col overflow-hidden bg-background text-body-md text-on-background selection:bg-primary-container selection:text-on-primary-container">
       <AmbientBackground />
-      <LandingHeader onGetStarted={() => navigate("/workspace")} />
+      <LandingHeader onGetStarted={() => handleModeChange("signup")} />
 
       <main className="relative z-10 mt-12 flex flex-grow items-center justify-center p-6">
-        <AuthCard mode={authMode} onModeChange={setAuthMode} />
+        <AuthCard
+          key={isForgotRoute ? "forgot" : "standard"}
+          mode={authMode}
+          onModeChange={handleModeChange}
+          initialEmail={initialEmail}
+        />
       </main>
 
       <LandingFooter />
