@@ -35,8 +35,10 @@ the application. The editor does not depend on a public CDN at runtime.
   invitations, version history, export, and terminal features
 
 The workspace falls back to a clearly identified local demonstration dataset
-when the server cannot be reached. This fallback is not persistent and does not
-replace the server for integration testing.
+when backend workspace loading cannot complete because of a network or server
+failure. An authentication `401` returns the user to sign-in instead. The
+fallback is not persistent and does not replace the server for integration
+testing.
 
 ## Local development
 

@@ -13,7 +13,8 @@ There is no root package manifest; run package commands from `client/` or
 - Monaco-based editing with a hierarchical file tree, tabs, command palette,
   keyboard shortcuts, and language-aware editor behavior.
 - Concurrent document editing through Yjs, including cursor and selection
-  presence, workspace chat, reconnect synchronization, and durable update logs.
+  presence, workspace chat, reconnect synchronization, and asynchronously
+  persisted update logs.
 - Workspace ownership and `OWNER`, `EDITOR`, and `VIEWER` membership roles,
   with authorization enforced by the API and realtime gateways.
 - File and folder creation, rename, deletion, local-file import, ZIP import and
@@ -24,6 +25,8 @@ There is no root package manifest; run package commands from `client/` or
   server-side directory and can run supported source files.
 - Structured logging, request identifiers, HTTP and WebSocket rate limits,
   health probes, readiness checks, and generated OpenAPI documentation.
+- A clearly labeled, non-persistent local demonstration workspace when backend
+  workspace loading fails; authentication failures return to sign-in instead.
 
 ## Architecture
 
@@ -34,10 +37,13 @@ There is no root package manifest; run package commands from `client/` or
 | Primary datastore | PostgreSQL 16, Prisma | Users, sessions, memberships, documents, invitations, versions, Yjs updates, and snapshots |
 | Coordination | Redis 7, ioredis | Cross-instance realtime fan-out, authorization invalidation, sequence allocation, chat, and terminal file synchronization |
 
-PostgreSQL is the durable source of truth. Each active collaborative document
-also has an in-memory `Y.Doc`; incremental updates are persisted and periodically
-compacted into snapshots. Redis is optional for a single server process and
-required when more than one server instance is active.
+PostgreSQL stores the durable application state. Each active collaborative
+document also has an in-memory `Y.Doc`; incremental updates are queued for
+asynchronous persistence and periodically compacted into snapshots. A database
+write failure is logged and can leave a live update recoverable by connected
+clients but unavailable after every client and server copy is lost. Redis is
+optional for a single server process and required when more than one server
+instance is active.
 
 Detailed diagrams and runtime sequences are available in
 [Architecture](docs/architecture.md). Multi-instance requirements and failure
@@ -97,7 +103,8 @@ following accounts:
 
 The default development password is `Meridian1!`. Set
 `MERIDIAN_SEED_PASSWORD` before `npm run db:seed` to override it. Seeding with
-`NODE_ENV=production` requires that override.
+`NODE_ENV=production` requires that override, but the seed still creates fixed
+demonstration identities and should not be run against a production database.
 
 ### 2. Start the client
 
@@ -119,7 +126,8 @@ Socket.IO when no Vite environment override is present.
 | `http://localhost:5173` | Web client |
 | `http://localhost:3000/health` | Process liveness |
 | `http://localhost:3000/ready` | PostgreSQL readiness and Redis status |
-| `http://localhost:3000/docs` | Swagger UI and OpenAPI schema |
+| `http://localhost:3000/docs` | Swagger UI |
+| `http://localhost:3000/docs-json` | Raw OpenAPI document |
 | `http://localhost:5555` | Prisma Studio after `npm run db:studio` in `server/` |
 
 Stop the local infrastructure with `npm run infra:down` from `server/`.
@@ -221,10 +229,15 @@ MERIDIAN_BACKEND_URL=http://localhost:3000 npm run test:e2e
 
 Backend-dependent tests skip when the API cannot be reached. `E2E_TEST=true`
 must never be used for normal operation; startup rejects it when
-`NODE_ENV=production`.
+`NODE_ENV=production`. Run it only in an isolated local or CI process against a
+disposable test database: its tightly scoped cleanup and password-reset helpers
+are intentionally unauthenticated.
 
 ## Production considerations
 
+- This repository does not include a production deployment manifest or
+  infrastructure definition. The component builds and operating constraints
+  are documented, but the deployment topology must be supplied separately.
 - Apply committed migrations with `npx prisma migrate deploy`; do not use
   `prisma migrate dev` in a production release.
 - Build the server with `npm run build` and run `npm run start:prod`. Build the
@@ -239,6 +252,9 @@ must never be used for normal operation; startup rejects it when
   is unavailable, run only one server instance. The server does not retry an
   initial Redis connection failure; start Redis first or restart the API after
   Redis becomes available.
+- HTTP throttling is per server process and WebSocket throttling is per socket.
+  Apply ingress-level request limits and abuse controls when running multiple
+  replicas or accepting untrusted public traffic.
 - The terminal is disabled by default. When enabled, it launches a host OS
   shell as the server user. Its temporary workspace directory, reduced
   environment, path validation, and authorization checks are not container or
@@ -248,6 +264,8 @@ must never be used for normal operation; startup rejects it when
   reset or email invitations must be delivered. Without a provider, development
   logs action URLs; production records the delivery failure without revealing
   whether an account exists.
+- Registration does not verify ownership of the supplied email address. Add an
+  email-verification flow before treating email identity as verified.
 - The Swagger UI is mounted at `/docs` in every environment. Restrict it at the
   ingress layer if the API schema should not be public.
 

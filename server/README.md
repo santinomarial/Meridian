@@ -21,7 +21,7 @@ See [architecture.md](../docs/architecture.md) for the system design and [scalin
 
 - Node.js 22, which is the version used by CI
 - npm and the committed `package-lock.json`
-- PostgreSQL 16 and, for the complete runtime, Redis 7
+- PostgreSQL and, for the complete runtime, Redis; the bundled Compose file and CI use PostgreSQL 16 and Redis 7
 - Docker with Compose v2 for the bundled development infrastructure, or equivalent external services
 - A native C/C++ build toolchain and Python on platforms where `node-pty` has no compatible prebuilt binary
 
@@ -125,7 +125,7 @@ When `RESEND_API_KEY` is absent in development, reset and invite URLs are printe
 
 ## HTTP API
 
-Swagger at `/docs` is the complete route and schema reference. It is registered in every environment and has no application-level authentication; restrict it at the reverse proxy if it should not be public.
+Swagger at `/docs` is the generated route and schema reference. It is registered in every environment and has no application-level authentication; restrict it at the reverse proxy if it should not be public.
 
 The main route groups are:
 
@@ -164,7 +164,7 @@ The application does not terminate TLS. Production must use HTTPS at a trusted r
 
 ### Validation and request limits
 
-Global validation strips no unknown properties: unknown DTO fields are rejected, and supported fields are transformed by Nest's validation pipeline. JSON parser limits are route-specific:
+Global validation rejects unknown DTO properties and transforms supported values through Nest's validation pipeline. JSON parser limits are route-specific:
 
 | Request class | Wire limit |
 |---|---|
@@ -229,7 +229,7 @@ Redis is optional only for one server process. A multi-replica deployment requir
 
 Redis fans out document updates, awareness, chat, authorization invalidations, and terminal file operations. It also owns the cross-process document sequence counter. Without Redis, those facilities fall back to single-process behavior and multiple replicas can allocate conflicting sequence numbers.
 
-Redis connection attempts use a three-second startup timeout and do not automatically reconnect after an initial connection failure; restart the server after restoring Redis. Redis is not part of the readiness decision, so production monitoring must alert on its reported state separately when horizontal scaling is enabled.
+Redis connection attempts use a three-second startup timeout, and the clients are configured not to retry after a connection failure; restart the server after restoring Redis. Redis is not part of the readiness decision, so production monitoring must alert on its reported state separately when horizontal scaling is enabled.
 
 ## Optional terminal
 
