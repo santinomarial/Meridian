@@ -14,6 +14,8 @@ import { WorkspacesService } from '../../workspaces/workspaces.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkspaceRole } from '@prisma/client';
 import type { JwtPayload } from '../auth/types/auth-user.type';
+import { Doc } from 'yjs';
+import { Awareness } from 'y-protocols/awareness';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -244,6 +246,14 @@ describe('EditorGateway.authenticateSocket', () => {
 // ---------------------------------------------------------------------------
 
 describe('EditorGateway.handleJoinDocument', () => {
+  const awarenessInstances: Awareness[] = [];
+
+  function makeAwareness(doc: Doc): Awareness {
+    const awareness = new Awareness(doc);
+    awarenessInstances.push(awareness);
+    return awareness;
+  }
+
   function makeAuthenticatedSocket(id = 'sock-1'): DeepMockProxy<Socket> {
     const socket = makeSocket({ id, data: { user: AUTH_USER } });
     socket.join.mockResolvedValue(undefined as never);
@@ -253,6 +263,13 @@ describe('EditorGateway.handleJoinDocument', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    for (const awareness of awarenessInstances.splice(0)) {
+      awareness.destroy();
+      awareness.doc.destroy();
+    }
   });
 
   it('emits error and does not join room when user is not authorized', async () => {
@@ -279,13 +296,9 @@ describe('EditorGateway.handleJoinDocument', () => {
       role: WorkspaceRole.EDITOR,
     });
 
-    const { Doc } = await import('yjs');
     const doc = new Doc();
     documentManager.acquire.mockResolvedValue(doc);
-
-    const { Awareness } = await import('y-protocols/awareness');
-    const awareness = new Awareness(doc);
-    documentManager.getAwareness.mockReturnValue(awareness);
+    documentManager.getAwareness.mockReturnValue(makeAwareness(doc));
 
     await gateway.handleJoinDocument({ documentId: 'doc-1' }, socket);
 
@@ -305,12 +318,9 @@ describe('EditorGateway.handleJoinDocument', () => {
       role: WorkspaceRole.OWNER,
     });
 
-    const { Doc } = await import('yjs');
     const doc = new Doc();
     documentManager.acquire.mockResolvedValue(doc);
-
-    const { Awareness } = await import('y-protocols/awareness');
-    documentManager.getAwareness.mockReturnValue(new Awareness(doc));
+    documentManager.getAwareness.mockReturnValue(makeAwareness(doc));
 
     await gateway.handleJoinDocument({ documentId: 'doc-1' }, socket);
 
@@ -330,12 +340,9 @@ describe('EditorGateway.handleJoinDocument', () => {
       role: WorkspaceRole.VIEWER,
     });
 
-    const { Doc } = await import('yjs');
     const doc = new Doc();
     documentManager.acquire.mockResolvedValue(doc);
-
-    const { Awareness } = await import('y-protocols/awareness');
-    documentManager.getAwareness.mockReturnValue(new Awareness(doc));
+    documentManager.getAwareness.mockReturnValue(makeAwareness(doc));
 
     await gateway.handleJoinDocument({ documentId: 'doc-1' }, socket);
 
@@ -369,12 +376,9 @@ describe('EditorGateway.handleJoinDocument', () => {
       role: WorkspaceRole.EDITOR,
     });
 
-    const { Doc } = await import('yjs');
     const doc = new Doc();
     documentManager.acquire.mockResolvedValue(doc);
-
-    const { Awareness } = await import('y-protocols/awareness');
-    documentManager.getAwareness.mockReturnValue(new Awareness(doc));
+    documentManager.getAwareness.mockReturnValue(makeAwareness(doc));
 
     await gateway.handleJoinDocument(
       { documentId: 'doc-1', userId: 'evil-override', displayName: 'Hacker' },
