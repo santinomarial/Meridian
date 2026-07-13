@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { MaterialIcon } from "../ui/MaterialIcon";
@@ -62,6 +62,9 @@ function VersionHistoryDialogBody() {
   const theme = useWorkspaceStore((s) => s.theme);
   const addNotification = useWorkspaceStore((s) => s.addNotification);
   const markDocumentRestored = useWorkspaceStore((s) => s.markDocumentRestored);
+  const applyRemoteFileContent = useWorkspaceStore(
+    (s) => s.applyRemoteFileContent,
+  );
 
   const canRestore = userRole === "OWNER" || userRole === "EDITOR";
   const activeTab = openTabs.find((t) => t.fileId === activeFileId);
@@ -80,6 +83,7 @@ function VersionHistoryDialogBody() {
   const [showDiff, setShowDiff] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const detailRequestId = useRef(0);
 
   // ── Load the version list ──────────────────────────────────────────────────
   const loadVersions = useCallback(async (): Promise<void> => {
@@ -102,6 +106,12 @@ function VersionHistoryDialogBody() {
     void loadVersions();
   }, [loadVersions]);
 
+  useEffect(() => {
+    return () => {
+      detailRequestId.current += 1;
+    };
+  }, [activeFileId]);
+
   // ── Escape to close ─────────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -118,14 +128,17 @@ function VersionHistoryDialogBody() {
       setSelectedId(version.id);
       setConfirming(false);
       setDetailLoading(true);
+      const requestId = ++detailRequestId.current;
       try {
         const detail = await getDocumentVersion(activeFileId, version.id);
-        setSelectedDetail(detail);
+        if (requestId === detailRequestId.current) setSelectedDetail(detail);
       } catch {
-        setSelectedDetail(null);
-        toast("Could not load that version.", "error");
+        if (requestId === detailRequestId.current) {
+          setSelectedDetail(null);
+          toast("Could not load that version.", "error");
+        }
       } finally {
-        setDetailLoading(false);
+        if (requestId === detailRequestId.current) setDetailLoading(false);
       }
     },
     [activeFileId],
@@ -137,8 +150,10 @@ function VersionHistoryDialogBody() {
     setRestoring(true);
     try {
       const result = await restoreDocumentVersion(activeFileId, selectedDetail.id);
-      // The editor content is updated by the broadcast Yjs update; reconcile the
-      // dirty/save indicators so the tab is not left looking unsaved.
+      // Apply the authoritative REST response immediately as a fallback for a
+      // temporarily disconnected socket. The Yjs broadcast will converge to
+      // the same content for connected collaborators.
+      applyRemoteFileContent(activeFileId, result.document.content ?? "");
       markDocumentRestored(activeFileId);
       addNotification({
         icon: "history",
@@ -158,6 +173,7 @@ function VersionHistoryDialogBody() {
   }, [
     activeFileId,
     selectedDetail,
+    applyRemoteFileContent,
     markDocumentRestored,
     addNotification,
     loadVersions,

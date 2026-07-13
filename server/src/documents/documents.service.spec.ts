@@ -1,4 +1,9 @@
-import { NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+  PayloadTooLargeException,
+} from '@nestjs/common';
 import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
 import JSZip from 'jszip';
 import type { Document, DocumentVersion } from '@prisma/client';
@@ -17,7 +22,7 @@ const BASE_DOC: Document = {
   workspaceId: 'ws-1',
   parentId: null,
   type: DocumentType.FILE,
-  path: 'src/index.ts',
+  path: 'index.ts',
   name: 'index.ts',
   language: 'typescript',
   content: 'export {};',
@@ -58,7 +63,7 @@ describe('DocumentsService', () => {
       const data: CreateDocumentData = {
         workspaceId: 'ws-1',
         type: DocumentType.FILE,
-        path: 'src/index.ts',
+        path: 'index.ts',
         name: 'index.ts',
         language: 'typescript',
       };
@@ -66,8 +71,172 @@ describe('DocumentsService', () => {
 
       const result = await service.createDocument(data);
 
-      expect(prisma.document.create).toHaveBeenCalledWith({ data });
+      expect(prisma.document.create).toHaveBeenCalledWith({
+        data: { ...data, parentId: null },
+      });
       expect(result).toEqual(BASE_DOC);
+    });
+
+    it('creates a child only under a folder in the same workspace', async () => {
+      const data: CreateDocumentData = {
+        workspaceId: 'ws-1',
+        parentId: 'folder-1',
+        type: DocumentType.FILE,
+        path: 'src/auth.ts',
+        name: 'auth.ts',
+      };
+      prisma.document.findUnique.mockResolvedValue(FOLDER_DOC);
+      prisma.document.create.mockResolvedValue(CHILD_DOC);
+
+      await service.createDocument(data);
+
+      expect(prisma.document.create).toHaveBeenCalledWith({ data });
+    });
+
+    it('rejects a parent from another workspace', async () => {
+      prisma.document.findUnique.mockResolvedValue({
+        ...FOLDER_DOC,
+        workspaceId: 'ws-2',
+      });
+
+      await expect(
+        service.createDocument({
+          workspaceId: 'ws-1',
+          parentId: 'folder-1',
+          type: DocumentType.FILE,
+          path: 'src/auth.ts',
+          name: 'auth.ts',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.document.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects using a file as a parent', async () => {
+      prisma.document.findUnique.mockResolvedValue(BASE_DOC);
+
+      await expect(
+        service.createDocument({
+          workspaceId: 'ws-1',
+          parentId: 'doc-1',
+          type: DocumentType.FILE,
+          path: 'index.ts/auth.ts',
+          name: 'auth.ts',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects a path that disagrees with its parent and name', async () => {
+      prisma.document.findUnique.mockResolvedValue(FOLDER_DOC);
+
+      await expect(
+        service.createDocument({
+          workspaceId: 'ws-1',
+          parentId: 'folder-1',
+          type: DocumentType.FILE,
+          path: 'other/auth.ts',
+          name: 'auth.ts',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('bulkCreateDocuments', () => {
+    beforeEach(() => {
+      prisma.$transaction.mockImplementation(
+        async (cb: (tx: typeof prisma) => unknown) => cb(prisma),
+      );
+    });
+
+    it('resolves imported descendants to their folder parent', async () => {
+      prisma.document.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+      prisma.document.create
+        .mockResolvedValueOnce(FOLDER_DOC)
+        .mockResolvedValueOnce(CHILD_DOC);
+
+      await service.bulkCreateDocuments('ws-1', [
+        {
+          type: DocumentType.FILE,
+          path: 'src/auth.ts',
+          name: 'auth.ts',
+        },
+        { type: DocumentType.FOLDER, path: 'src', name: 'src' },
+      ]);
+
+      expect(prisma.document.create).toHaveBeenNthCalledWith(2, {
+        data: expect.objectContaining({
+          path: 'src/auth.ts',
+          parentId: 'folder-1',
+        }),
+      });
+    });
+
+    it('rejects an import whose parent path does not exist', async () => {
+      prisma.document.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.bulkCreateDocuments('ws-1', [
+          {
+            type: DocumentType.FILE,
+            path: 'missing/auth.ts',
+            name: 'auth.ts',
+          },
+        ]),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.document.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects importing over an existing document of another type', async () => {
+      prisma.document.findUnique.mockResolvedValue(BASE_DOC);
+
+      await expect(
+        service.bulkCreateDocuments('ws-1', [
+          { type: DocumentType.FOLDER, path: 'index.ts', name: 'index.ts' },
+        ]),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('rejects more than 1,000 documents before opening a transaction', async () => {
+      const documents = Array.from({ length: 1_001 }, (_, index) => ({
+        type: DocumentType.FOLDER,
+        path: `folder-${index}`,
+        name: `folder-${index}`,
+      }));
+
+      await expect(
+        service.bulkCreateDocuments('ws-1', documents),
+      ).rejects.toBeInstanceOf(PayloadTooLargeException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects a document with more than 1 MiB of content', async () => {
+      await expect(
+        service.bulkCreateDocuments('ws-1', [
+          {
+            type: DocumentType.FILE,
+            path: 'large.txt',
+            name: 'large.txt',
+            content: 'x'.repeat(1024 * 1024 + 1),
+          },
+        ]),
+      ).rejects.toBeInstanceOf(PayloadTooLargeException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects more than 25 MiB of aggregate content', async () => {
+      const oneMiB = 'x'.repeat(1024 * 1024);
+      const documents = Array.from({ length: 26 }, (_, index) => ({
+        type: DocumentType.FILE,
+        path: `file-${index}.txt`,
+        name: `file-${index}.txt`,
+        content: oneMiB,
+      }));
+
+      await expect(
+        service.bulkCreateDocuments('ws-1', documents),
+      ).rejects.toBeInstanceOf(PayloadTooLargeException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 
@@ -149,15 +318,20 @@ describe('DocumentsService', () => {
 
   describe('updateMetadata', () => {
     it('updates the specified metadata fields', async () => {
-      const data: UpdateDocumentData = { name: 'renamed.ts', path: 'src/renamed.ts' };
+      prisma.$transaction.mockImplementation(
+        async (cb: (tx: typeof prisma) => unknown) => cb(prisma),
+      );
+      const data: UpdateDocumentData = { name: 'renamed.ts', path: 'renamed.ts' };
       const updated = { ...BASE_DOC, ...data };
+      prisma.document.findUnique.mockResolvedValue(BASE_DOC);
+      prisma.document.findMany.mockResolvedValue([BASE_DOC]);
       prisma.document.update.mockResolvedValue(updated);
 
       const result = await service.updateMetadata('doc-1', data);
 
       expect(prisma.document.update).toHaveBeenCalledWith({
         where: { id: 'doc-1' },
-        data,
+        data: { ...data, parentId: null },
       });
       expect(result.name).toBe('renamed.ts');
     });
@@ -186,10 +360,7 @@ describe('DocumentsService', () => {
     });
 
     it('creates a version when content meaningfully changes', async () => {
-      prisma.document.findUnique.mockResolvedValue({
-        content: 'old',
-        workspaceId: 'ws-1',
-      } as Document);
+      prisma.document.findUnique.mockResolvedValue({ ...BASE_DOC, content: 'old' });
       prisma.document.update.mockResolvedValue({ ...BASE_DOC, content: 'new' });
       prisma.documentVersion.findFirst.mockResolvedValue(null);
       prisma.documentVersion.create.mockResolvedValue({} as DocumentVersion);
@@ -210,10 +381,7 @@ describe('DocumentsService', () => {
     });
 
     it('does NOT create a version when content is unchanged (no duplicates)', async () => {
-      prisma.document.findUnique.mockResolvedValue({
-        content: 'same',
-        workspaceId: 'ws-1',
-      } as Document);
+      prisma.document.findUnique.mockResolvedValue({ ...BASE_DOC, content: 'same' });
       prisma.document.update.mockResolvedValue({ ...BASE_DOC, content: 'same' });
 
       await service.patchDocument('doc-1', { content: 'same' }, 'user-1');
@@ -222,10 +390,8 @@ describe('DocumentsService', () => {
     });
 
     it('does NOT create a version for a metadata-only patch', async () => {
-      prisma.document.findUnique.mockResolvedValue({
-        content: 'x',
-        workspaceId: 'ws-1',
-      } as Document);
+      prisma.document.findUnique.mockResolvedValue({ ...BASE_DOC, content: 'x' });
+      prisma.document.findMany.mockResolvedValue([BASE_DOC]);
       prisma.document.update.mockResolvedValue({ ...BASE_DOC, name: 'renamed.ts' });
 
       await service.patchDocument('doc-1', { name: 'renamed.ts' }, 'user-1');
@@ -234,10 +400,7 @@ describe('DocumentsService', () => {
     });
 
     it('increments versionNumber from the current max for the document', async () => {
-      prisma.document.findUnique.mockResolvedValue({
-        content: 'old',
-        workspaceId: 'ws-1',
-      } as Document);
+      prisma.document.findUnique.mockResolvedValue({ ...BASE_DOC, content: 'old' });
       prisma.document.update.mockResolvedValue({ ...BASE_DOC, content: 'new' });
       prisma.documentVersion.findFirst.mockResolvedValue({
         versionNumber: 7,
@@ -257,6 +420,84 @@ describe('DocumentsService', () => {
       await expect(
         service.patchDocument('missing', { content: 'x' }, 'user-1'),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('rejects moving a document under itself', async () => {
+      prisma.document.findUnique.mockResolvedValue(FOLDER_DOC);
+      prisma.document.findMany.mockResolvedValue([FOLDER_DOC]);
+
+      await expect(
+        service.patchDocument('folder-1', { parentId: 'folder-1' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.document.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects moving a document under a file', async () => {
+      prisma.document.findUnique.mockResolvedValue(FOLDER_DOC);
+      prisma.document.findMany.mockResolvedValue([FOLDER_DOC, BASE_DOC]);
+
+      await expect(
+        service.patchDocument('folder-1', { parentId: 'doc-1' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects moving a folder into one of its descendants', async () => {
+      const childFolder: Document = {
+        ...FOLDER_DOC,
+        id: 'folder-2',
+        parentId: 'folder-1',
+        path: 'src/lib',
+        name: 'lib',
+      };
+      prisma.document.findUnique.mockResolvedValue(FOLDER_DOC);
+      prisma.document.findMany.mockResolvedValue([FOLDER_DOC, childFolder]);
+
+      await expect(
+        service.patchDocument('folder-1', { parentId: 'folder-2' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('updates every descendant path atomically when a folder is renamed', async () => {
+      const childFolder: Document = {
+        ...FOLDER_DOC,
+        id: 'folder-2',
+        parentId: 'folder-1',
+        path: 'src/lib',
+        name: 'lib',
+      };
+      const grandchild: Document = {
+        ...CHILD_DOC,
+        id: 'doc-3',
+        parentId: 'folder-2',
+        path: 'src/lib/auth.ts',
+      };
+      prisma.document.findUnique.mockResolvedValue(FOLDER_DOC);
+      prisma.document.findMany.mockResolvedValue([
+        FOLDER_DOC,
+        childFolder,
+        grandchild,
+      ]);
+      prisma.document.update.mockResolvedValue({
+        ...FOLDER_DOC,
+        path: 'source',
+        name: 'source',
+      });
+
+      const result = await service.patchDocument('folder-1', {
+        name: 'source',
+        path: 'source',
+      });
+
+      expect(result.path).toBe('source');
+      expect(prisma.document.update).toHaveBeenCalledWith({
+        where: { id: 'folder-2' },
+        data: { path: 'source/lib' },
+      });
+      expect(prisma.document.update).toHaveBeenCalledWith({
+        where: { id: 'doc-3' },
+        data: { path: 'source/lib/auth.ts' },
+      });
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
   });
 

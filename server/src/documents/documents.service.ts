@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  PayloadTooLargeException,
 } from '@nestjs/common';
 import type { Document, DocumentVersion, Prisma } from '@prisma/client';
 import { DocumentType } from '@prisma/client';
@@ -15,6 +16,10 @@ export type { DocumentType };
 // First-path-segment prefixes that are runtime/build artifacts, never part of
 // a real workspace export even if a document somehow lives under them.
 const EXPORT_EXCLUDED_SEGMENTS = new Set(['.meridian-build', '.terminal-sandboxes']);
+
+export const BULK_IMPORT_MAX_DOCUMENTS = 1_000;
+export const BULK_IMPORT_MAX_CONTENT_BYTES = 1024 * 1024;
+export const BULK_IMPORT_MAX_TOTAL_CONTENT_BYTES = 25 * 1024 * 1024;
 
 /** Result of building a workspace export. */
 export interface WorkspaceExport {
@@ -139,6 +144,7 @@ export class DocumentsService {
     workspaceId: string,
     documents: Omit<CreateDocumentData, 'workspaceId'>[],
   ): Promise<Document[]> {
+    this.assertBulkImportLimits(documents);
     const normalized = documents.map((input) => {
       const path = this.validateDocumentPath(input.path);
       const name = this.validateDocumentName(input.name);
@@ -489,6 +495,32 @@ export class DocumentsService {
       throw new BadRequestException('Document name must be a single safe path segment');
     }
     return name;
+  }
+
+  private assertBulkImportLimits(
+    documents: Omit<CreateDocumentData, 'workspaceId'>[],
+  ): void {
+    if (documents.length > BULK_IMPORT_MAX_DOCUMENTS) {
+      throw new PayloadTooLargeException(
+        `Bulk import is limited to ${BULK_IMPORT_MAX_DOCUMENTS} documents`,
+      );
+    }
+
+    let totalContentBytes = 0;
+    for (const document of documents) {
+      const contentBytes = Buffer.byteLength(document.content ?? '', 'utf8');
+      if (contentBytes > BULK_IMPORT_MAX_CONTENT_BYTES) {
+        throw new PayloadTooLargeException(
+          `Document "${document.path}" exceeds the 1 MiB content limit`,
+        );
+      }
+      totalContentBytes += contentBytes;
+      if (totalContentBytes > BULK_IMPORT_MAX_TOTAL_CONTENT_BYTES) {
+        throw new PayloadTooLargeException(
+          'Bulk import exceeds the 25 MiB total content limit',
+        );
+      }
+    }
   }
 
   private validateDocumentPath(path: string): string {

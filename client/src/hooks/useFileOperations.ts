@@ -22,6 +22,8 @@ import type { FileNode, LanguageMode } from "../types";
 
 const MAX_FILE_BYTES = 1024 * 1024; // 1 MB per file
 const MAX_ZIP_BYTES = 100 * 1024 * 1024; // 100 MB ZIP total
+const MAX_IMPORTED_BYTES = 25 * 1024 * 1024; // 25 MB after decompression
+const MAX_IMPORTED_FILES = 1_000;
 
 const IGNORED_DIR_SEGMENTS = new Set([
   "node_modules",
@@ -130,6 +132,22 @@ function normalizePath(path: string): string {
   return path.split("/").filter(Boolean).join("/");
 }
 
+function findNodePath(
+  nodes: FileNode[],
+  nodeId: string,
+  parentPath = "",
+): { node: FileNode; path: string; parentPath: string } | null {
+  for (const node of nodes) {
+    const path = parentPath ? `${parentPath}/${node.name}` : node.name;
+    if (node.id === nodeId) return { node, path, parentPath };
+    if (node.kind === "folder") {
+      const found = findNodePath(node.children, nodeId, path);
+      if (found !== null) return found;
+    }
+  }
+  return null;
+}
+
 /** All ancestor folder paths needed by the given file entries, depth order. */
 function collectFolderPaths(entries: FileEntry[]): string[] {
   const folderPaths = new Set<string>();
@@ -194,7 +212,7 @@ export function useFileOperations() {
           fileId = doc.id;
           savedToBackend = true;
         } catch {
-          // Backend failed — keep local id.
+          return { error: "Could not create the file. Please try again." };
         }
       }
 
@@ -228,7 +246,7 @@ export function useFileOperations() {
           });
           folderId = doc.id;
         } catch {
-          // Backend failed — keep local id.
+          return { error: "Could not create the folder. Please try again." };
         }
       }
 
@@ -272,7 +290,7 @@ export function useFileOperations() {
           fileId = doc.id;
           savedToBackend = true;
         } catch {
-          // Keep local id on backend failure.
+          return { error: `Could not import ${file.name}. Please try again.` };
         }
       }
 
@@ -305,52 +323,63 @@ export function useFileOperations() {
         const entries: FileEntry[] = [];
         let skippedCount = 0;
         let firstSkipReason: string | undefined;
+        let importedBytes = 0;
+        const zipEntries = Object.entries(zip.files);
+        if (zipEntries.length > MAX_IMPORTED_FILES * 2) {
+          return { error: `ZIP contains too many entries (max ${MAX_IMPORTED_FILES} files).` };
+        }
 
-        await Promise.all(
-          Object.entries(zip.files).map(async ([path, entry]) => {
-            if (entry.dir) return;
+        for (const [path, entry] of zipEntries) {
+          if (entry.dir) continue;
 
-            const segments = path.split("/");
+          const segments = path.split("/");
 
-            // Skip .DS_Store and hidden OS files
-            const fileName = segments[segments.length - 1] ?? "";
-            if (!fileName || fileName === ".DS_Store") return;
+          // Skip .DS_Store and hidden OS files
+          const fileName = segments[segments.length - 1] ?? "";
+          if (!fileName || fileName === ".DS_Store") continue;
 
-            if (segments.some((s) => IGNORED_DIR_SEGMENTS.has(s))) {
-              skippedCount++;
-              firstSkipReason ??= `${fileName} (ignored directory)`;
-              return;
-            }
+          if (segments.some((s) => IGNORED_DIR_SEGMENTS.has(s))) {
+            skippedCount++;
+            firstSkipReason ??= `${fileName} (ignored directory)`;
+            continue;
+          }
 
-            if (!isSupportedTextFile(fileName)) {
-              skippedCount++;
-              firstSkipReason ??= `${fileName} (unsupported type)`;
-              return;
-            }
+          if (!isSupportedTextFile(fileName)) {
+            skippedCount++;
+            firstSkipReason ??= `${fileName} (unsupported type)`;
+            continue;
+          }
 
-            let content: string;
-            try {
-              content = await entry.async("string");
-            } catch {
-              skippedCount++;
-              firstSkipReason ??= `${fileName} (binary/unreadable)`;
-              return;
-            }
-            if (content.length > MAX_FILE_BYTES) {
-              skippedCount++;
-              firstSkipReason ??= `${fileName} (>1 MB)`;
-              return;
-            }
+          let content: string;
+          try {
+            content = await entry.async("string");
+          } catch {
+            skippedCount++;
+            firstSkipReason ??= `${fileName} (binary/unreadable)`;
+            continue;
+          }
+          const contentBytes = new TextEncoder().encode(content).byteLength;
+          if (contentBytes > MAX_FILE_BYTES) {
+            skippedCount++;
+            firstSkipReason ??= `${fileName} (>1 MB)`;
+            continue;
+          }
+          importedBytes += contentBytes;
+          if (importedBytes > MAX_IMPORTED_BYTES) {
+            return { error: "ZIP expands beyond the 25 MB import limit." };
+          }
+          if (entries.length >= MAX_IMPORTED_FILES) {
+            return { error: `ZIP contains too many supported files (max ${MAX_IMPORTED_FILES}).` };
+          }
 
-            entries.push({
-              id: generateId(),
-              path,
-              name: fileName,
-              language: toLanguageMode(getLanguageFromFilename(fileName)),
-              content,
-            });
-          }),
-        );
+          entries.push({
+            id: generateId(),
+            path,
+            name: fileName,
+            language: toLanguageMode(getLanguageFromFilename(fileName)),
+            content,
+          });
+        }
 
         if (entries.length === 0) {
           const detail = firstSkipReason ? ` First skipped: ${firstSkipReason}.` : "";
@@ -388,7 +417,7 @@ export function useFileOperations() {
             }
             syncedToBackend = true;
           } catch {
-            // Backend sync failed — import locally with generated ids.
+            return { error: "Could not sync the ZIP import. Please try again." };
           }
         }
 
@@ -424,20 +453,34 @@ export function useFileOperations() {
     async (nodeId: string, newName: string): Promise<FileOpResult> => {
       const trimmed = newName.trim();
       if (!trimmed) return { error: "Name cannot be empty." };
+      if (trimmed.includes("/") || trimmed.includes("\\")) {
+        return { error: "Name cannot contain path separators." };
+      }
 
-      // Optimistic local rename first — feels instant.
-      renameNode(nodeId, trimmed);
+      const current = findNodePath(useWorkspaceStore.getState().files, nodeId);
+      if (current === null) return { error: "That item no longer exists." };
+      if (current.node.kind === "file" && !isSupportedTextFile(trimmed)) {
+        return { error: "Unsupported file type." };
+      }
 
       if (isBackendAvailable && !nodeId.startsWith("local-")) {
         try {
-          await updateDocument(nodeId, { name: trimmed, path: trimmed });
+          const path = current.parentPath
+            ? `${current.parentPath}/${trimmed}`
+            : trimmed;
+          await updateDocument(nodeId, {
+            name: trimmed,
+            path,
+            ...(current.node.kind === "file"
+              ? { language: getLanguageFromFilename(trimmed) }
+              : {}),
+          });
         } catch {
-          // Backend rename failed — local state already updated; don't revert
-          // to avoid a jarring flip. Return a non-blocking warning.
-          return { error: `Renamed locally. Could not sync rename to backend.` };
+          return { error: "Could not rename the item. Please try again." };
         }
       }
 
+      renameNode(nodeId, trimmed);
       return {};
     },
     [isBackendAvailable, renameNode],
@@ -446,18 +489,15 @@ export function useFileOperations() {
   // ── Delete file or folder ──────────────────────────────────────────────────
   const deleteItem = useCallback(
     async (nodeId: string): Promise<FileOpResult> => {
-      // Remove from local state immediately.
-      deleteNode(nodeId);
-
       if (isBackendAvailable && !nodeId.startsWith("local-")) {
         try {
           await deleteDocument(nodeId);
         } catch {
-          // Backend delete failed — tree is already updated locally; warn softly.
-          return { error: "Deleted locally. Could not sync delete to backend." };
+          return { error: "Could not delete the item. Please try again." };
         }
       }
 
+      deleteNode(nodeId);
       return {};
     },
     [isBackendAvailable, deleteNode],

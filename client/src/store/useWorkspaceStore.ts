@@ -112,7 +112,13 @@ function removeNodeFromTree(
 function renameInTree(nodes: FileNode[], nodeId: string, newName: string): FileNode[] {
   return nodes.map((node) => {
     if (node.id === nodeId) {
-      return { ...node, name: newName };
+      return node.kind === "file"
+        ? {
+            ...node,
+            name: newName,
+            language: toLanguageMode(getLanguageFromFilename(newName)),
+          }
+        : { ...node, name: newName };
     }
     if (node.kind === "folder") {
       return { ...node, children: renameInTree(node.children, nodeId, newName) };
