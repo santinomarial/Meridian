@@ -22,6 +22,7 @@ import { MailService } from '../mail/mail.service';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 import { AUTH_COOKIE_NAME, authCookieOptions } from './auth-cookie';
+import { RealtimeAuthorizationService } from '../realtime-authorization/realtime-authorization.service';
 import { assertTestEmail } from '../../e2e/e2e-safety';
 
 @Injectable()
@@ -34,6 +35,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
+    private readonly realtimeAuthorization: RealtimeAuthorizationService,
     @InjectPinoLogger(AuthService.name)
     private readonly logger: PinoLogger,
   ) {
@@ -96,6 +98,7 @@ export class AuthService {
       where: { jti },
       data: { revokedAt: new Date() },
     });
+    await this.realtimeAuthorization.invalidateSession(jti);
     res.clearCookie(AUTH_COOKIE_NAME, authCookieOptions());
     this.logger.info({ jti }, 'Session revoked');
   }
@@ -204,6 +207,8 @@ export class AuthService {
         data: { revokedAt: resetAt },
       });
     });
+
+    await this.realtimeAuthorization.invalidateUser(tokenRecord.userId);
 
     this.logger.info({ userId: tokenRecord.userId }, 'Password reset completed');
   }

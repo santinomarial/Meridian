@@ -7,6 +7,7 @@ import {
 import type { Workspace, WorkspaceMember } from '@prisma/client';
 import { Prisma, WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeAuthorizationService } from '../modules/realtime-authorization/realtime-authorization.service';
 
 export interface CreateWorkspaceData {
   name: string;
@@ -19,7 +20,10 @@ export interface UpdateWorkspaceData {
 
 @Injectable()
 export class WorkspacesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtimeAuthorization: RealtimeAuthorizationService,
+  ) {}
 
   async createWorkspace(data: CreateWorkspaceData): Promise<Workspace> {
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -84,16 +88,25 @@ export class WorkspacesService {
     role: WorkspaceRole,
   ): Promise<WorkspaceMember> {
     this.assertAssignableMemberRole(role);
-    await this.assertMutableMember(memberId);
-    return this.prisma.workspaceMember.update({
+    const member = await this.assertMutableMember(memberId);
+    const updated = await this.prisma.workspaceMember.update({
       where: { id: memberId },
       data: { role },
     });
+    await this.realtimeAuthorization.invalidateWorkspaceAccess(
+      member.workspaceId,
+      member.userId,
+    );
+    return updated;
   }
 
   async removeMember(memberId: string): Promise<void> {
-    await this.assertMutableMember(memberId);
+    const member = await this.assertMutableMember(memberId);
     await this.prisma.workspaceMember.delete({ where: { id: memberId } });
+    await this.realtimeAuthorization.invalidateWorkspaceAccess(
+      member.workspaceId,
+      member.userId,
+    );
   }
 
   async canUserAccessWorkspace(
@@ -158,11 +171,14 @@ export class WorkspacesService {
   }
 
   /** Generic member APIs must never mutate or remove the canonical owner. */
-  private async assertMutableMember(memberId: string): Promise<void> {
+  private async assertMutableMember(
+    memberId: string,
+  ): Promise<{ userId: string; workspaceId: string }> {
     const member = await this.prisma.workspaceMember.findUnique({
       where: { id: memberId },
       select: {
         userId: true,
+        workspaceId: true,
         role: true,
         workspace: { select: { ownerId: true } },
       },
@@ -178,6 +194,7 @@ export class WorkspacesService {
         'The workspace owner cannot be changed through member APIs',
       );
     }
+    return { userId: member.userId, workspaceId: member.workspaceId };
   }
 
   /**

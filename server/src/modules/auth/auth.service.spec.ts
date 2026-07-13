@@ -397,4 +397,51 @@ describe('AuthService', () => {
       ).rejects.toThrow(BadRequestException);
     });
   });
+
+  // ── E2E reset-token helper ─────────────────────────────────────────────────
+
+  describe('generateResetTokenForE2E', () => {
+    it('rejects non-test accounts before querying the database', async () => {
+      const { service, prisma } = makeService();
+
+      await expect(
+        service.generateResetTokenForE2E('alice@example.com'),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('invalidates old tokens and creates the replacement atomically', async () => {
+      const { service, prisma, transaction } = makeService();
+      const testUser = {
+        ...BASE_USER,
+        email: 'e2e-reset-user@example.com',
+      };
+      prisma.user.findUnique.mockResolvedValue(testUser);
+      transaction.passwordResetToken.updateMany.mockResolvedValue({ count: 1 });
+      transaction.passwordResetToken.create.mockResolvedValue({} as never);
+
+      const result = await service.generateResetTokenForE2E(testUser.email);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { email: testUser.email },
+      });
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(transaction.passwordResetToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: testUser.id, usedAt: null },
+        data: { usedAt: expect.any(Date) as Date },
+      });
+      expect(transaction.passwordResetToken.create).toHaveBeenCalledWith({
+        data: {
+          userId: testUser.id,
+          tokenHash: createHash('sha256').update(result.token).digest('hex'),
+          expiresAt: expect.any(Date) as Date,
+        },
+      });
+      expect(result.resetUrl).toBe(
+        `http://localhost:5173/reset-password/${result.token}`,
+      );
+      expect(prisma.passwordResetToken.updateMany).not.toHaveBeenCalled();
+      expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+    });
+  });
 });

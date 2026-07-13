@@ -1,10 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, type OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import * as Y from 'yjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
-import { DocumentManagerService } from './document-manager.service';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 
@@ -14,7 +14,7 @@ function seqKey(documentId: string): string {
 }
 
 @Injectable()
-export class DocumentPersistenceService {
+export class DocumentPersistenceService implements OnApplicationShutdown {
   // ---------------------------------------------------------------------------
   // Sequence counters
   //
@@ -53,11 +53,16 @@ export class DocumentPersistenceService {
   // each document.  Resets to 0 after each successful compaction.
   private readonly updateCountSinceSnapshot = new Map<string, number>();
 
+  // Last sequence that this process successfully wrote for each document.
+  // Unlike seqMap, this is populated for both Redis and in-memory allocation.
+  // It gives compaction a conservative durable cutoff without assuming that a
+  // Redis-allocated update from another instance is already in local memory.
+  private readonly lastPersistedSeq = new Map<string, number>();
+
   private readonly snapshotEveryN: number;
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly documentManager: DocumentManagerService,
     private readonly redis: RedisService,
     configService: ConfigService,
     @InjectPinoLogger(DocumentPersistenceService.name)
@@ -65,6 +70,10 @@ export class DocumentPersistenceService {
   ) {
     const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
     this.snapshotEveryN = config.snapshotEveryNUpdates;
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    await this.flushAll();
   }
 
   /**
@@ -146,6 +155,7 @@ export class DocumentPersistenceService {
     });
 
     this.updateCountSinceSnapshot.delete(documentId);
+    this.lastPersistedSeq.delete(documentId);
 
     // Drop the shared Redis counter and the local seed flag so the next write
     // re-seeds from the post-reset DB high-water mark on whichever instance
@@ -173,6 +183,7 @@ export class DocumentPersistenceService {
         seq,
       },
     });
+    this.lastPersistedSeq.set(documentId, seq);
   }
 
   private async nextSeq(documentId: string): Promise<number> {
@@ -250,45 +261,65 @@ export class DocumentPersistenceService {
     // The next compaction will happen after another snapshotEveryN writes.
     this.updateCountSinceSnapshot.set(documentId, 0);
 
-    const state = this.documentManager.getState(documentId);
-    if (state.length === 0) {
-      // The Y.Doc was torn down between the write and the compaction — skip.
-      // This is safe: the updates are already persisted and will be loaded
-      // normally on the next cold start.
-      this.logger.warn(
-        { documentId },
-        'Skipping compaction — document no longer in memory',
-      );
-      return;
-    }
+    const snapshotSeq = this.lastPersistedSeq.get(documentId);
+    if (snapshotSeq === undefined) return;
 
-    // seqMap holds the next seq to assign; the last written seq is one less.
-    const nextSeqValue = this.seqMap.get(documentId);
-    if (nextSeqValue === undefined || nextSeqValue === 0) return;
-    const snapshotSeq = nextSeqValue - 1;
+    // Rebuild the snapshot from durable rows inside a serializable transaction
+    // instead of copying one instance's in-memory Y.Doc. This guarantees that
+    // every update we delete is represented in the snapshot, even when several
+    // replicas are editing and compacting the same document concurrently.
+    const compacted = await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient): Promise<boolean> => {
+        const base = await tx.snapshot.findFirst({
+          where: { documentId },
+          orderBy: { seq: 'desc' },
+        });
+        if (base !== null && base.seq >= snapshotSeq) return false;
 
-    // Transaction safety: readers see either the full set of old DocumentUpdate
-    // rows OR the new Snapshot — never a gap where the updates were already
-    // deleted but the Snapshot is not yet committed.  PostgreSQL's default
-    // READ COMMITTED isolation ensures that a concurrent cold-load query that
-    // starts before the transaction commits will still see the old updates;
-    // one that starts after will see the new snapshot and no deleted rows.
-    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.snapshot.create({
-        data: {
-          documentId,
-          state: Buffer.from(state),
-          seq: snapshotSeq,
-        },
-      });
-      await tx.documentUpdate.deleteMany({
-        where: { documentId, seq: { lte: snapshotSeq } },
-      });
-    });
+        const updates = await tx.documentUpdate.findMany({
+          where: {
+            documentId,
+            seq: { gt: base?.seq ?? -1, lte: snapshotSeq },
+          },
+          orderBy: { seq: 'asc' },
+        });
+        if (updates.length === 0) return false;
 
-    this.logger.info(
-      { documentId, seq: snapshotSeq },
-      'Compacted Yjs updates into snapshot',
+        const durableDoc = new Y.Doc();
+        try {
+          if (base !== null) Y.applyUpdate(durableDoc, base.state);
+          for (const row of updates) Y.applyUpdate(durableDoc, row.update);
+
+          const created = await tx.snapshot.create({
+            data: {
+              documentId,
+              state: Buffer.from(Y.encodeStateAsUpdate(durableDoc)),
+              seq: snapshotSeq,
+            },
+          });
+          await tx.documentUpdate.deleteMany({
+            where: { documentId, seq: { lte: snapshotSeq } },
+          });
+          await tx.snapshot.deleteMany({
+            where: {
+              documentId,
+              seq: { lte: snapshotSeq },
+              id: { not: created.id },
+            },
+          });
+          return true;
+        } finally {
+          durableDoc.destroy();
+        }
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+
+    if (compacted) {
+      this.logger.info(
+        { documentId, seq: snapshotSeq },
+        'Compacted Yjs updates into snapshot',
+      );
+    }
   }
 }

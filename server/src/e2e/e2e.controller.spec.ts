@@ -57,7 +57,7 @@ describe('E2eController cleanup', () => {
     transaction.user.findMany.mockResolvedValue([
       { id: 'user-1' },
       { id: 'user-2' },
-    ]);
+    ] as never);
     transaction.workspace.deleteMany.mockResolvedValue({ count: 2 });
     transaction.user.deleteMany.mockResolvedValue({ count: 2 });
 
