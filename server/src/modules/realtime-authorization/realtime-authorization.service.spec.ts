@@ -62,6 +62,42 @@ describe('RealtimeAuthorizationService', () => {
     });
   });
 
+  it('caps hot-event DB reads at one per second and bypasses cache for sweeps', async () => {
+    prisma.session.findUnique.mockResolvedValue({
+      userId: USER.id,
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    } as never);
+    const client = socket({ user: USER, [SOCKET_SESSION_JTI]: 'jti-hot' });
+
+    await expect(service.isSessionActive(client)).resolves.toBe(true);
+    await expect(service.isSessionActive(client)).resolves.toBe(true);
+    expect(prisma.session.findUnique).toHaveBeenCalledTimes(1);
+
+    await expect(service.isSessionActive(client, true)).resolves.toBe(true);
+    expect(prisma.session.findUnique).toHaveBeenCalledTimes(2);
+  });
+
+  it('evicts a cached active session synchronously when logout is published', async () => {
+    prisma.session.findUnique
+      .mockResolvedValueOnce({
+        userId: USER.id,
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: null,
+      } as never)
+      .mockResolvedValueOnce({
+        userId: USER.id,
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: new Date(),
+      } as never);
+    const client = socket({ user: USER, [SOCKET_SESSION_JTI]: 'jti-logout' });
+
+    await expect(service.isSessionActive(client)).resolves.toBe(true);
+    await service.invalidateSession('jti-logout');
+    await expect(service.isSessionActive(client)).resolves.toBe(false);
+    expect(prisma.session.findUnique).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     null,
     { userId: 'other-user', expiresAt: new Date(Date.now() + 60_000), revokedAt: null },

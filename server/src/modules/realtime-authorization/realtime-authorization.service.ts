@@ -10,6 +10,7 @@ export const SOCKET_SESSION_JTI = 'sessionJti';
 
 const INVALIDATION_CHANNEL = 'realtime:authorization:invalidate';
 const SESSION_CACHE_TTL_MS = 1_000;
+const MAX_SESSION_CACHE_ENTRIES = 10_000;
 
 export type RealtimeAuthorizationInvalidation =
   | { type: 'session'; jti: string }
@@ -41,7 +42,7 @@ export class RealtimeAuthorizationService
   private readonly listeners = new Set<InvalidationListener>();
   private readonly sessionCache = new Map<
     string,
-    { active: boolean; checkedAt: number; userId: string }
+    { active: boolean; validUntil: number; userId: string }
   >();
 
   constructor(
@@ -81,7 +82,7 @@ export class RealtimeAuthorizationService
       !force &&
       cached !== undefined &&
       cached.userId === user.id &&
-      now - cached.checkedAt < SESSION_CACHE_TTL_MS
+      now < cached.validUntil
     ) {
       return cached.active;
     }
@@ -97,7 +98,10 @@ export class RealtimeAuthorizationService
       session.revokedAt === null &&
       session.expiresAt > new Date()
     );
-    this.sessionCache.set(jti, { active, checkedAt: now, userId: user.id });
+    const validUntil = active
+      ? Math.min(now + SESSION_CACHE_TTL_MS, session.expiresAt.getTime())
+      : now + SESSION_CACHE_TTL_MS;
+    this.storeSessionCache(jti, { active, validUntil, userId: user.id }, now);
     return active;
   }
 
@@ -161,6 +165,23 @@ export class RealtimeAuthorizationService
         if (entry.userId === invalidation.userId) this.sessionCache.delete(jti);
       }
     }
+  }
+
+  private storeSessionCache(
+    jti: string,
+    entry: { active: boolean; validUntil: number; userId: string },
+    now: number,
+  ): void {
+    if (this.sessionCache.size >= MAX_SESSION_CACHE_ENTRIES) {
+      for (const [cachedJti, cached] of this.sessionCache) {
+        if (cached.validUntil <= now) this.sessionCache.delete(cachedJti);
+      }
+      if (this.sessionCache.size >= MAX_SESSION_CACHE_ENTRIES) {
+        const oldest = this.sessionCache.keys().next().value as string | undefined;
+        if (oldest !== undefined) this.sessionCache.delete(oldest);
+      }
+    }
+    this.sessionCache.set(jti, entry);
   }
 
   private notify(invalidation: RealtimeAuthorizationInvalidation): void {
