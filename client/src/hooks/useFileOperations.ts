@@ -134,7 +134,7 @@ function pruneExistingNodes(nodes: FileNode[], existingIds: Set<string>): FileNo
 
 /** Normalized path: no leading/trailing slashes or empty segments. */
 function normalizePath(path: string): string {
-  return path.split("/").filter(Boolean).join("/");
+  return path.replace(/\\/g, "/").split("/").filter(Boolean).join("/");
 }
 
 function isImportPathSafe(path: string): boolean {
@@ -364,7 +364,8 @@ export function useFileOperations() {
         for (const [path, entry] of zipEntries) {
           if (entry.dir) continue;
 
-          const segments = path.split("/");
+          const normalizedPath = normalizePath(path);
+          const segments = normalizedPath.split("/");
 
           // Skip .DS_Store and hidden OS files
           const fileName = segments[segments.length - 1] ?? "";
@@ -424,7 +425,7 @@ export function useFileOperations() {
 
           entries.push({
             id: generateId(),
-            path: normalizePath(path),
+            path: normalizedPath,
             name: fileName,
             language: toLanguageMode(getLanguageFromFilename(fileName)),
             content,
@@ -437,6 +438,12 @@ export function useFileOperations() {
         }
 
         entries.sort((a, b) => a.path.localeCompare(b.path));
+        const folderPaths = collectFolderPaths(entries);
+        if (folderPaths.length + entries.length > MAX_IMPORTED_DOCUMENTS) {
+          return {
+            error: `ZIP creates too many files and folders (max ${MAX_IMPORTED_DOCUMENTS}).`,
+          };
+        }
 
         // Sync the whole import to the backend in one bulk request, then use
         // the returned ids so the local tree matches the persisted documents.
@@ -445,7 +452,7 @@ export function useFileOperations() {
         if (isBackendAvailable) {
           try {
             const documents: CreateDocumentPayload[] = [
-              ...collectFolderPaths(entries).map((path): CreateDocumentPayload => ({
+              ...folderPaths.map((path): CreateDocumentPayload => ({
                 type: "FOLDER",
                 name: path.split("/").pop()!,
                 path,
@@ -458,11 +465,6 @@ export function useFileOperations() {
                 content: entry.content,
               })),
             ];
-            if (documents.length > MAX_IMPORTED_DOCUMENTS) {
-              return {
-                error: `ZIP creates too many files and folders (max ${MAX_IMPORTED_DOCUMENTS}).`,
-              };
-            }
             const payload = { documents };
             const requestBytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
             if (requestBytes > MAX_BULK_REQUEST_BYTES) {
