@@ -265,6 +265,18 @@ describe('EditorGateway.authenticateSocket', () => {
     await gateway.authenticateSocket(socket);
 
     expect(socket.data['user']).toMatchObject({ id: 'user-1', email: 'alice@example.com' });
+    expect(socket.data['sessionJti']).toBe('jti-abc');
+  });
+
+  it('rejects a JWT whose subject does not own the referenced session', async () => {
+    const { gateway, jwtService, prisma } = makeGateway();
+    const socket = makeSocket({ auth: { token: 'tok' } });
+    jwtService.verify.mockReturnValue({ ...VALID_PAYLOAD, sub: 'attacker' } as never);
+    prisma.session.findUnique.mockResolvedValue(VALID_SESSION as never);
+
+    await expect(gateway.authenticateSocket(socket)).rejects.toThrow(
+      'Session user mismatch',
+    );
   });
 });
 
@@ -749,6 +761,99 @@ describe('EditorGateway — WebSocket rate limiting', () => {
       'error',
       expect.objectContaining({ message: expect.stringContaining('Rate limit') as string }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Live reauthorization and passive revocation
+// ---------------------------------------------------------------------------
+
+describe('EditorGateway — live authorization revocation', () => {
+  it('disconnects a revoked session before accepting a document write', async () => {
+    const { gateway, realtimeAuthorization, documentManager } = makeGateway();
+    realtimeAuthorization.isSessionActive.mockResolvedValue(false);
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        sessionJti: 'revoked-jti',
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+      },
+      rooms: ['document:doc-1'],
+    });
+
+    await gateway.handleYjsUpdate(
+      { documentId: 'doc-1', update: new Uint8Array(10) },
+      socket,
+    );
+
+    expect(socket.disconnect).toHaveBeenCalledWith(true);
+    expect(documentManager.applyUpdate).not.toHaveBeenCalled();
+  });
+
+  it('uses the current database role so a freshly demoted viewer cannot write', async () => {
+    const { gateway, workspaces, documentManager } = makeGateway();
+    workspaces.getDocumentAccessInfo.mockResolvedValue({
+      workspaceId: 'ws-1',
+      role: WorkspaceRole.VIEWER,
+    });
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        sessionJti: 'jti-1',
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+      },
+      rooms: ['document:doc-1'],
+    });
+
+    await gateway.handleYjsUpdate(
+      { documentId: 'doc-1', update: new Uint8Array(10) },
+      socket,
+    );
+
+    expect(documentManager.applyUpdate).not.toHaveBeenCalled();
+    expect(socket.emit).toHaveBeenCalledWith('error', {
+      message: 'Viewers cannot send document updates',
+    });
+  });
+
+  it('removes an idle deleted member from document and workspace rooms on invalidation', async () => {
+    const { gateway, workspaces, documentManager, realtimeAuthorization, server } =
+      makeGateway();
+    workspaces.getMemberRole.mockResolvedValue(null);
+    server.to.mockReturnValue({ emit: jest.fn() } as never);
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        sessionJti: 'jti-1',
+        workspaceRoles: { 'ws-1': WorkspaceRole.EDITOR },
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+        documentWorkspaces: { 'doc-1': 'ws-1' },
+      },
+      rooms: ['workspace:ws-1', 'document:doc-1'],
+    });
+    socket.leave.mockResolvedValue(undefined as never);
+    gateway.handleConnection(socket);
+
+    const listener = realtimeAuthorization.onInvalidation.mock.calls[0]?.[0];
+    await listener?.({ type: 'workspace', workspaceId: 'ws-1', userId: 'user-1' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(socket.leave).toHaveBeenCalledWith('workspace:ws-1');
+    expect(socket.leave).toHaveBeenCalledWith('document:doc-1');
+    expect(documentManager.release).toHaveBeenCalledWith('doc-1');
+  });
+
+  it('disconnects an idle socket immediately when its exact session is invalidated', () => {
+    const { gateway, realtimeAuthorization } = makeGateway();
+    const socket = makeSocket({
+      data: { user: AUTH_USER, sessionJti: 'jti-target' },
+    });
+    gateway.handleConnection(socket);
+
+    const listener = realtimeAuthorization.onInvalidation.mock.calls[0]?.[0];
+    void listener?.({ type: 'session', jti: 'jti-target' });
+
+    expect(socket.disconnect).toHaveBeenCalledWith(true);
   });
 });
 

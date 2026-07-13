@@ -28,6 +28,7 @@ behavior.
 | Awareness (cursors/selections) | Redis pub/sub fan-out (`document:*:awareness`) | ✅ Works |
 | Workspace chat | Redis pub/sub fan-out (`workspace:*:chat`) | ✅ Works |
 | **Document persistence `seq` counter** | **Atomic Redis counter** (`meridian:doc:<id>:seq`), seeded from the DB high-water mark | ✅ Works (was the main gap) |
+| **Session/member revocation** | Local + Redis invalidation, per-event DB checks, and a 10-second passive sweep | ✅ Bounded and cross-instance |
 | **Terminal sandbox sync** | **Redis pub/sub fan-out** (`meridian:sandbox:*:sync`) of write/mkdir/delete/rename ops | ✅ Works (with caveats below) |
 | Terminal PTY session | Instance-local process; reattach re-materializes from the DB | ⚠️ Sticky-bound by nature |
 | WS message rate limiter | Per-socket, in-memory | ✅ Correct under sticky sessions |
@@ -51,13 +52,17 @@ rebuilding a document on a cold load.
   mark). This matches the original behavior and avoids a DB round-trip per
   keystroke.
 
-Why this is safe: Yjs updates are commutative/idempotent, so `seq` is only used
-for ordering/filtering, not correctness of merge. Writes for one document are
-serialized through a per-document promise chain, and each allocated `seq` is
-written before the next is allocated, so the DB high-water mark always stays
-current — which keeps the in-memory fallback self-correcting. Compaction may
-produce more than one snapshot across instances; that is benign (cold load uses
-the latest snapshot, and replayed updates are idempotent).
+Why this is safe: Yjs updates are commutative/idempotent, so `seq` is used for
+ordering and snapshot cutoffs. Writes for one document are serialized through
+a per-document promise chain, and each allocated `seq` is written before the
+next is allocated. Compaction reconstructs state from durable rows and replaces
+covered rows inside a serializable PostgreSQL transaction, so two replicas
+cannot delete updates absent from a snapshot. A graceful shutdown drains every
+pending write chain.
+
+The first Yjs seed is also cross-instance safe: replicas derive the same seed
+client id from the document id and insert seq 0 with `skipDuplicates`, producing
+byte-identical initial CRDT state during a cold-open race.
 
 Implemented in `DocumentPersistenceService` + `RedisService.allocateSeq/incr`.
 
@@ -123,14 +128,9 @@ WebSocket gateways). No shared state is needed.
 
 ## Known limitations
 
-- **Snapshot compaction is not coordinated** across instances — each may write
-  its own snapshot. This is benign (extra rows; latest snapshot wins on load)
-  but a future refinement could elect a single compactor per document via a
-  Redis lock.
 - **Terminal sandbox sync publishes on every save while `ENABLE_TERMINAL` is
   on**, even if no terminal is currently open anywhere. This is bounded (the
   terminal is opt-in and off by default); a future refinement could gate
   publishing on a Redis-tracked set of workspaces with an active sandbox.
 - **Not container-isolated** — see the README's terminal section; this is a
   security property, independent of scaling.
-```

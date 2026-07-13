@@ -23,7 +23,7 @@ Meridian is a TypeScript end-to-end collaborative browser IDE for engineering te
 - **Yjs CRDT sync** — binary update protocol; the server maintains an authoritative Y.Doc per open document and performs sync step 1/2 handshakes with every joining client
 - **Redis cross-instance fan-out** — Yjs updates, awareness, and chat are published to Redis and relayed to clients on other server instances; the document persistence sequence counter and terminal sandbox sync are also Redis-shared, so the backend scales horizontally (with sticky WebSocket sessions). See [docs/scaling.md](docs/scaling.md).
 - **PostgreSQL persistence** — users, workspaces, documents, invites, and Yjs update logs persisted durably via Prisma
-- **Snapshot compaction** — every N Yjs updates the in-memory Y.Doc state is saved as a Snapshot row and preceding update rows are deleted in a single transaction, bounding storage growth
+- **Snapshot compaction** — every N durable Yjs updates, the persisted state is rebuilt and collapsed into one Snapshot in a serializable transaction, safely bounding storage across replicas
 - **Frontend resilience** — when the backend is unavailable the frontend falls back to a clearly-labelled local demo workspace; no crash, no empty screen, and demo data never appears as if it were real
 
 ---
@@ -290,7 +290,9 @@ Set these in `server/.env` (see `.env.example`):
 | `MAIL_FROM` | From-address for outgoing email |
 | `E2E_TEST` | When `true` outside production, raises rate limits and enables tightly scoped test-only helper endpoints (see below) |
 
-The client reads `VITE_API_URL` (defaults to `http://localhost:3000`).
+The client reads `VITE_API_URL`. Development defaults to `http://localhost:3000`;
+production defaults to the page's own origin, so same-origin deployments work
+without embedding a localhost URL. `VITE_SOCKET_URL` follows the same rule.
 
 ## Testing
 

@@ -244,15 +244,20 @@ Each `yjs:update` event triggers:
 
 ### Sequence numbers
 
-Sequence numbers are maintained in-memory (`Map<documentId, number>`) and initialized from the database high-water mark on first write. This avoids a database round-trip per update. Writes for the same document are serialized through the promise chain so monotonicity is guaranteed in a single-process deployment.
+With Redis available, sequence numbers come from an atomic shared counter seeded
+from the database high-water mark. A single-instance in-memory counter is used
+only when Redis is unavailable. Per-document promise chains serialize writes
+within an instance, while the Redis counter prevents collisions across replicas.
 
 ### Snapshot compaction
 
 Every `SNAPSHOT_EVERY_N_UPDATES` persisted updates (default 100):
-1. The current Y.Doc state is encoded with `Y.encodeStateAsUpdate`.
-2. A `Snapshot` row is inserted with the current `seq` as its key.
-3. All `DocumentUpdate` rows with `seq <= snapshot.seq` are deleted.
-4. Steps 2 and 3 run in a single PostgreSQL transaction — a concurrent cold load will see either all old update rows or the new snapshot, never a gap.
+1. The latest durable Snapshot plus every persisted delta through a conservative cutoff are replayed into a fresh Y.Doc.
+2. The rebuilt state is encoded with `Y.encodeStateAsUpdate`.
+3. A replacement `Snapshot` is inserted and covered updates/older snapshots are deleted.
+4. The reads and writes run in a serializable PostgreSQL transaction, so concurrent replicas cannot delete an update that their snapshot did not include.
+
+Pending write chains are flushed during graceful application shutdown.
 
 ### Cold load
 
@@ -269,7 +274,7 @@ When `DocumentManagerService.acquire(documentId)` is called for a document not c
 
 - If the document is **live in memory**, the canonical `Y.Text` is replaced inside a Yjs transaction; the resulting incremental update is broadcast on `yjs:update` so connected editors converge with no reload. The history is then collapsed via `DocumentPersistenceService.resetDocument(id, fullState)` into a single `Snapshot` at `seq 0`, and the seq counter resumes at 1.
 - If the document is **not in memory**, `resetDocument(id, null)` deletes all `DocumentUpdate`/`Snapshot` rows so the next cold load re-seeds the Y.Doc from the restored `content` column.
-- A `document:restored` event is then emitted to the document room. Like the sequence counter above, this is correct for a single-process deployment.
+- A `document:restored` event is then emitted to the document room. The shared sequence counter is reset so subsequent writes resume from the restored durable state.
 
 ### Document lifecycle
 

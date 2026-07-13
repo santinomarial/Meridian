@@ -13,6 +13,7 @@ import type { TerminalInputDto } from './dto/terminal-input.dto';
 import type { TerminalResizeDto } from './dto/terminal-resize.dto';
 import type { TerminalRunFileDto } from './dto/terminal-run-file.dto';
 import type { TerminalSession } from './terminal.service';
+import { RealtimeAuthorizationService } from '../realtime-authorization/realtime-authorization.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -39,7 +40,9 @@ function makeSocket(
       emitted.push([event, data]);
     },
     rooms: new Set<string>(),
+    disconnect: jest.fn(),
   } as unknown as Socket;
+  socket.data['sessionJti'] = 'jti-1';
   return { socket, emitted };
 }
 
@@ -48,24 +51,38 @@ function makeGateway(enableTerminal: boolean): {
   terminalService: DeepMockProxy<TerminalService>;
   workspaces: DeepMockProxy<WorkspacesService>;
   prisma: DeepMockProxy<PrismaService>;
+  realtimeAuthorization: DeepMockProxy<RealtimeAuthorizationService>;
 } {
   const terminalService = mockDeep<TerminalService>();
   const workspaces = mockDeep<WorkspacesService>();
   const prisma = mockDeep<PrismaService>();
+  const realtimeAuthorization = mockDeep<RealtimeAuthorizationService>();
   const configService = mockDeep<ConfigService>();
   const logger = mockDeep<PinoLogger>();
 
   configService.getOrThrow.mockReturnValue({ enableTerminal } as never);
+  realtimeAuthorization.isSessionActive.mockResolvedValue(true);
+  realtimeAuthorization.onInvalidation.mockReturnValue(jest.fn());
 
   const gateway = new TerminalGateway(
     terminalService,
     workspaces,
     prisma,
+    realtimeAuthorization,
     configService,
     logger,
   );
 
-  return { gateway, terminalService, workspaces, prisma };
+  return { gateway, terminalService, workspaces, prisma, realtimeAuthorization };
+}
+
+function activeSession(
+  overrides: Partial<Pick<TerminalSession, 'workspaceId' | 'userId'>> = {},
+): TerminalSession {
+  return {
+    workspaceId: overrides.workspaceId ?? 'ws-1',
+    userId: overrides.userId ?? 'user-1',
+  } as TerminalSession;
 }
 
 // ---------------------------------------------------------------------------
