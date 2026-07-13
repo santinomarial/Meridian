@@ -175,7 +175,12 @@ Each JWT contains a session JTI. Guarded requests verify the JWT and load the co
 
 An invalid cookie is cleared on a guarded 401 response. Login and registration create a new session and replace the existing cookie value; they do not revoke prior sessions.
 
-The application does not terminate TLS. Production requires HTTPS at a trusted reverse proxy or load balancer. The default cookie supports the intended same-site browser topology. A cross-site frontend requires an explicit review of cookie attributes, CORS, credential transport, and CSRF protection before deployment. No application-level CSRF middleware is installed.
+The application does not terminate TLS or install Helmet, a Content Security
+Policy, or separate CSRF middleware. Production requires HTTPS and an explicit
+security-header policy at a trusted reverse proxy, load balancer, and static
+host. The default cookie supports the intended same-site browser topology. A
+cross-site frontend requires a coordinated review of cookie attributes, CORS,
+credential transport, and CSRF protection before deployment.
 
 ### Invites
 

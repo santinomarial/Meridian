@@ -261,7 +261,9 @@ cross-replica terminal projection ordering.
   proxy `/auth`, `/users`, `/workspaces`, `/documents`, `/invites`, `/health`,
   `/ready`, `/docs`, and `/docs-json` before applying the SPA fallback.
 - Use TLS. Authentication cookies are `HttpOnly`, `SameSite=Lax`, and `Secure`
-  when `NODE_ENV=production`.
+  when `NODE_ENV=production`. The application does not install Helmet or a
+  Content Security Policy; define the required response headers at the API
+  ingress and static host.
 - Deploy a single API replica to avoid the known cross-replica document-state
   hazards. If the current multi-replica path is evaluated, use shared PostgreSQL
   and Redis and pin the entire Socket.IO session, including polling and
