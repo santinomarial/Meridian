@@ -18,6 +18,7 @@ import { Doc } from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as syncProtocol from 'y-protocols/sync';
+import { RealtimeAuthorizationService } from '../realtime-authorization/realtime-authorization.service';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -75,6 +76,7 @@ function makeGateway(opts?: { wsLimit?: number; maxBytes?: number }) {
   const persistence = mockDeep<DocumentPersistenceService>();
   const documentRestore = mockDeep<DocumentRestoreService>();
   const rateLimiter = new WsRateLimiter();
+  const realtimeAuthorization = mockDeep<RealtimeAuthorizationService>();
   const configService = mockDeep<ConfigService>();
   const logger = {
     info: jest.fn(),
@@ -86,6 +88,13 @@ function makeGateway(opts?: { wsLimit?: number; maxBytes?: number }) {
 
   Object.defineProperty(redis, 'isAvailable', { get: () => false, configurable: true });
   redis.subscribe.mockResolvedValue(undefined);
+  realtimeAuthorization.isSessionActive.mockResolvedValue(true);
+  realtimeAuthorization.onInvalidation.mockReturnValue(jest.fn());
+  workspaces.getDocumentAccessInfo.mockResolvedValue({
+    workspaceId: 'ws-1',
+    role: WorkspaceRole.EDITOR,
+  });
+  workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
 
   configService.getOrThrow.mockReturnValue({
     wsMessageLimitPerSecond: opts?.wsLimit ?? DEFAULT_WS_LIMIT,
@@ -102,6 +111,7 @@ function makeGateway(opts?: { wsLimit?: number; maxBytes?: number }) {
     prisma,
     workspaces,
     rateLimiter,
+    realtimeAuthorization,
     configService,
     logger as never,
   );
@@ -109,7 +119,17 @@ function makeGateway(opts?: { wsLimit?: number; maxBytes?: number }) {
   const server = mockDeep<Server>();
   gateway.server = server;
 
-  return { gateway, registry, prisma, jwtService, workspaces, documentManager, server, rateLimiter };
+  return {
+    gateway,
+    registry,
+    prisma,
+    jwtService,
+    workspaces,
+    documentManager,
+    server,
+    rateLimiter,
+    realtimeAuthorization,
+  };
 }
 
 function makeSocket(overrides?: {
@@ -395,7 +415,7 @@ describe('EditorGateway.handleJoinDocument', () => {
     expect(workspaces.getDocumentAccessInfo).toHaveBeenCalledWith('user-1', 'doc-1');
   });
 
-  it('does not acquire a second reference when the socket already joined', async () => {
+  it('reauthorizes but does not acquire a second reference when already joined', async () => {
     const { gateway, workspaces, documentManager } = makeGateway();
     const socket = makeSocket({
       data: {
@@ -407,7 +427,7 @@ describe('EditorGateway.handleJoinDocument', () => {
 
     await gateway.handleJoinDocument({ documentId: 'doc-1' }, socket);
 
-    expect(workspaces.getDocumentAccessInfo).not.toHaveBeenCalled();
+    expect(workspaces.getDocumentAccessInfo).toHaveBeenCalledWith('user-1', 'doc-1');
     expect(documentManager.acquire).not.toHaveBeenCalled();
     expect(socket.emit).toHaveBeenCalledWith(
       'joinedDocument',
