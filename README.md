@@ -98,6 +98,10 @@ npm test                    # Run unit test suite
 npm run build               # Compile TypeScript
 ```
 
+The seed creates four usable demo accounts (`alice@meridian.dev` through
+`dave@meridian.dev`) with password `Meridian1!`; set
+`MERIDIAN_SEED_PASSWORD` to choose a different development password.
+
 ---
 
 ## Local URLs

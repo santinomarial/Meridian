@@ -22,6 +22,12 @@ npm run db:seed             # Seed demo workspace and user
 npm run start:dev           # Dev server with file watch → http://localhost:3000
 ```
 
+The seeded demo accounts (`alice@meridian.dev`, `bob@meridian.dev`,
+`carol@meridian.dev`, and `dave@meridian.dev`) use the development password
+`Meridian1!`. Set `MERIDIAN_SEED_PASSWORD` before `npm run db:seed` to override
+it; the variable is required if the seed is intentionally run with
+`NODE_ENV=production`.
+
 Verify the server is running:
 
 ```

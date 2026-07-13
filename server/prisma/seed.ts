@@ -1,6 +1,9 @@
 import { PrismaClient, DocumentType, WorkspaceRole } from '@prisma/client';
+import * as argon2 from 'argon2';
+import * as Y from 'yjs';
 
 const prisma = new PrismaClient();
+const DEFAULT_SEED_PASSWORD = 'Meridian1!';
 
 // ---------------------------------------------------------------------------
 // File contents
@@ -464,36 +467,63 @@ async function main(): Promise<void> {
 
   // --- Users ------------------------------------------------------------------
 
+  const configuredSeedPassword = process.env['MERIDIAN_SEED_PASSWORD'];
+  if (process.env['NODE_ENV'] === 'production' && !configuredSeedPassword) {
+    throw new Error(
+      'MERIDIAN_SEED_PASSWORD must be set when seeding in production',
+    );
+  }
+  const seedPassword = configuredSeedPassword ?? DEFAULT_SEED_PASSWORD;
+  const passwordHash = await argon2.hash(seedPassword, {
+    type: argon2.argon2id,
+  });
+
   const alice = await prisma.user.upsert({
     where: { email: 'alice@meridian.dev' },
-    update: {},
+    update: { passwordHash },
     create: {
       email: 'alice@meridian.dev',
       displayName: 'Alice Chen',
-      // passwordHash intentionally null until the auth module is wired in.
-      // All seed users share the dev password 'password' once argon2 hashing is added.
+      passwordHash,
     },
   });
 
   const bob = await prisma.user.upsert({
     where: { email: 'bob@meridian.dev' },
-    update: {},
-    create: { email: 'bob@meridian.dev', displayName: 'Bob Martinez' },
+    update: { passwordHash },
+    create: {
+      email: 'bob@meridian.dev',
+      displayName: 'Bob Martinez',
+      passwordHash,
+    },
   });
 
   const carol = await prisma.user.upsert({
     where: { email: 'carol@meridian.dev' },
-    update: {},
-    create: { email: 'carol@meridian.dev', displayName: 'Carol Williams' },
+    update: { passwordHash },
+    create: {
+      email: 'carol@meridian.dev',
+      displayName: 'Carol Williams',
+      passwordHash,
+    },
   });
 
   const dave = await prisma.user.upsert({
     where: { email: 'dave@meridian.dev' },
-    update: {},
-    create: { email: 'dave@meridian.dev', displayName: 'Dave Park' },
+    update: { passwordHash },
+    create: {
+      email: 'dave@meridian.dev',
+      displayName: 'Dave Park',
+      passwordHash,
+    },
   });
 
   console.log(`  users: ${[alice, bob, carol, dave].map((u) => u.email).join(', ')}`);
+  console.log(
+    configuredSeedPassword
+      ? '  login password: MERIDIAN_SEED_PASSWORD'
+      : `  login password: ${DEFAULT_SEED_PASSWORD}`,
+  );
 
   // --- Workspace --------------------------------------------------------------
 
@@ -553,7 +583,7 @@ async function main(): Promise<void> {
 
   console.log(`  documents: ${DOC_TREE.length}`);
 
-  // --- Snapshots for key source files -----------------------------------------
+  // --- Valid Yjs snapshots for key source files -------------------------------
 
   const snapshotTargets = [
     'src/services/auth.ts',
@@ -561,21 +591,35 @@ async function main(): Promise<void> {
     'src/components/WorkspaceLayout.tsx',
   ];
 
-  for (const path of snapshotTargets) {
-    const docId = pathToId.get(path);
-    if (!docId) continue;
-    const content = CONTENTS[path] ?? '';
-    const exists = await prisma.snapshot.findFirst({ where: { documentId: docId, seq: 0 } });
-    if (!exists) {
-      await prisma.snapshot.create({
-        data: {
-          documentId: docId,
-          state: Buffer.from(content, 'utf8'),
-          seq: 0,
-        },
+  // Re-seeding rewrites the demo documents' plain content, so reset any older
+  // CRDT history as well. Otherwise a cold open can replay stale collaborative
+  // edits over the freshly seeded content.
+  const seededDocumentIds = [...pathToId.values()];
+  await prisma.$transaction(async (tx) => {
+    await tx.documentUpdate.deleteMany({
+      where: { documentId: { in: seededDocumentIds } },
+    });
+    await tx.snapshot.deleteMany({
+      where: { documentId: { in: seededDocumentIds } },
+    });
+
+    for (const documentPath of snapshotTargets) {
+      const documentId = pathToId.get(documentPath);
+      if (!documentId) continue;
+
+      // Snapshot.state is a binary Yjs update, not UTF-8 source bytes. Writing
+      // raw text here makes Y.applyUpdate throw when the document is opened.
+      const ydoc = new Y.Doc();
+      const content = CONTENTS[documentPath] ?? '';
+      if (content.length > 0) ydoc.getText('content').insert(0, content);
+      const state = Buffer.from(Y.encodeStateAsUpdate(ydoc));
+      ydoc.destroy();
+
+      await tx.snapshot.create({
+        data: { documentId, state, seq: 0 },
       });
     }
-  }
+  });
 
   console.log(`  snapshots: ${snapshotTargets.length}`);
   console.log('Done.');

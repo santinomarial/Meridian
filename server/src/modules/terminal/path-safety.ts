@@ -46,8 +46,8 @@ export function assertSafeRelPath(relPath: string): string {
 
 /**
  * Resolves a workspace-relative path against a sandbox root and guarantees the
- * result stays inside the root — including refusing to traverse a symlinked
- * ancestor that points outside the sandbox.
+ * result stays inside the root — including refusing a final-component symlink
+ * or an ancestor symlink that points outside the sandbox.
  */
 export function safeJoin(root: string, relPath: string): string {
   const clean = assertSafeRelPath(relPath);
