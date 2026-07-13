@@ -142,6 +142,41 @@ function findFileInTree(nodes: FileNode[], fileId: string): Extract<FileNode, { 
   return null;
 }
 
+/**
+ * Merge an imported subtree into the existing explorer tree. Matching folders
+ * are merged recursively so adding `src/b.ts` after `src/a.ts` does not create
+ * a second `src` folder or silently discard the new child.
+ */
+function mergeFileTrees(existing: FileNode[], incoming: FileNode[]): FileNode[] {
+  const merged = [...existing];
+
+  for (const next of incoming) {
+    const matchIndex = merged.findIndex(
+      (current) =>
+        current.id === next.id ||
+        (current.kind === next.kind && current.name === next.name),
+    );
+
+    if (matchIndex < 0) {
+      merged.push(next);
+      continue;
+    }
+
+    const current = merged[matchIndex]!;
+    if (current.kind === "folder" && next.kind === "folder") {
+      merged[matchIndex] = {
+        ...next,
+        expanded: current.expanded || next.expanded,
+        children: mergeFileTrees(current.children, next.children),
+      };
+    } else {
+      merged[matchIndex] = next;
+    }
+  }
+
+  return merged;
+}
+
 function toggleFolderInTree(nodes: FileNode[], folderId: string): FileNode[] {
   return nodes.map((node) => {
     if (node.kind === "folder") {
@@ -573,7 +608,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
             ]
           : state.openTabs;
       return {
-        files: [...state.files, ...nodes],
+        files: mergeFileTrees(state.files, nodes),
         editorContentByFileId: { ...state.editorContentByFileId, ...contentMap },
         openTabs: newTabs,
         activeFileId: firstFileId ?? state.activeFileId,

@@ -13,6 +13,9 @@ describe("ZIP import safety", () => {
 
   it("rejects traversal, overlong segments, and excessive nesting", () => {
     expect(isImportPathSafe("src/../secret.txt")).toBe(false);
+    expect(isImportPathSafe("/etc/passwd")).toBe(false);
+    expect(isImportPathSafe("C:\\Windows\\system.ini")).toBe(false);
+    expect(isImportPathSafe("src/unsafe\u0000.txt")).toBe(false);
     expect(isImportPathSafe(`${"a".repeat(256)}.txt`)).toBe(false);
     expect(
       isImportPathSafe(`${Array.from({ length: 65 }, () => "d").join("/")}/x.txt`),

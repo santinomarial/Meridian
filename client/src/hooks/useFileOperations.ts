@@ -111,35 +111,22 @@ function buildTreeFromEntries(
   return { nodes: root, contentMap };
 }
 
-function collectNodeIds(nodes: FileNode[], acc: Set<string>): void {
-  for (const node of nodes) {
-    acc.add(node.id);
-    if (node.kind === "folder") collectNodeIds(node.children, acc);
-  }
-}
-
-/** Drop nodes that already exist in the tree (re-imports reuse backend ids). */
-function pruneExistingNodes(nodes: FileNode[], existingIds: Set<string>): FileNode[] {
-  const result: FileNode[] = [];
-  for (const node of nodes) {
-    if (existingIds.has(node.id)) continue;
-    result.push(
-      node.kind === "folder"
-        ? { ...node, children: pruneExistingNodes(node.children, existingIds) }
-        : node,
-    );
-  }
-  return result;
-}
-
 /** Normalized path: no leading/trailing slashes or empty segments. */
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").split("/").filter(Boolean).join("/");
 }
 
 export function isImportPathSafe(path: string): boolean {
+  const slashPath = path.replace(/\\/g, "/");
+  if (
+    slashPath.startsWith("/") ||
+    /^[A-Za-z]:\//.test(slashPath) ||
+    /[\u0000-\u001f\u007f]/.test(slashPath)
+  ) {
+    return false;
+  }
   const normalized = normalizePath(path);
-  const segments = normalized.split("/");
+  const segments = slashPath.split("/").filter(Boolean);
   const encoder = new TextEncoder();
   return (
     normalized.length > 0 &&
@@ -222,40 +209,81 @@ export function useFileOperations() {
     async (filename: string): Promise<FileOpResult> => {
       const trimmed = filename.trim();
       if (!trimmed) return { error: "File name cannot be empty." };
-      if (!isSupportedTextFile(trimmed)) {
-        const ext = trimmed.split(".").pop() ?? "";
+      if (!isImportPathSafe(trimmed)) {
+        return { error: "File path is invalid or too long." };
+      }
+
+      const path = normalizePath(trimmed);
+      const name = path.split("/").pop()!;
+      if (!isSupportedTextFile(name)) {
+        const ext = name.split(".").pop() ?? "";
         return { error: `Unsupported file type: .${ext}` };
       }
 
-      const language = toLanguageMode(getLanguageFromFilename(trimmed));
-      const content = getStarterContent(trimmed);
+      const language = toLanguageMode(getLanguageFromFilename(name));
+      const content = getStarterContent(name);
       let fileId = generateId();
       let savedToBackend = false;
 
       if (isBackendAvailable) {
         try {
-          const doc = await createDocument(workspaceId!, {
-            type: "FILE",
-            name: trimmed,
-            path: trimmed,
-            language,
-            content,
-          });
-          fileId = doc.id;
+          if (path.includes("/")) {
+            const folderPaths = collectFolderPaths([
+              { id: fileId, path, name, language, content },
+            ]);
+            const created = await bulkCreateDocuments(workspaceId!, {
+              documents: [
+                ...folderPaths.map((folderPath): CreateDocumentPayload => ({
+                  type: "FOLDER",
+                  name: folderPath.split("/").pop()!,
+                  path: folderPath,
+                })),
+                { type: "FILE", name, path, language, content },
+              ],
+            });
+            fileId = created.find((doc) => doc.path === path)?.id ?? fileId;
+
+            const entry: FileEntry = { id: fileId, path, name, language, content };
+            const folderIds = new Map(created.map((doc) => [doc.path, doc.id]));
+            const { nodes, contentMap } = buildTreeFromEntries([entry], folderIds);
+            importFiles(nodes, contentMap, fileId);
+          } else {
+            const doc = await createDocument(workspaceId!, {
+              type: "FILE",
+              name,
+              path,
+              language,
+              content,
+            });
+            fileId = doc.id;
+            addFileNode({ kind: "file", id: fileId, name, language }, content);
+          }
           savedToBackend = true;
         } catch {
           return { error: "Could not create the file. Please try again." };
         }
+      } else if (path.includes("/")) {
+        const entry: FileEntry = { id: fileId, path, name, language, content };
+        const { nodes, contentMap } = buildTreeFromEntries([entry]);
+        importFiles(nodes, contentMap, fileId);
+      } else {
+        addFileNode({ kind: "file", id: fileId, name, language }, content);
       }
 
-      addFileNode({ kind: "file", id: fileId, name: trimmed, language }, content);
       if (savedToBackend) {
         clearTabDirty(fileId);
         setSaveStatus("saved");
       }
       return {};
     },
-    [workspaceId, isBackendAvailable, addFileNode, clearTabDirty, setSaveStatus],
+    [
+      workspaceId,
+      isBackendAvailable,
+      addFileNode,
+      importFiles,
+      clearTabDirty,
+      setSaveStatus,
+    ],
   );
 
   // ── Create new folder ──────────────────────────────────────────────────────
@@ -485,12 +513,7 @@ export function useFileOperations() {
           }
         }
 
-        const { nodes: builtNodes, contentMap } = buildTreeFromEntries(entries, folderIdByPath);
-
-        // Re-imports reuse backend ids; skip nodes already in the tree.
-        const existingIds = new Set<string>();
-        collectNodeIds(useWorkspaceStore.getState().files, existingIds);
-        const nodes = pruneExistingNodes(builtNodes, existingIds);
+        const { nodes, contentMap } = buildTreeFromEntries(entries, folderIdByPath);
 
         const firstEntry =
           entries.find((e) => e.name.toLowerCase() === "readme.md") ??

@@ -114,4 +114,49 @@ describe("workspace session boundaries", () => {
     expect(state.activeFileId).toBeNull();
     expect(state.saveStatus).toBe("saved");
   });
+
+  it("merges imported children into an existing folder", () => {
+    useWorkspaceStore.getState().batchLoadBackend({
+      files: [
+        {
+          kind: "folder",
+          id: "folder-src",
+          name: "src",
+          expanded: true,
+          children: [
+            { kind: "file", id: "file-a", name: "a.ts", language: "typescript" },
+          ],
+        },
+      ],
+      editorContent: { "file-a": "export const a = 1;" },
+      defaultFileId: "file-a",
+    });
+
+    useWorkspaceStore.getState().importFiles(
+      [
+        {
+          kind: "folder",
+          id: "folder-src",
+          name: "src",
+          expanded: true,
+          children: [
+            { kind: "file", id: "file-b", name: "b.ts", language: "typescript" },
+          ],
+        },
+      ],
+      { "file-b": "export const b = 2;" },
+      "file-b",
+    );
+
+    const [src] = useWorkspaceStore.getState().files;
+    expect(src).toMatchObject({
+      kind: "folder",
+      id: "folder-src",
+      children: [
+        { id: "file-a", name: "a.ts" },
+        { id: "file-b", name: "b.ts" },
+      ],
+    });
+    expect(useWorkspaceStore.getState().activeFileId).toBe("file-b");
+  });
 });
