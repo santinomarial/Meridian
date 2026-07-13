@@ -14,7 +14,7 @@ For system-wide context, see [architecture.md](../docs/architecture.md). For cap
 | Prisma and PostgreSQL | Users, sessions, workspaces, memberships, invites, document metadata and saved content, versions, Yjs updates, and snapshots |
 | Yjs | Live collaborative state in one in-memory `Y.Doc` per open document per process |
 | Redis | Best-effort event fan-out, authorization invalidation, terminal projection operations, and document sequence allocation |
-| Pino | Structured HTTP and application logging with request IDs and selected credential redaction |
+| Pino | Structured HTTP and application logs; HTTP request/error entries include request IDs, and selected credential fields are redacted |
 | `node-pty` | Optional host-backed interactive terminal |
 
 PostgreSQL contains two current-state representations of a file's text, in addition to historical `DocumentVersion` rows:
@@ -205,7 +205,10 @@ Independent semantic limits are:
 - 25 MiB of aggregate UTF-8 content per bulk import
 - 4,096 UTF-8 bytes per path, 255 bytes per path segment, and 64 path segments
 
-Callers must satisfy both the wire and semantic limits. Malformed JSON returns 400 and an oversized parsed body returns 413. Body parsing occurs before Nest guards and controller authorization, so an ingress should reject oversized and slow requests before they consume application resources.
+Callers must satisfy both the wire and semantic limits. Malformed JSON returns
+400 and an oversized request body returns 413. Body parsing occurs before Nest
+guards and controller authorization, so an ingress should reject oversized and
+slow requests before they consume application resources.
 
 The Nest throttler uses process-local storage. The default window applies broadly; `/auth` routes also receive the stricter auth window. Limits therefore multiply with the replica count and are not a distributed abuse-control boundary. The application does not configure Express `trust proxy`, so proxy topology also affects the client address observed by HTTP throttling. Configure trusted proxy handling deliberately and enforce authoritative rate limits at the ingress.
 

@@ -36,7 +36,7 @@ There is no root package manifest; run package commands from `client/` or
 | Web client | React 18, TypeScript, Vite, Monaco, Zustand | Workspace UI, editor state, REST calls, and realtime bindings |
 | API server | NestJS 11, TypeScript, Socket.IO | Authentication, authorization, workspace and document APIs, realtime rooms, and terminal sessions |
 | Primary datastore | PostgreSQL 16, Prisma | Users, sessions, memberships, documents, invitations, versions, Yjs updates, and snapshots |
-| Coordination | Redis 7, ioredis | Cross-instance realtime fan-out, authorization invalidation, sequence allocation, chat, and terminal file synchronization |
+| Coordination | Redis 7, ioredis | Cross-process realtime fan-out, authorization invalidation, sequence allocation, chat, and terminal projection events |
 
 PostgreSQL stores all durable application data, but file content has two
 distinct representations. `Document.content` is the explicitly saved value
@@ -53,8 +53,7 @@ present. Redis is necessary but not sufficient for safe horizontal API
 scaling: update sequence allocation can race cross-replica compaction, and a
 version restore does not invalidate live Yjs state on other replicas. Treat
 multi-replica operation as an implementation boundary, not a production
-guarantee; see
-[Horizontal scaling](docs/scaling.md).
+guarantee; see [Horizontal scaling](docs/scaling.md).
 
 Detailed diagrams and runtime sequences are available in
 [Architecture](docs/architecture.md). Multi-instance requirements and failure

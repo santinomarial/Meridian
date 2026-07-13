@@ -175,10 +175,11 @@ Then run Playwright from the client directory:
 MERIDIAN_BACKEND_URL=http://localhost:3000 npm run test:e2e
 ```
 
-`E2E_TEST=true` is a server-only setting. It raises test rate limits and enables
-the scoped cleanup and password-reset helpers used by the suite. Server startup
-rejects this setting when `NODE_ENV=production`. `ENABLE_TERMINAL=true` is
-required for the terminal and command-palette scenarios in the complete suite.
+`E2E_TEST=true` is a server-only setting. It raises the HTTP and collaboration
+event limits and enables the scoped cleanup and password-reset helpers used by
+the suite. Server startup rejects this setting when `NODE_ENV=production`.
+`ENABLE_TERMINAL=true` is required for the terminal and command-palette
+scenarios in the complete suite.
 
 When testing against non-default ports, keep `MERIDIAN_BACKEND_URL`,
 `VITE_API_URL`, and `VITE_SOCKET_URL` aligned.
