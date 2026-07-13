@@ -17,7 +17,7 @@ For system-wide context, see [architecture.md](../docs/architecture.md). For cap
 | Pino | Structured HTTP and application logging with request IDs and selected credential redaction |
 | `node-pty` | Optional host-backed interactive terminal |
 
-PostgreSQL contains two durable representations of a file's text:
+PostgreSQL contains two current-state representations of a file's text, in addition to historical `DocumentVersion` rows:
 
 | Representation | Written by | Read by |
 |---|---|---|
@@ -95,7 +95,7 @@ The seed is intended for disposable environments. It updates the demo users' pas
 | `PORT` | `3000` | HTTP and Socket.IO listen port |
 | `CLIENT_ORIGIN` | `http://localhost:5173` | Base URL for invite/reset links and the exact allowed browser origin outside development |
 | `DATABASE_URL` | None | PostgreSQL connection string used by Prisma; required |
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection string; failure does not prevent startup |
+| `REDIS_URL` | `redis://localhost:6379` | Redis connection string; a connection failure during module initialization does not prevent startup |
 | `JWT_SECRET` | None | JWT signing secret; startup requires at least 16 characters, while production should use at least 32 random bytes |
 | `JWT_EXPIRES_IN` | `7d` | JWT and session lifetime; accepts an integer followed by `ms`, `s`, `m`, `h`, `d`, `w`, or `y` |
 | `LOG_LEVEL` | `info` | Pino log level |

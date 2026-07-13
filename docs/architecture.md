@@ -30,7 +30,7 @@ The NestJS process does not serve the client build. A local or production
 environment must host the static client separately and route browser API and
 Socket.IO traffic to the server.
 
-~~~mermaid
+```mermaid
 flowchart LR
     Browser["Browser<br/>React, Zustand, Monaco, Yjs"]
     StaticHost["Static web host<br/>Vite build output"]
@@ -49,7 +49,7 @@ flowchart LR
     Api -.->|"email requests when configured"| Mail
     Api -.->|"materialize saved files"| Temp
     Api -.->|"spawn shell and run files"| Pty
-~~~
+```
 
 PostgreSQL is required. Redis is optional only for a deliberately
 single-process deployment. Mail and terminal execution are optional features.
@@ -69,42 +69,42 @@ secret distribution are outside this repository.
 | PTY and temporary filesystem | High-risk boundary. A terminal shell runs as the server OS user. The temporary working directory and reduced environment are not an OS sandbox. |
 
 In non-development environments, HTTP and Socket.IO CORS allow exactly
-<code>CLIENT_ORIGIN</code> with credentials. Development allows only the
+`CLIENT_ORIGIN` with credentials. Development allows only the
 hard-coded localhost and 127.0.0.1 origins on ports 5173 through 5175.
 
 ## 3. Client architecture
 
 ### 3.1 Routing and build output
 
-<code>BrowserRouter</code> defines these browser routes:
+`BrowserRouter` defines these browser routes:
 
 | Route | Page |
 |---|---|
-| <code>/</code> | Landing, registration, and login |
-| <code>/forgot-password</code> | Landing page in password-reset-request mode |
-| <code>/workspace</code> | Default workspace |
-| <code>/workspace/:workspaceId</code> | Specific workspace |
-| <code>/session/:id</code> | Workspace page compatibility route |
-| <code>/invite/:inviteId</code> | Invite details and acceptance |
-| <code>/reset-password/:token</code> | Password reset |
+| `/` | Landing, registration, and login |
+| `/forgot-password` | Landing page in password-reset-request mode |
+| `/workspace` | Default workspace |
+| `/workspace/:workspaceId` | Specific workspace |
+| `/session/:id` | Workspace page compatibility route |
+| `/invite/:inviteId` | Invite details and acceptance |
+| `/reset-password/:token` | Password reset |
 
 Workspace, invite, and reset pages are lazy-loaded. An unknown client-side
-route redirects to <code>/</code>, but direct requests first reach the static
-host; that host must rewrite unknown paths to <code>index.html</code>.
+route redirects to `/`, but direct requests first reach the static
+host; that host must rewrite unknown paths to `index.html`.
 
 The browser resolves REST and Socket.IO endpoints independently:
 
-- <code>VITE_API_URL</code> configures REST.
-- <code>VITE_SOCKET_URL</code> configures Socket.IO.
-- Development falls back to <code>http://localhost:3000</code>.
+- `VITE_API_URL` configures REST.
+- `VITE_SOCKET_URL` configures Socket.IO.
+- Development falls back to `http://localhost:3000`.
 - A production build without either variable uses the page origin.
 
-REST requests send <code>credentials: include</code>. The Socket.IO client also
+REST requests send `credentials: include`. The Socket.IO client also
 sends credentials and allows both WebSocket and long-polling transports.
 
 ### 3.2 State and data flow
 
-~~~mermaid
+```mermaid
 flowchart TD
     Route["React route"]
     Loader["useBackendWorkspace"]
@@ -128,13 +128,13 @@ flowchart TD
     Session <--> YDoc
     Session <--> Socket
     Binding <--> Socket
-~~~
+```
 
-Workspace startup checks <code>/auth/me</code>, lists workspaces, selects the
+Workspace startup checks `/auth/me`, lists workspaces, selects the
 requested or default workspace, reads member roles, then loads the document
 tree and saved content. A fresh authenticated account with no workspace causes
-the client to create <code>My Workspace</code>. A missing deep-linked workspace
-returns to <code>/workspace</code> instead of silently opening another one.
+the client to create `My Workspace`. A missing deep-linked workspace
+returns to `/workspace` instead of silently opening another one.
 
 An HTTP 401 during the authentication check redirects to the landing page.
 Other backend-loading failures set the backend state to unavailable and expose
@@ -144,11 +144,11 @@ available, role checks fail closed; viewers are read-only.
 
 The client first loads saved text over REST. When collaboration is available,
 it waits for the server's Yjs sync response before constructing
-<code>MonacoBinding</code>. This prevents an empty client <code>Y.Doc</code>
+`MonacoBinding`. This prevents an empty client `Y.Doc`
 from replacing the REST-loaded Monaco model. Local Yjs updates are merged for
 50 ms before send; awareness updates are coalesced for 80 ms.
 
-Client <code>Y.Doc</code> and <code>Awareness</code> instances are held in
+Client `Y.Doc` and `Awareness` instances are held in
 module-level maps. Leaving a document removes listeners and room membership,
 but it does not destroy or remove those objects. A browser session that opens
 many documents retains their CRDT state until the page reloads.
@@ -168,7 +168,7 @@ many documents retains their CRDT state until the page reloads.
 | Prisma | PostgreSQL connection lifecycle and typed database access |
 | Redis | Two ioredis connections, pattern subscriptions, publication, and atomic sequence allocation |
 
-Swagger is exposed at <code>/docs</code> in every environment. The repository
+Swagger is exposed at `/docs` in every environment. The repository
 does not disable or authenticate it in production. Test-only controllers are
 excluded from the generated Swagger document.
 
@@ -177,7 +177,7 @@ excluded from the generated Swagger document.
 The route-specific Express JSON parsers are registered before Nest guards and
 controller validation:
 
-~~~mermaid
+```mermaid
 flowchart LR
     Request["HTTP request"]
     Parser["Route JSON parser<br/>then default parser"]
@@ -196,16 +196,16 @@ flowchart LR
     Auth -.-> Filter
     Validate -.-> Filter
     Controller -.-> Filter
-~~~
+```
 
 This order matters: body bytes can be accepted and parsed before authentication
 or Nest throttling. Reverse proxies should impose request-size and request-rate
 limits before forwarding traffic.
 
 The global validation pipe transforms DTOs, rejects unknown properties, and
-uses <code>class-validator</code>. The exception filter returns:
+uses `class-validator`. The exception filter returns:
 
-~~~json
+```json
 {
   "statusCode": 400,
   "error": "Bad Request",
@@ -214,10 +214,10 @@ uses <code>class-validator</code>. The exception filter returns:
   "timestamp": "ISO-8601 timestamp",
   "path": "/request/path"
 }
-~~~
+```
 
 Uncaught 5xx details are masked from clients and logged. Request IDs come from
-the inbound <code>X-Request-Id</code> header or a generated UUID and are echoed
+the inbound `X-Request-Id` header or a generated UUID and are echoed
 in the response. The inbound value is accepted as supplied, so it is a
 correlation aid, not an authenticated identifier. A parser failure can occur
 before the Nest request-ID middleware and can therefore have an empty ID.
@@ -228,41 +228,41 @@ Two named in-memory throttlers are configured:
 
 | Throttler | Default | Scope |
 |---|---:|---|
-| <code>default</code> | 120 requests per 60 seconds | All HTTP endpoints |
-| <code>auth</code> | 10 requests per 60 seconds | Auth controller in addition to the default limit |
+| `default` | 120 requests per 60 seconds | All HTTP endpoints |
+| `auth` | 10 requests per 60 seconds | Auth controller in addition to the default limit |
 
-Non-auth controllers skip the <code>auth</code> throttler. Health and readiness
-still use the default throttler. <code>E2E_TEST=true</code> raises both limits
+Non-auth controllers skip the `auth` throttler. Health and readiness
+still use the default throttler. `E2E_TEST=true` raises both limits
 to 100,000.
 
 The storage is process-local and the app does not configure Express
-<code>trust proxy</code>. These limits are not a global abuse-control boundary
+`trust proxy`. These limits are not a global abuse-control boundary
 and may identify a reverse proxy rather than the originating client. A
 production ingress needs its own controls and an explicit trusted-proxy review.
 
 ## 5. Authentication and session lifecycle
 
 Passwords are hashed with Argon2id. Register and login create a
-<code>Session</code> row and sign a JWT containing <code>sub</code>,
-<code>email</code>, and <code>jti</code>. The JWT expiry and session expiry are
+`Session` row and sign a JWT containing `sub`,
+`email`, and `jti`. The JWT expiry and session expiry are
 aligned. The default lifetime is seven days.
 
 Register and login return the JWT in the JSON response and set it in the
-<code>auth_token</code> cookie. The bundled client relies on the cookie and
+`auth_token` cookie. The bundled client relies on the cookie and
 does not persist the returned bearer token. Cookie properties are:
 
-- <code>HttpOnly</code>
-- <code>SameSite=Lax</code>
-- <code>Secure</code> only when <code>NODE_ENV=production</code>
-- <code>Path=/</code>
+- `HttpOnly`
+- `SameSite=Lax`
+- `Secure` only when `NODE_ENV=production`
+- `Path=/`
 
 The HTTP guard prefers the cookie and otherwise accepts an
-<code>Authorization: Bearer</code> token. It verifies the JWT and reads the
+`Authorization: Bearer` token. It verifies the JWT and reads the
 session row on every guarded HTTP request, rejecting missing, expired, or
 revoked sessions. A rejected cookie token is cleared.
 
-Socket.IO authentication accepts <code>handshake.auth.token</code> first and
-then <code>auth_token</code> from the Cookie header. The handshake verifies the
+Socket.IO authentication accepts `handshake.auth.token` first and
+then `auth_token` from the Cookie header. The handshake verifies the
 JWT, session, session user, expiry, and revocation before connection.
 
 Logout revokes the current session and publishes a realtime invalidation.
@@ -279,7 +279,7 @@ adds a maintenance process.
 
 ### Mail behavior
 
-When <code>RESEND_API_KEY</code> is present, password reset and invite messages
+When `RESEND_API_KEY` is present, password reset and invite messages
 are sent through the Resend HTTP API. Development without a key prints the
 action URL. In other environments without a key, sending throws internally.
 Password-reset requests still return the generic response, and invite creation
@@ -291,10 +291,10 @@ There is no separate CSRF token mechanism in this code.
 
 ## 6. Authorization and resource semantics
 
-Workspace access uses <code>OWNER</code>, <code>EDITOR</code>, and
-<code>VIEWER</code>. <code>Workspace.ownerId</code> and its owner membership
+Workspace access uses `OWNER`, `EDITOR`, and
+`VIEWER`. `Workspace.ownerId` and its owner membership
 are the canonical ownership records. Generic member APIs cannot assign
-<code>OWNER</code> or change/remove the canonical owner.
+`OWNER` or change/remove the canonical owner.
 
 | Operation | OWNER | EDITOR | VIEWER |
 |---|:---:|:---:|:---:|
@@ -313,13 +313,13 @@ fails.
 
 Invite creation and token listing are owner-only. An invite token is a random
 24-byte base64url bearer credential stored in plaintext with a seven-day
-expiry. <code>Invite.email</code> is delivery metadata, not an acceptance
+expiry. `Invite.email` is delivery metadata, not an acceptance
 restriction. Any authenticated holder can accept the token, and the token is
-reusable until expiry. The first acceptance stamps <code>acceptedAt</code>;
+reusable until expiry. The first acceptance stamps `acceptedAt`;
 later acceptances can add other users, while an existing member receives an
 idempotent success response.
 
-The authenticated <code>GET /users/:userId</code> endpoint is not
+The authenticated `GET /users/:userId` endpoint is not
 workspace-scoped and returns the target user's email and profile fields to any
 authenticated caller who knows the ID.
 
@@ -331,7 +331,7 @@ workspace, or account mutations.
 
 ## 7. Data model
 
-~~~mermaid
+```mermaid
 erDiagram
     USER ||--o{ WORKSPACE : owns
     USER ||--o{ WORKSPACE_MEMBER : has
@@ -435,30 +435,30 @@ erDiagram
         datetime createdAt
         datetime updatedAt
     }
-~~~
+```
 
 Nullable columns are shown without Mermaid-specific optional syntax:
-<code>User.passwordHash</code>, <code>User.avatarUrl</code>,
-<code>Invite.email</code>, <code>Invite.acceptedAt</code>,
-<code>Document.parentId</code>, <code>Document.language</code>,
-<code>Document.content</code>, <code>DocumentVersion.createdById</code>,
-<code>DocumentVersion.message</code>, <code>Session.revokedAt</code>, and
-<code>PasswordResetToken.usedAt</code>.
+`User.passwordHash`, `User.avatarUrl`,
+`Invite.email`, `Invite.acceptedAt`,
+`Document.parentId`, `Document.language`,
+`Document.content`, `DocumentVersion.createdById`,
+`DocumentVersion.message`, `Session.revokedAt`, and
+`PasswordResetToken.usedAt`.
 
 Important constraints and delete behavior:
 
-- Membership is unique by <code>(workspaceId, userId)</code>.
-- Document path is unique by <code>(workspaceId, path)</code>.
-- Version number is unique by <code>(documentId, versionNumber)</code>.
-- Update sequence is unique by <code>(documentId, seq)</code>.
-- Session <code>jti</code>, invite token, reset-token hash, and user email are
+- Membership is unique by `(workspaceId, userId)`.
+- Document path is unique by `(workspaceId, path)`.
+- Version number is unique by `(documentId, versionNumber)`.
+- Update sequence is unique by `(documentId, seq)`.
+- Session `jti`, invite token, reset-token hash, and user email are
   individually unique.
 - Documents are a recursive tree. Root documents have no parent; deleting a
   parent cascades to descendants.
 - Deleting a workspace cascades to its members, invites, documents, and
   workspace-indexed versions.
 - Deleting a document cascades to versions, CRDT updates, and snapshots.
-- Deleting a version author sets <code>createdById</code> to null.
+- Deleting a version author sets `createdById` to null.
 - Deleting a user cascades memberships, sessions, reset tokens, and sent
   invites, but owned workspaces must be deleted first by the account service.
 
@@ -471,20 +471,20 @@ maintains parallel representations:
 
 | Representation | Used by |
 |---|---|
-| <code>Document.content</code> | REST tree/content reads, manual saves, version creation, ZIP export, and terminal materialization |
-| In-memory <code>Y.Doc</code> plus <code>Snapshot</code>/<code>DocumentUpdate</code> | Live collaborative text and collaborative cold-load recovery |
-| <code>DocumentVersion.content</code> | User-visible save history, detail, diff input, and restore source |
+| `Document.content` | REST tree/content reads, manual saves, version creation, ZIP export, and terminal materialization |
+| In-memory `Y.Doc` plus `Snapshot`/`DocumentUpdate` | Live collaborative text and collaborative cold-load recovery |
+| `DocumentVersion.content` | User-visible save history, detail, diff input, and restore source |
 
 The normal browser flow often aligns the first two: edits enter the Yjs
 document, then an explicit save PATCH writes the visible Monaco text to
-<code>Document.content</code> and creates a version when content changed.
+`Document.content` and creates a version when content changed.
 However, server-side Yjs persistence does not update
-<code>Document.content</code>. Unsaved collaborative edits therefore do not
+`Document.content`. Unsaved collaborative edits therefore do not
 appear in REST export or a newly materialized terminal.
 
 The reverse direction is also not general. Arbitrary REST content PATCHes and
 bulk import updates do not reset or update existing Yjs history. Bulk import
-can overwrite an existing file's <code>Document.content</code> without making a
+can overwrite an existing file's `Document.content` without making a
 version and without reconciling a loaded or persisted CRDT. If any CRDT history
 already exists, a later collaborative cold load uses that history rather than
 the newer plain-text column.
@@ -514,13 +514,13 @@ build, cache, and virtual-environment directories during import. These client
 filters are not security controls; server semantic limits are independent.
 
 Workspace export builds a ZIP in server memory from
-<code>Document.content</code>. It skips unsafe paths and the reserved
-<code>.meridian-build</code> and <code>.terminal-sandboxes</code> prefixes.
+`Document.content`. It skips unsafe paths and the reserved
+`.meridian-build` and `.terminal-sandboxes` prefixes.
 There is no server-side export size cap or streaming ZIP construction.
 
 A meaningful content PATCH creates the next plain-text version in the same
 transaction as the content change. Version numbers are selected as
-<code>max + 1</code>; the unique constraint detects concurrent duplication,
+`max + 1`; the unique constraint detects concurrent duplication,
 but the service has no conflict retry.
 
 ## 9. Realtime protocol
@@ -528,8 +528,8 @@ but the service has no conflict retry.
 ### 9.1 Rooms, authentication, and authorization
 
 The default Socket.IO namespace and path are used. Rooms are named
-<code>document:&lt;documentId&gt;</code> and
-<code>workspace:&lt;workspaceId&gt;</code>.
+`document:<documentId>` and
+`workspace:<workspaceId>`.
 
 After handshake authentication, every editor-gateway event checks the socket's
 session and relevant membership. Active-event checks may use a one-second
@@ -544,7 +544,7 @@ awareness handlers. It does not cover terminal gateway events.
 
 ### 9.2 Initial document synchronization
 
-~~~mermaid
+```mermaid
 sequenceDiagram
     participant Client as Browser client
     participant Gateway as EditorGateway
@@ -569,28 +569,28 @@ sequenceDiagram
     Client->>Gateway: client SyncStep1
     Gateway-->>Client: server SyncStep2 with missing state
     Client->>Client: apply state, then bind Monaco to Y.Text
-~~~
+```
 
-The server's <code>yjs:sync</code> handler is intentionally read-only. It
+The server's `yjs:sync` handler is intentionally read-only. It
 accepts only client SyncStep1, silently ignores the protocol's automatic
 SyncStep2 response, and rejects other mutating sync messages. Document
-mutation must use <code>yjs:update</code>, where write roles, relay, and
+mutation must use `yjs:update`, where write roles, relay, and
 persistence are enforced.
 
 The first collaborative open loads the newest snapshot, then update rows with
 sequence greater than that snapshot. When neither exists, the manager seeds
-<code>Y.Text("content")</code> from <code>Document.content</code>. A
+`Y.Text("content")` from `Document.content`. A
 deterministic Yjs client ID makes concurrent first seeds identical, and a
-sequence-zero insert uses <code>createMany(skipDuplicates)</code>. Empty
+sequence-zero insert uses `createMany(skipDuplicates)`. Empty
 content creates no seed row.
 
 Concurrent acquires in one process share the same loading promise and
-<code>Y.Doc</code>. A loaded document is reference-counted and destroyed 30
+`Y.Doc`. A loaded document is reference-counted and destroyed 30
 seconds after its last socket leaves by default.
 
 ### 9.3 Live update path
 
-~~~mermaid
+```mermaid
 sequenceDiagram
     participant Sender as Editing client
     participant Gateway as EditorGateway
@@ -608,7 +608,7 @@ sequenceDiagram
     Gateway->>Redis: publish cross-instance update
     Persist->>Pg: allocate seq, then insert DocumentUpdate
     Note over Sender,Gateway: No success acknowledgement or durable-write acknowledgement
-~~~
+```
 
 The sender is excluded from the local relay because it already applied the
 update. Persistence is asynchronous and process-local: the gateway does not
@@ -625,7 +625,7 @@ own optimistic local message because the server relays only to peers.
 Awareness is ephemeral and not written to PostgreSQL. The server verifies room
 membership and payload size, tracks awareness client IDs for disconnect
 cleanup, and relays the opaque Yjs awareness data. It does not bind the
-awareness payload's displayed <code>user</code> metadata to the authenticated
+awareness payload's displayed `user` metadata to the authenticated
 identity, so presence display identity is client-asserted by an authenticated
 workspace member.
 
@@ -635,10 +635,10 @@ workspace member.
 
 | State | Location | Lifetime |
 |---|---|---|
-| Saved plain text | PostgreSQL <code>Document.content</code> | Durable |
-| User-visible versions | PostgreSQL <code>DocumentVersion</code> | Durable |
-| CRDT update log | PostgreSQL <code>DocumentUpdate</code> | Durable after asynchronous insert succeeds |
-| CRDT compacted state | PostgreSQL <code>Snapshot</code> | Durable after compaction succeeds |
+| Saved plain text | PostgreSQL `Document.content` | Durable |
+| User-visible versions | PostgreSQL `DocumentVersion` | Durable |
+| CRDT update log | PostgreSQL `DocumentUpdate` | Durable after asynchronous insert succeeds |
+| CRDT compacted state | PostgreSQL `Snapshot` | Durable after compaction succeeds |
 | Active CRDT and awareness | Server process memory | Until grace-period teardown or process exit |
 | Client CRDT and awareness | Browser module maps | Until page reload |
 | Chat and presence events | Socket.IO and Redis pub/sub | Ephemeral |
@@ -648,14 +648,14 @@ workspace member.
 ### 10.2 Sequence allocation and compaction
 
 When Redis is available, a Lua seed-and-increment operation allocates a unique
-sequence number from <code>meridian:doc:&lt;documentId&gt;:seq</code>. The seed
+sequence number from `meridian:doc:<documentId>:seq`. The seed
 uses the maximum sequence found in update and snapshot tables. Without Redis,
 each process uses an in-memory counter seeded from the database high-water
 mark; this fallback is safe only when exactly one server process can write the
 document.
 
 Each process serializes its own writes per document through a promise chain.
-Every <code>SNAPSHOT_EVERY_N_UPDATES</code> successful local writes, default
+Every `SNAPSHOT_EVERY_N_UPDATES` successful local writes, default
 100, that process attempts a serializable transaction:
 
 1. Read the latest durable snapshot.
@@ -675,7 +675,7 @@ transaction does not close that later-insert gap. Current compaction is not a
 safe cross-replica durability mechanism.
 
 Persistence bookkeeping maps and settled promise-chain entries are not evicted
-when a server-side <code>Y.Doc</code> is torn down. A long-lived process that
+when a server-side `Y.Doc` is torn down. A long-lived process that
 touches many distinct documents accumulates per-document counters and chain
 entries until restart.
 
@@ -683,23 +683,23 @@ entries until restart.
 
 Restore is not one atomic transaction across all representations:
 
-1. <code>DocumentsService</code> commits a transaction that writes
-   <code>Document.content</code> and creates a new
-   <code>DocumentVersion</code>.
-2. <code>DocumentRestoreService</code> runs after that commit.
+1. `DocumentsService` commits a transaction that writes
+   `Document.content` and creates a new
+   `DocumentVersion`.
+2. `DocumentRestoreService` runs after that commit.
 3. If this process has the document loaded, it replaces its Yjs text, emits a
-   local <code>yjs:update</code>, flushes this process's persistence chain,
+   local `yjs:update`, flushes this process's persistence chain,
    replaces CRDT history with a sequence-zero snapshot, clears the Redis
-   sequence key, and emits <code>document:restored</code>.
+   sequence key, and emits `document:restored`.
 4. If this process does not have the document loaded, it deletes CRDT history
-   so the next local cold load seeds from <code>Document.content</code>.
+   so the next local cold load seeds from `Document.content`.
 5. The controller then best-effort syncs restored text into active terminal
    projections.
 
 A failure after step 1 can leave the content/version committed while CRDT state
 or terminal projections remain unreconciled. Restore broadcasts and CRDT reset
 are local to the handling process; they are not published through Redis.
-Another replica can retain and later persist its pre-restore <code>Y.Doc</code>
+Another replica can retain and later persist its pre-restore `Y.Doc`
 or pending writes. Multi-replica restore is therefore not convergent.
 
 ## 11. Redis and multiple server instances
@@ -710,12 +710,12 @@ Each client gets a three-second startup connection timeout.
 
 | Redis name | Purpose |
 |---|---|
-| <code>document:*:updates</code> | Cross-instance Yjs update relay |
-| <code>document:*:awareness</code> | Cross-instance awareness relay |
-| <code>workspace:*:chat</code> | Cross-instance workspace chat |
-| <code>realtime:authorization:invalidate</code> | Session, user, and membership invalidation |
-| <code>meridian:sandbox:*:sync</code> | Best-effort terminal projection changes |
-| <code>meridian:doc:&lt;id&gt;:seq</code> | Atomic document update sequence counter |
+| `document:*:updates` | Cross-instance Yjs update relay |
+| `document:*:awareness` | Cross-instance awareness relay |
+| `workspace:*:chat` | Cross-instance workspace chat |
+| `realtime:authorization:invalidate` | Session, user, and membership invalidation |
+| `meridian:sandbox:*:sync` | Best-effort terminal projection changes |
+| `meridian:doc:<id>:seq` | Atomic document update sequence counter |
 
 Messages carry a process origin ID so the publisher ignores its own fan-out.
 Inbound document updates are applied only when that instance already has the
@@ -725,13 +725,13 @@ Loading concurrently with the original asynchronous write can temporarily
 miss that update.
 
 If Redis is unavailable at startup, the server logs a warning and continues.
-Readiness reports Redis as <code>disabled</code>, but remains ready when
+Readiness reports Redis as `disabled`, but remains ready when
 PostgreSQL works. The application does not enforce that only one replica is
 running.
 
 If Redis is lost after startup, there is no reconnect loop. The service can
 remain marked available while commands fail; readiness reports Redis
-<code>error</code>, publications are lost, and sequence allocation falls back
+`error`, publications are lost, and sequence allocation falls back
 to process-local counters on command failure. HTTP readiness still depends
 only on PostgreSQL. Multiple active replicas during either Redis failure mode
 can diverge, miss authorization invalidations, and allocate colliding
@@ -751,7 +751,7 @@ intent.
 ## 12. Terminal execution
 
 The terminal is disabled by default and enabled with
-<code>ENABLE_TERMINAL=true</code>. It uses the authenticated Socket.IO
+`ENABLE_TERMINAL=true`. It uses the authenticated Socket.IO
 connection. Owners and editors can start or use a terminal; viewers and
 non-members are rejected. Session and membership checks use the same
 one-second active-event cache and ten-second passive sweep used by the realtime
@@ -760,10 +760,10 @@ authorization layer. Revocation kills the PTY.
 One terminal session is allowed per socket. Starting a session:
 
 1. Recreates a temporary directory under
-   <code>os.tmpdir()/meridian-terminal-sandboxes/&lt;workspace&gt;/&lt;user&gt;</code>.
-2. Materializes current <code>Document.content</code> paths from PostgreSQL.
-3. Spawns the server user's configured shell through <code>node-pty</code> with
-   that directory as <code>cwd</code>.
+   `os.tmpdir()/meridian-terminal-sandboxes/<workspace>/<user>`.
+2. Materializes current `Document.content` paths from PostgreSQL.
+3. Spawns the server user's configured shell through `node-pty` with
+   that directory as `cwd`.
 4. Passes a reduced environment containing HOME, PATH, terminal/locale values,
    shell, and optional USER/LOGNAME, rather than application secrets.
 
@@ -777,10 +777,10 @@ Run-file dispatch supports:
 
 | Extension | Host command |
 |---|---|
-| <code>.py</code> | <code>python3</code> |
-| <code>.js</code> | <code>node</code> |
-| <code>.ts</code> | <code>npx --no-install tsx</code> |
-| <code>.sh</code> | <code>bash</code> |
+| `.py` | `python3` |
+| `.js` | `node` |
+| `.ts` | `npx --no-install tsx` |
+| `.sh` | `bash` |
 
 These executables must exist on the server host. Paths used by the projection
 and run-file helper reject absolute paths, traversal, control characters, and
@@ -788,7 +788,7 @@ symlink escape, and file writes use no-follow flags where available.
 
 These checks do not confine the interactive shell. The PTY runs as the server
 OS user and can execute arbitrary commands, change directory, consume host
-resources, and access anything allowed to that account. HOME and <code>cwd</code>
+resources, and access anything allowed to that account. HOME and `cwd`
 are convenience boundaries, not isolation. Production use requires a real
 container, VM, or comparable execution sandbox with CPU, memory, process,
 filesystem, network, and syscall controls.
@@ -796,7 +796,7 @@ filesystem, network, and syscall controls.
 Sessions have a 30-minute idle limit and a four-hour absolute limit. They are
 killed on socket disconnect and module shutdown, with a force-kill attempt
 after three seconds. Terminal events use DTO validation and authorization but
-do not use <code>WsRateLimiter</code>; <code>terminal:input</code> also has no
+do not use `WsRateLimiter`; `terminal:input` also has no
 application-level string-length cap.
 
 ## 13. Operations and configuration
@@ -805,11 +805,11 @@ application-level string-length cap.
 
 | Endpoint | Behavior |
 |---|---|
-| <code>GET /health</code> | Process liveness data. It does not probe dependencies. |
-| <code>GET /ready</code> | Two-second PostgreSQL and Redis probes. Returns 503 only when PostgreSQL fails. Redis can be <code>ok</code>, <code>error</code>, or <code>disabled</code> without changing HTTP readiness. |
+| `GET /health` | Process liveness data. It does not probe dependencies. |
+| `GET /ready` | Two-second PostgreSQL and Redis probes. Returns 503 only when PostgreSQL fails. Redis can be `ok`, `error`, or `disabled` without changing HTTP readiness. |
 
 Pino logs are pretty-printed in development and JSON elsewhere. The
-configurable log level defaults to <code>info</code>. HTTP errors include the
+configurable log level defaults to `info`. HTTP errors include the
 request correlation ID; Socket.IO errors are emitted as protocol events.
 
 Nest shutdown hooks are enabled. Shutdown waits for known document write
@@ -824,37 +824,37 @@ Startup uses a Zod schema and fails on invalid required values.
 
 | Variable | Default or requirement |
 |---|---|
-| <code>NODE_ENV</code> | <code>development</code>; allowed values are development, production, test |
-| <code>PORT</code> | 3000 |
-| <code>CLIENT_ORIGIN</code> | <code>http://localhost:5173</code> |
-| <code>DATABASE_URL</code> | Required |
-| <code>REDIS_URL</code> | <code>redis://localhost:6379</code> |
-| <code>JWT_SECRET</code> | Required, at least 16 characters |
-| <code>JWT_EXPIRES_IN</code> | <code>7d</code> |
-| <code>LOG_LEVEL</code> | <code>info</code> |
-| <code>DOC_TEARDOWN_GRACE_MS</code> | 30000 |
-| <code>SNAPSHOT_EVERY_N_UPDATES</code> | 100 |
-| <code>HTTP_TTL_SECONDS</code> / <code>HTTP_LIMIT</code> | 60 / 120 |
-| <code>AUTH_TTL_SECONDS</code> / <code>AUTH_LIMIT</code> | 60 / 10 |
-| <code>WS_MESSAGE_LIMIT_PER_SECOND</code> | 50 for editor-gateway handlers |
-| <code>WS_MAX_YJS_UPDATE_BYTES</code> | 1048576 |
-| <code>ENABLE_TERMINAL</code> | false |
-| <code>RESEND_API_KEY</code> | Optional |
-| <code>MAIL_FROM</code> | <code>Meridian &lt;no-reply@meridian.local&gt;</code> |
-| <code>FORGOT_PASSWORD_TTL_MINUTES</code> | 30 |
-| <code>E2E_TEST</code> | <code>false</code> |
+| `NODE_ENV` | `development`; allowed values are development, production, test |
+| `PORT` | 3000 |
+| `CLIENT_ORIGIN` | `http://localhost:5173` |
+| `DATABASE_URL` | Required |
+| `REDIS_URL` | `redis://localhost:6379` |
+| `JWT_SECRET` | Required, at least 16 characters |
+| `JWT_EXPIRES_IN` | `7d` |
+| `LOG_LEVEL` | `info` |
+| `DOC_TEARDOWN_GRACE_MS` | 30000 |
+| `SNAPSHOT_EVERY_N_UPDATES` | 100 |
+| `HTTP_TTL_SECONDS` / `HTTP_LIMIT` | 60 / 120 |
+| `AUTH_TTL_SECONDS` / `AUTH_LIMIT` | 60 / 10 |
+| `WS_MESSAGE_LIMIT_PER_SECOND` | 50 for editor-gateway handlers |
+| `WS_MAX_YJS_UPDATE_BYTES` | 1048576 |
+| `ENABLE_TERMINAL` | false |
+| `RESEND_API_KEY` | Optional |
+| `MAIL_FROM` | `Meridian <no-reply@meridian.local>` |
+| `FORGOT_PASSWORD_TTL_MINUTES` | 30 |
+| `E2E_TEST` | `false` |
 
-<code>E2E_TEST=true</code> cannot be combined with
-<code>NODE_ENV=production</code>; startup validation rejects it. In a
+`E2E_TEST=true` cannot be combined with
+`NODE_ENV=production`; startup validation rejects it. In a
 non-production E2E process it raises rate limits and exposes Swagger-excluded
 test helpers:
 
-- <code>POST /e2e/cleanup</code> deletes only users on
-  <code>@example.com</code> whose email starts with an exact allow-listed test
-  prefix: <code>e2e-</code>, <code>int-auth-</code>,
-  <code>int-doc-</code>, <code>int-throttle-</code>, or
-  <code>int-workspace-owner-</code>.
-- <code>POST /auth/e2e/password-reset-token</code> creates a token only for a
+- `POST /e2e/cleanup` deletes only users on
+  `@example.com` whose email starts with an exact allow-listed test
+  prefix: `e2e-`, `int-auth-`,
+  `int-doc-`, `int-throttle-`, or
+  `int-workspace-owner-`.
+- `POST /auth/e2e/password-reset-token` creates a token only for a
   matching allow-listed test email.
 
 Outside that mode the guards return 404 before DTO pipes run. These helpers do
@@ -866,7 +866,7 @@ environment despite their additional allow-list.
 The client and server have separate lockfiles and commands. There is no root
 package script that installs or runs both.
 
-~~~bash
+```bash
 # Infrastructure and server
 cd server
 npm ci
@@ -879,11 +879,11 @@ npm run start:dev
 cd client
 npm ci
 npm run dev
-~~~
+```
 
 Build and production-start commands are:
 
-~~~bash
+```bash
 cd server
 npm ci
 npx prisma generate
@@ -894,10 +894,10 @@ npm run start:prod
 cd ../client
 npm ci
 npm run build
-~~~
+```
 
-<code>prisma migrate dev</code>, exposed as <code>npm run db:migrate</code>, is
-for development. Deployment should use <code>npx prisma migrate deploy</code>
+`prisma migrate dev`, exposed as `npm run db:migrate`, is
+for development. Deployment should use `npx prisma migrate deploy`
 before starting the compiled server. The repository does not include a
 production process manager, reverse-proxy configuration, container image, or
 hosting manifest.
@@ -908,15 +908,15 @@ The GitHub Actions workflow uses Node.js 22.
 
 | Job | What it verifies |
 |---|---|
-| Server | <code>npm ci</code>, Prisma client generation, Nest build, Jest unit tests |
-| Client | <code>npm ci</code>, project-reference TypeScript build, Vitest unit tests, Vite production build |
+| Server | `npm ci`, Prisma client generation, Nest build, Jest unit tests |
+| Client | `npm ci`, project-reference TypeScript build, Vitest unit tests, Vite production build |
 | Server integration | Prisma migrations plus Supertest against the real Nest application, PostgreSQL 16, and Redis 7 |
 | End to end | Compiled server, PostgreSQL 16, Redis 7, terminal enabled, Vite dev server, and Playwright Chromium |
 | Lint | Client ESLint only |
 
 Relevant local commands:
 
-~~~bash
+```bash
 cd server
 npm test
 npm run test:integration
@@ -926,7 +926,7 @@ npm test
 npm run lint
 npm run build
 npm run test:e2e
-~~~
+```
 
 Integration and end-to-end tests require their documented infrastructure and
 environment. CI does not currently exercise a multi-replica deployment,
@@ -945,7 +945,7 @@ guarantees:
    across plain text, CRDT state, and terminal projection.
 3. Live edit persistence is asynchronous, has no client durability
    acknowledgement, and logs/swallow failures without durable retry.
-4. <code>Document.content</code> and CRDT history can diverge after unsaved
+4. `Document.content` and CRDT history can diverge after unsaved
    edits, arbitrary REST updates, bulk overwrite, failed persistence, or failed
    restore reconciliation.
 5. Redis pub/sub has no replay or reconnect path; multi-replica operation

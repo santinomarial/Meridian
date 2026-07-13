@@ -32,7 +32,7 @@ horizontal collaborative editing.
 
 | Area | Current classification |
 |---|---|
-| Most HTTP authentication and CRUD | Shared PostgreSQL state and distributable; version restore and realtime reconciliation are exceptions; throttling is per process |
+| HTTP authentication and metadata CRUD | Shared PostgreSQL state and distributable; document content writes and version restore have the concurrency and reconciliation limits below; throttling is per process |
 | Live Yjs relay | Best effort through Redis Pub/Sub while Redis and all subscriptions are healthy |
 | Yjs persistence and compaction | Not safe for general multi-replica use; see the sequence race below |
 | Version restore | Single-replica only |
@@ -126,6 +126,23 @@ If an invalidation message is missed, a protected event may use cached access
 for up to one second, and a passive socket is checked on the next periodic
 audit. The 10-second interval is an audit cadence, not a hard revocation SLA;
 database latency and the time required to scan connected clients can extend it.
+
+Document-writing HTTP routes have additional boundaries:
+
+- a meaningful content save selects `max(versionNumber) + 1`; concurrent saves
+  can choose the same number, and the unique constraint rejects one request
+  without an application retry;
+- ordinary document PATCH, create, and bulk import write `Document.content` but
+  do not mutate or reset an already loaded `Y.Doc` or existing CRDT history;
+  and
+- ZIP export and a newly materialized terminal read `Document.content`, not the
+  live `Y.Doc`.
+
+An out-of-band HTTP content write can therefore diverge from an open document,
+and a later cold load follows persisted Yjs history when it exists. Load
+balancing the HTTP request to another replica does not provide reconciliation.
+The specialized version-restore path attempts reconciliation but is itself
+single-replica only, as described below.
 
 ## Realtime fan-out
 
@@ -275,8 +292,12 @@ that were already queued when Redis failed; those writes may already have used
 process-local sequence allocation. Reconnect and Yjs sync do not provide a
 durable recovery protocol for an update the server accepted and then failed to
 persist. If persistence failed before the outage, restarting cannot recreate
-updates that existed only in process or client memory. Recover those through
-explicit client export, backups, or an application-specific repair procedure.
+updates that existed only in process or client memory. Preserve text through a
+manual copy from a client that still holds it or a successful explicit Save
+before that client state is lost. A Save protects `Document.content` and version
+history but does not repair CRDT history automatically, so complete
+reconciliation in a controlled single-replica maintenance window. Otherwise,
+recovery requires backups or an application-specific repair procedure.
 
 ## Other failure modes
 
