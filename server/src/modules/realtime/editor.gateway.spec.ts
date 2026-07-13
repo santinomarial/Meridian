@@ -428,6 +428,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
         user: AUTH_USER,
         documentRoles: { 'doc-1': WorkspaceRole.VIEWER },
       },
+      rooms: ['document:doc-1'],
     });
     socket.to.mockReturnValue({ emit: jest.fn() } as never);
 
@@ -446,6 +447,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
         user: AUTH_USER,
         documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
       },
+      rooms: ['document:doc-1'],
     });
     socket.to.mockReturnValue({ emit: jest.fn() } as never);
 
@@ -464,6 +466,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
         user: AUTH_USER,
         documentRoles: { 'doc-1': WorkspaceRole.OWNER },
       },
+      rooms: ['document:doc-1'],
     });
     socket.to.mockReturnValue({ emit: jest.fn() } as never);
 
@@ -473,6 +476,38 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     gateway.handleYjsUpdate({ documentId: 'doc-1', update: new Uint8Array(10) }, socket);
 
     expect(documentManager.applyUpdate).toHaveBeenCalled();
+  });
+
+  it('rejects an authenticated socket that never joined the target document', () => {
+    const { gateway, documentManager } = makeGateway();
+    const socket = makeSocket({ data: { user: AUTH_USER } });
+    documentManager.hasDocument.mockReturnValue(true);
+
+    gateway.handleYjsUpdate(
+      { documentId: 'another-users-loaded-doc', update: new Uint8Array(10) },
+      socket,
+    );
+
+    expect(socket.emit).toHaveBeenCalledWith(
+      'error',
+      expect.objectContaining({ message: expect.stringContaining('joinDocument') as string }),
+    );
+    expect(documentManager.applyUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a cached editor role when the socket is not in the document room', () => {
+    const { gateway, documentManager } = makeGateway();
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+      },
+    });
+    documentManager.hasDocument.mockReturnValue(true);
+
+    gateway.handleYjsUpdate({ documentId: 'doc-1', update: new Uint8Array(10) }, socket);
+
+    expect(documentManager.applyUpdate).not.toHaveBeenCalled();
   });
 });
 

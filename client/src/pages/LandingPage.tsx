@@ -145,7 +145,7 @@ function AuthCard({
   useEffect(() => {
     const prevMode = prevModeRef.current;
     prevModeRef.current = mode;
-    if (prevMode === null) return;
+    if (prevMode === null || prevMode === mode) return;
     const keepEmail =
       (prevMode === "signin" && mode === "forgot") ||
       (prevMode === "forgot" && mode === "signin");
