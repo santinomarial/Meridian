@@ -137,7 +137,7 @@ function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").split("/").filter(Boolean).join("/");
 }
 
-function isImportPathSafe(path: string): boolean {
+export function isImportPathSafe(path: string): boolean {
   const normalized = normalizePath(path);
   const segments = normalized.split("/");
   const encoder = new TextEncoder();
@@ -154,7 +154,7 @@ function isImportPathSafe(path: string): boolean {
   );
 }
 
-function declaredUncompressedSize(entry: JSZip.JSZipObject): number | null {
+export function declaredUncompressedSize(entry: JSZip.JSZipObject): number | null {
   const internal = entry as JSZip.JSZipObject & {
     _data?: { uncompressedSize?: unknown };
   };
