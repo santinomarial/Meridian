@@ -4,14 +4,12 @@ import {
   Get,
   HttpCode,
   HttpStatus,
-  NotFoundException,
   Post,
-  Query,
   Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -22,6 +20,8 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from './types/auth-user.type';
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request.type';
+import { E2eResetTokenDto } from '../../e2e/e2e.dto';
+import { assertE2eTestMode, assertTestEmail } from '../../e2e/e2e-safety';
 
 const FORGOT_SUCCESS =
   'If an account exists for this email, a reset link has been sent.';
@@ -94,14 +94,14 @@ export class AuthController {
 
   // ── E2E test helper — only works when E2E_TEST=true ─────────────────────────
 
-  @ApiOperation({ summary: '[E2E only] Get a raw reset token without sending email' })
-  @Get('e2e/password-reset-token')
+  @ApiExcludeEndpoint()
+  @Post('e2e/password-reset-token')
+  @HttpCode(HttpStatus.OK)
   async e2eGetResetToken(
-    @Query('email') email: string,
+    @Body() dto: E2eResetTokenDto,
   ): Promise<{ token: string; resetUrl: string }> {
-    if (process.env['E2E_TEST'] !== 'true') {
-      throw new NotFoundException();
-    }
+    assertE2eTestMode();
+    const email = assertTestEmail(dto.email);
     return this.authService.generateResetTokenForE2E(email);
   }
 }

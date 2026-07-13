@@ -63,8 +63,10 @@ export async function getPasswordResetToken(
   page: Page,
   email: string,
 ): Promise<{ token: string; resetUrl: string }> {
-  const url = `${BACKEND_URL}/auth/e2e/password-reset-token?email=${encodeURIComponent(email)}`;
-  const response = await page.request.get(url);
+  const response = await page.request.post(
+    `${BACKEND_URL}/auth/e2e/password-reset-token`,
+    { data: { email } },
+  );
   if (!response.ok()) {
     throw new Error(`E2E reset-token helper returned ${response.status()}`);
   }

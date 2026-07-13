@@ -32,6 +32,15 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   MAIL_FROM: z.string().default('Meridian <no-reply@meridian.local>'),
   FORGOT_PASSWORD_TTL_MINUTES: z.coerce.number().int().positive().default(30),
+  E2E_TEST: z.enum(['true', 'false']).default('false'),
+}).superRefine((env, ctx) => {
+  if (env.NODE_ENV === 'production' && env.E2E_TEST === 'true') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['E2E_TEST'],
+      message: 'E2E_TEST cannot be enabled in production',
+    });
+  }
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;

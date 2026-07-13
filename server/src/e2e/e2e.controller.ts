@@ -3,17 +3,17 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
-  NotFoundException,
   Post,
 } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
-
-interface CleanupDto {
-  emailPrefix?: string;
-}
+import { CleanupE2eUsersDto } from './e2e.dto';
+import {
+  assertE2eTestMode,
+  assertTestEmailPrefix,
+} from './e2e-safety';
 
 /**
  * Test-only endpoints used by the Playwright E2E suite to keep the database
@@ -34,32 +34,36 @@ export class E2eController {
 
   @Post('cleanup')
   @HttpCode(HttpStatus.OK)
-  async cleanup(@Body() dto: CleanupDto): Promise<{ deletedUsers: number }> {
-    if (process.env['E2E_TEST'] !== 'true') {
-      throw new NotFoundException();
-    }
+  async cleanup(
+    @Body() dto: CleanupE2eUsersDto,
+  ): Promise<{ deletedUsers: number }> {
+    assertE2eTestMode();
+    const prefix = assertTestEmailPrefix(dto.emailPrefix);
 
-    const prefix = dto.emailPrefix ?? 'e2e-';
-    const users = await this.prisma.user.findMany({
-      where: { email: { startsWith: prefix } },
-      select: { id: true },
-    });
-    const userIds = users.map((u) => u.id);
-    if (userIds.length === 0) {
-      return { deletedUsers: 0 };
-    }
+    const deletedUsers = await this.prisma.$transaction(async (tx) => {
+      const users = await tx.user.findMany({
+        where: {
+          email: { startsWith: prefix, endsWith: '@example.com' },
+        },
+        select: { id: true },
+      });
+      const userIds = users.map((user) => user.id);
+      if (userIds.length === 0) return 0;
 
-    // Workspaces own their documents/members/invites via cascade, but the
-    // workspace→owner relation is not cascade-deleted, so remove owned
-    // workspaces first, then the users (which cascades the rest).
-    await this.prisma.workspace.deleteMany({
-      where: { ownerId: { in: userIds } },
-    });
-    const result = await this.prisma.user.deleteMany({
-      where: { id: { in: userIds } },
+      // Workspaces own their documents/members/invites via cascade, but the
+      // workspace→owner relation is not cascade-deleted, so remove owned
+      // workspaces first, then the users (which cascades the rest). Running
+      // both operations in one transaction avoids leaving half-cleaned data.
+      await tx.workspace.deleteMany({
+        where: { ownerId: { in: userIds } },
+      });
+      const result = await tx.user.deleteMany({
+        where: { id: { in: userIds } },
+      });
+      return result.count;
     });
 
-    this.logger.info({ deletedUsers: result.count }, 'E2E cleanup complete');
-    return { deletedUsers: result.count };
+    this.logger.info({ deletedUsers }, 'E2E cleanup complete');
+    return { deletedUsers };
   }
 }
