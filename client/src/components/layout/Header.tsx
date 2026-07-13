@@ -260,6 +260,7 @@ export function Header() {
       setInviteEmail("");
       setInviteStatus("idle");
       setCopyStatus("idle");
+      setInviteToken(null);
     }
   }, [openPanel]);
 
@@ -863,7 +864,14 @@ export function Header() {
                   />
                   <select
                     value={inviteRole}
-                    onChange={(e) => setInviteRole(e.target.value as InviteRole)}
+                    onChange={(e) => {
+                      // Hide the previous role's token while its replacement is
+                      // generated. Otherwise a fast copy can grant editor access
+                      // even though the UI already says "Viewer".
+                      setInviteToken(null);
+                      setCopyStatus("idle");
+                      setInviteRole(e.target.value as InviteRole);
+                    }}
                     className="shrink-0 rounded-sm border meridian-crisp-border bg-surface-container px-1.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/20"
                     aria-label="Invite role"
                   >
@@ -900,16 +908,21 @@ export function Header() {
                   <button
                     type="button"
                     onClick={() => void handleCopyLink()}
+                    disabled={isBackendAvailable && inviteToken === null}
                     aria-label="Copy invite link"
                     data-testid="copy-invite-link"
                     className={[
-                      "shrink-0 rounded px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
+                      "shrink-0 rounded px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-wait disabled:opacity-60",
                       copyStatus === "copied"
                         ? "bg-primary text-on-primary"
                         : "bg-surface-container-high text-on-surface hover:bg-surface-container-highest",
                     ].join(" ")}
                   >
-                    {copyStatus === "copied" ? "Copied!" : "Copy"}
+                    {isBackendAvailable && inviteToken === null
+                      ? "Generating…"
+                      : copyStatus === "copied"
+                        ? "Copied!"
+                        : "Copy"}
                   </button>
                 </div>
                 {inviteToken === null ? (

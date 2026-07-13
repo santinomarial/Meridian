@@ -133,6 +133,10 @@ test.describe("share / invite dialog", () => {
       await freshWorkspace(page);
       await page.getByTestId("share-button").click();
 
+      await expect(page.getByTestId("invite-link-display")).not.toContainText(
+        "/invite/demo",
+        { timeout: 10_000 },
+      );
       const copyBtn = page.getByTestId("copy-invite-link");
       await copyBtn.click();
       // Button text changes to "Copied!" for 2 seconds.
