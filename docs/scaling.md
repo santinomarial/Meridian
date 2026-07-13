@@ -32,7 +32,7 @@ horizontal collaborative editing.
 
 | Area | Current classification |
 |---|---|
-| HTTP authentication and CRUD | Shared PostgreSQL state; suitable for multiple replicas, subject to per-process throttling |
+| Most HTTP authentication and CRUD | Shared PostgreSQL state and distributable; version restore and realtime reconciliation are exceptions; throttling is per process |
 | Live Yjs relay | Best effort through Redis Pub/Sub while Redis and all subscriptions are healthy |
 | Yjs persistence and compaction | Not safe for general multi-replica use; see the sequence race below |
 | Version restore | Single-replica only |
@@ -340,7 +340,9 @@ before enabling it.
 The default Nest throttler storage is process-local. With `N` evenly balanced
 replicas, a caller can receive approximately `N` independent HTTP budgets. Use
 an ingress, gateway, or shared abuse-control service for a deployment-wide
-limit, especially on authentication routes.
+limit, especially on authentication routes. The application does not configure
+Express `trust proxy`; define the trusted-proxy model explicitly so application
+and ingress controls use the intended client address.
 
 `WsRateLimiter` applies a fixed one-second budget per socket to selected
 `EditorGateway` events, including document joins, workspace joins, chat, Yjs

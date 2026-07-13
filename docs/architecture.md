@@ -798,3 +798,173 @@ killed on socket disconnect and module shutdown, with a force-kill attempt
 after three seconds. Terminal events use DTO validation and authorization but
 do not use <code>WsRateLimiter</code>; <code>terminal:input</code> also has no
 application-level string-length cap.
+
+## 13. Operations and configuration
+
+### 13.1 Health, logging, and shutdown
+
+| Endpoint | Behavior |
+|---|---|
+| <code>GET /health</code> | Process liveness data. It does not probe dependencies. |
+| <code>GET /ready</code> | Two-second PostgreSQL and Redis probes. Returns 503 only when PostgreSQL fails. Redis can be <code>ok</code>, <code>error</code>, or <code>disabled</code> without changing HTTP readiness. |
+
+Pino logs are pretty-printed in development and JSON elsewhere. The
+configurable log level defaults to <code>info</code>. HTTP errors include the
+request correlation ID; Socket.IO errors are emitted as protocol events.
+
+Nest shutdown hooks are enabled. Shutdown waits for known document write
+chains, disconnects Prisma and Redis, releases realtime timers/subscriptions,
+and kills active terminal sessions. The host must deliver a supported
+termination signal and allow enough grace time. This does not make already
+failed or never-enqueued writes durable.
+
+### 13.2 Environment configuration
+
+Startup uses a Zod schema and fails on invalid required values.
+
+| Variable | Default or requirement |
+|---|---|
+| <code>NODE_ENV</code> | <code>development</code>; allowed values are development, production, test |
+| <code>PORT</code> | 3000 |
+| <code>CLIENT_ORIGIN</code> | <code>http://localhost:5173</code> |
+| <code>DATABASE_URL</code> | Required |
+| <code>REDIS_URL</code> | <code>redis://localhost:6379</code> |
+| <code>JWT_SECRET</code> | Required, at least 16 characters |
+| <code>JWT_EXPIRES_IN</code> | <code>7d</code> |
+| <code>LOG_LEVEL</code> | <code>info</code> |
+| <code>DOC_TEARDOWN_GRACE_MS</code> | 30000 |
+| <code>SNAPSHOT_EVERY_N_UPDATES</code> | 100 |
+| <code>HTTP_TTL_SECONDS</code> / <code>HTTP_LIMIT</code> | 60 / 120 |
+| <code>AUTH_TTL_SECONDS</code> / <code>AUTH_LIMIT</code> | 60 / 10 |
+| <code>WS_MESSAGE_LIMIT_PER_SECOND</code> | 50 for editor-gateway handlers |
+| <code>WS_MAX_YJS_UPDATE_BYTES</code> | 1048576 |
+| <code>ENABLE_TERMINAL</code> | false |
+| <code>RESEND_API_KEY</code> | Optional |
+| <code>MAIL_FROM</code> | <code>Meridian &lt;no-reply@meridian.local&gt;</code> |
+| <code>FORGOT_PASSWORD_TTL_MINUTES</code> | 30 |
+| <code>E2E_TEST</code> | <code>false</code> |
+
+<code>E2E_TEST=true</code> cannot be combined with
+<code>NODE_ENV=production</code>; startup validation rejects it. In a
+non-production E2E process it raises rate limits and exposes Swagger-excluded
+test helpers:
+
+- <code>POST /e2e/cleanup</code> deletes only users on
+  <code>@example.com</code> whose email starts with an exact allow-listed test
+  prefix: <code>e2e-</code>, <code>int-auth-</code>,
+  <code>int-doc-</code>, <code>int-throttle-</code>, or
+  <code>int-workspace-owner-</code>.
+- <code>POST /auth/e2e/password-reset-token</code> creates a token only for a
+  matching allow-listed test email.
+
+Outside that mode the guards return 404 before DTO pipes run. These helpers do
+not use a shared secret and must never be enabled on a reachable shared
+environment despite their additional allow-list.
+
+### 13.3 Build, migration, and local commands
+
+The client and server have separate lockfiles and commands. There is no root
+package script that installs or runs both.
+
+~~~bash
+# Infrastructure and server
+cd server
+npm ci
+npm run infra:up
+npm run db:migrate
+npm run db:seed
+npm run start:dev
+
+# Client, in a second shell
+cd client
+npm ci
+npm run dev
+~~~
+
+Build and production-start commands are:
+
+~~~bash
+cd server
+npm ci
+npx prisma generate
+npx prisma migrate deploy
+npm run build
+npm run start:prod
+
+cd ../client
+npm ci
+npm run build
+~~~
+
+<code>prisma migrate dev</code>, exposed as <code>npm run db:migrate</code>, is
+for development. Deployment should use <code>npx prisma migrate deploy</code>
+before starting the compiled server. The repository does not include a
+production process manager, reverse-proxy configuration, container image, or
+hosting manifest.
+
+## 14. Verification and CI
+
+The GitHub Actions workflow uses Node.js 22.
+
+| Job | What it verifies |
+|---|---|
+| Server | <code>npm ci</code>, Prisma client generation, Nest build, Jest unit tests |
+| Client | <code>npm ci</code>, project-reference TypeScript build, Vitest unit tests, Vite production build |
+| Server integration | Prisma migrations plus Supertest against the real Nest application, PostgreSQL 16, and Redis 7 |
+| End to end | Compiled server, PostgreSQL 16, Redis 7, terminal enabled, Vite dev server, and Playwright Chromium |
+| Lint | Client ESLint only |
+
+Relevant local commands:
+
+~~~bash
+cd server
+npm test
+npm run test:integration
+
+cd ../client
+npm test
+npm run lint
+npm run build
+npm run test:e2e
+~~~
+
+Integration and end-to-end tests require their documented infrastructure and
+environment. CI does not currently exercise a multi-replica deployment,
+out-of-order cross-replica persistence, Redis loss/recovery, cross-replica
+restore, terminal resource isolation, production TLS/cookie routing, database
+backup/restore, or long-running process memory growth.
+
+## 15. Known architectural limitations
+
+The most material limitations are collected here so they are not mistaken for
+guarantees:
+
+1. Multi-replica Yjs durability is unsafe because sequence allocation and
+   process-local write/compaction ordering can create snapshot gaps.
+2. Version restore reconciles only the handling process and is non-atomic
+   across plain text, CRDT state, and terminal projection.
+3. Live edit persistence is asynchronous, has no client durability
+   acknowledgement, and logs/swallow failures without durable retry.
+4. <code>Document.content</code> and CRDT history can diverge after unsaved
+   edits, arbitrary REST updates, bulk overwrite, failed persistence, or failed
+   restore reconciliation.
+5. Redis pub/sub has no replay or reconnect path; multi-replica operation
+   during Redis failure can diverge and allocate duplicate sequence numbers.
+6. The terminal is host command execution, not a security sandbox, and lacks
+   editor-gateway message-rate protection.
+7. HTTP request parsing precedes Nest authentication/throttling; HTTP
+   throttling is process-local and proxy trust is not configured.
+8. Client CRDT objects and server persistence bookkeeping grow per touched
+   document until browser reload or server restart, respectively.
+9. ZIP export is built in memory without a server-side output cap.
+10. Version number allocation has a concurrent unique-conflict failure mode
+    without retry.
+11. Invite tokens are plaintext, reusable bearer links; optional invite email
+    does not bind acceptance identity.
+12. Awareness display identity is client-asserted, email is not verified, and
+    an authenticated user lookup can disclose another user's email by ID.
+13. Expired/revoked authentication and invite records have no scheduled
+    retention cleanup.
+14. Production infrastructure, ingress controls, isolation, observability
+    backend, backup policy, and disaster-recovery behavior are not defined in
+    this repository.
