@@ -523,7 +523,9 @@ filters are not security controls; server semantic limits are independent.
 Workspace export builds a ZIP in server memory from
 `Document.content`. It skips unsafe paths and the reserved
 `.meridian-build` and `.terminal-sandboxes` prefixes.
-There is no server-side export size cap or streaming ZIP construction.
+There is no aggregate workspace-size quota, server-side export size cap, or
+streaming ZIP construction. Repeated creates and updates can grow a workspace
+beyond the bulk import ceiling, so export memory use can exceed 25 MiB.
 
 A meaningful content PATCH creates the next plain-text version in the same
 transaction as the content change. Version numbers are selected as
