@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHash } from 'crypto';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import type { AppConfig } from '../../config/configuration.type';
@@ -17,6 +18,11 @@ interface DocEntry {
   // Present while the initial DB load is in progress.  Concurrent acquire()
   // calls await this promise so they never receive a partially-loaded Y.Doc.
   loading?: Promise<void>;
+}
+
+function deterministicSeedClientId(documentId: string): number {
+  const value = createHash('sha256').update(documentId).digest().readUInt32BE(0);
+  return value === 0 ? 1 : value;
 }
 
 @Injectable()
@@ -193,13 +199,19 @@ export class DocumentManagerService {
     const content = document?.content ?? '';
     if (content.length === 0) return;
 
+    // Two replicas may cold-open a never-before-collaborated document at the
+    // same time. A deterministic seed client id makes both initial Yjs states
+    // byte-identical; createMany(skipDuplicates) then lets either replica win
+    // the seq-0 insert without producing two independent copies of the text.
+    doc.clientID = deterministicSeedClientId(documentId);
     doc.getText('content').insert(0, content);
-    await this.prisma.documentUpdate.create({
-      data: {
+    await this.prisma.documentUpdate.createMany({
+      data: [{
         documentId,
         seq: 0,
         update: Buffer.from(Y.encodeStateAsUpdate(doc)),
-      },
+      }],
+      skipDuplicates: true,
     });
   }
 }

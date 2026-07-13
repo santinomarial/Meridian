@@ -288,7 +288,7 @@ Set these in `server/.env` (see `.env.example`):
 | `CLIENT_ORIGIN` | Frontend origin, used to build invite/reset URLs and for CORS |
 | `RESEND_API_KEY` | Optional — enables real email delivery via Resend |
 | `MAIL_FROM` | From-address for outgoing email |
-| `E2E_TEST` | When `true`, raises rate limits and enables test-only helper endpoints (see below) |
+| `E2E_TEST` | When `true` outside production, raises rate limits and enables tightly scoped test-only helper endpoints (see below) |
 
 The client reads `VITE_API_URL` (defaults to `http://localhost:3000`).
 
@@ -337,13 +337,14 @@ The HTTP integration tests boot the real `AppModule` (no listening port — supe
 
 ### `E2E_TEST=true` behavior
 
-This flag is **only** for automated tests and changes nothing in normal dev/prod:
+This flag is **only** for automated tests. Startup is rejected if it is enabled
+with `NODE_ENV=production`:
 
 - Rate limiters are raised so Playwright never trips `429`s.
 - WebSocket message limits are raised so rapid Yjs updates aren't dropped.
 - Test-only endpoints become reachable (they return `404` otherwise):
-  - `GET /auth/e2e/password-reset-token?email=` — returns a raw reset token without sending email.
-  - `POST /e2e/cleanup` — deletes throwaway accounts (default email prefix `e2e-`) and their owned workspaces, keeping the test DB tidy across runs.
+  - `POST /auth/e2e/password-reset-token` with `{ "email": "e2e-…@example.com" }` — returns a raw reset token without sending email. Only recognized synthetic test addresses are accepted, and the email stays out of request URLs.
+  - `POST /e2e/cleanup` with an explicit, allow-listed test email prefix — transactionally deletes matching `@example.com` accounts and their owned workspaces, keeping the test DB tidy across runs. Missing, empty, and arbitrary prefixes are rejected.
 
 ## What is intentionally not implemented
 

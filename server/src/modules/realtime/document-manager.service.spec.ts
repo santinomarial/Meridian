@@ -301,6 +301,44 @@ describe('DocumentManagerService', () => {
       expect(doc.getText('content').toString()).toBe('');
     });
 
+    it('seeds plain-text content as a conflict-safe seq-0 Yjs update', async () => {
+      prisma.document.findUnique.mockResolvedValue({ content: 'seed me' } as never);
+      prisma.documentUpdate.createMany.mockResolvedValue({ count: 1 });
+
+      const doc = await manager.acquire('doc-1');
+
+      expect(doc.getText('content').toString()).toBe('seed me');
+      expect(prisma.documentUpdate.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            documentId: 'doc-1',
+            seq: 0,
+            update: expect.any(Buffer),
+          }),
+        ],
+        skipDuplicates: true,
+      });
+    });
+
+    it('produces identical seed state on concurrent replicas', async () => {
+      prisma.document.findUnique.mockResolvedValue({ content: 'same content' } as never);
+      prisma.documentUpdate.createMany.mockResolvedValue({ count: 1 });
+      const secondManager = makeManager();
+
+      try {
+        const [first, second] = await Promise.all([
+          manager.acquire('doc-shared'),
+          secondManager.acquire('doc-shared'),
+        ]);
+
+        expect(Buffer.from(Y.encodeStateAsUpdate(first))).toEqual(
+          Buffer.from(Y.encodeStateAsUpdate(second)),
+        );
+      } finally {
+        secondManager.destroyAll();
+      }
+    });
+
     it('applies snapshot state to a fresh doc', async () => {
       const sourceDoc = new Y.Doc();
       sourceDoc.getText('content').insert(0, 'hello from snapshot');

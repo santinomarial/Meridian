@@ -55,7 +55,7 @@ npm run test:e2e:headed
 |---|---|---|
 | `MERIDIAN_BASE_URL` | `http://localhost:5173` | Playwright `baseURL` |
 | `MERIDIAN_BACKEND_URL` | `http://localhost:3000` | Backend availability probe |
-| `E2E_TEST` | `false` | Set to `true` on the **server** to bypass auth rate limits |
+| `E2E_TEST` | `false` | Set to `true` on a non-production **server** to relax test rate limits and enable scoped E2E helpers |
 
 ### Test files
 

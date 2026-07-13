@@ -42,6 +42,7 @@ async function bootstrap(): Promise<void> {
     bodyParser: false,
   });
   app.useLogger(app.get(Logger));
+  app.enableShutdownHooks();
 
   configureApp(app);
 

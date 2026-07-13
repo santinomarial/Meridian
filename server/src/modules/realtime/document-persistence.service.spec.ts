@@ -323,7 +323,7 @@ describe('DocumentPersistenceService', () => {
 
     it('does not compact before the threshold is reached', async () => {
       for (let i = 0; i < THRESHOLD - 1; i++) {
-        cs.persistUpdate('doc-1', new Uint8Array([i]));
+        cs.persistUpdate('doc-1', updates[i]!);
       }
       await cs.flushDocument('doc-1');
 
@@ -332,7 +332,7 @@ describe('DocumentPersistenceService', () => {
 
     it('runs a transaction exactly once when the threshold is hit', async () => {
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', new Uint8Array([i]));
+        cs.persistUpdate('doc-1', updates[i]!);
       }
       await cs.flushDocument('doc-1');
 
@@ -343,7 +343,7 @@ describe('DocumentPersistenceService', () => {
       // With no pre-existing records, writes get seq 0, 1, 2.
       // The snapshot should be stamped with seq 2 (= THRESHOLD - 1).
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', new Uint8Array([i]));
+        cs.persistUpdate('doc-1', updates[i]!);
       }
       await cs.flushDocument('doc-1');
 
@@ -359,7 +359,7 @@ describe('DocumentPersistenceService', () => {
 
     it('deletes all updates up to and including the snapshot seq', async () => {
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', new Uint8Array([i]));
+        cs.persistUpdate('doc-1', updates[i]!);
       }
       await cs.flushDocument('doc-1');
 
@@ -371,28 +371,29 @@ describe('DocumentPersistenceService', () => {
     it('resets the counter so each subsequent N updates triggers another compaction', async () => {
       // First batch → first compaction.
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', new Uint8Array([i]));
+        cs.persistUpdate('doc-1', updates[i]!);
       }
       await cs.flushDocument('doc-1');
 
       // Second batch → second compaction.
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', new Uint8Array([i]));
+        cs.persistUpdate('doc-1', updates[THRESHOLD + i]!);
       }
       await cs.flushDocument('doc-1');
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     });
 
-    it('does not compact when the document state is empty (doc torn down)', async () => {
-      documentManager.getState.mockReturnValue(new Uint8Array(0));
+    it('does not create a snapshot when no durable updates remain to compact', async () => {
+      prisma.documentUpdate.findMany.mockResolvedValue([] as never);
 
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', new Uint8Array([i]));
+        cs.persistUpdate('doc-1', updates[i]!);
       }
       await cs.flushDocument('doc-1');
 
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.snapshot.create).not.toHaveBeenCalled();
+      expect(prisma.documentUpdate.deleteMany).not.toHaveBeenCalled();
     });
 
     it('continues accepting writes after a compaction failure', async () => {
@@ -400,10 +401,10 @@ describe('DocumentPersistenceService', () => {
 
       // First batch triggers failed compaction.
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', new Uint8Array([i]));
+        cs.persistUpdate('doc-1', updates[i]!);
       }
       // Second batch — these must still persist despite the earlier failure.
-      cs.persistUpdate('doc-1', new Uint8Array([99]));
+      cs.persistUpdate('doc-1', updates[THRESHOLD]!);
       await cs.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.create).toHaveBeenCalledTimes(THRESHOLD + 1);
@@ -469,6 +470,46 @@ describe('DocumentPersistenceService', () => {
       await svc.resetDocument('doc-1', null);
 
       expect(redis.del).toHaveBeenCalledWith(KEY);
+    });
+
+    it('still compacts after Redis allocates the sequence numbers', async () => {
+      const redis = makeRedis(true);
+      redis.allocateSeq.mockResolvedValue(10);
+      redis.incr.mockResolvedValueOnce(11).mockResolvedValueOnce(12);
+      prisma.documentUpdate.aggregate.mockResolvedValue({ _max: { seq: 9 } } as never);
+      const updates = makeIncrementalUpdates(3);
+      const rows: Array<{
+        id: string;
+        documentId: string;
+        update: Buffer;
+        seq: number;
+        createdAt: Date;
+      }> = [];
+      prisma.documentUpdate.create.mockImplementation(
+        ((args: { data: { documentId: string; update: Buffer; seq: number } }) => {
+          rows.push({ id: `u-${args.data.seq}`, ...args.data, createdAt: new Date() });
+          return Promise.resolve({});
+        }) as never,
+      );
+      prisma.documentUpdate.findMany.mockImplementation(
+        (() => Promise.resolve(rows)) as never,
+      );
+      prisma.$transaction.mockImplementation(
+        ((fn: (tx: typeof prisma) => Promise<void>) => fn(prisma)) as never,
+      );
+      prisma.snapshot.create.mockResolvedValue({ id: 'snapshot-12' } as never);
+      prisma.snapshot.deleteMany.mockResolvedValue({ count: 0 } as never);
+      prisma.documentUpdate.deleteMany.mockResolvedValue({ count: 3 } as never);
+      const svc = makeService(prisma, logger, documentManager, 3, redis);
+
+      for (const update of updates) svc.persistUpdate('doc-1', update);
+      await svc.flushDocument('doc-1');
+
+      expect(prisma.snapshot.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ documentId: 'doc-1', seq: 12 }),
+        }),
+      );
     });
   });
 });

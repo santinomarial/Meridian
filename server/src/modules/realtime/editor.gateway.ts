@@ -400,21 +400,27 @@ export class EditorGateway
   }
 
   @SubscribeMessage('chat:message')
-  handleChatMessage(
+  async handleChatMessage(
     @MessageBody() dto: ChatMessageDto,
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     if (!this.checkRateLimit(client, 'chat:message')) return;
 
     const room = `workspace:${dto.workspaceId}`;
-    // Room membership doubles as the authorization check — joinWorkspace
-    // already verified the user belongs to this workspace.
     if (!client.rooms.has(room)) {
       client.emit('error', {
         message: 'chat:message — send joinWorkspace first',
       });
       return;
     }
+
+    const role = await this.authorizeWorkspaceEvent(
+      client,
+      dto.workspaceId,
+      'chat:message',
+    );
+    if (role === null) return;
+    this.cacheWorkspaceRole(client, dto.workspaceId, role);
 
     const user = client.data['user'] as AuthUser;
     const message: ChatMessagePayload = {
@@ -440,21 +446,27 @@ export class EditorGateway
   // ---------------------------------------------------------------------------
 
   @SubscribeMessage('yjs:sync')
-  handleYjsSync(
+  async handleYjsSync(
     @MessageBody() dto: YjsSyncDto,
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     if (!this.checkRateLimit(client, 'yjs:sync')) return;
 
     // A document being loaded by some other socket is not authorization. Every
     // document event must be scoped to a room this socket successfully joined.
-    const role = this.joinedDocumentRole(client, dto.documentId);
-    if (role === null) {
+    if (this.joinedDocumentRole(client, dto.documentId) === null) {
       client.emit('error', {
         message: 'yjs:sync — send joinDocument and wait for joinedDocument first',
       });
       return;
     }
+
+    const accessInfo = await this.authorizeDocumentEvent(
+      client,
+      dto.documentId,
+      'yjs:sync',
+    );
+    if (accessInfo === null) return;
 
     const message = toUint8Array(dto.message);
     if (message === null) {
@@ -522,10 +534,10 @@ export class EditorGateway
   // ---------------------------------------------------------------------------
 
   @SubscribeMessage('yjs:update')
-  handleYjsUpdate(
+  async handleYjsUpdate(
     @MessageBody() dto: YjsUpdateDto,
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     if (!this.checkRateLimit(client, 'yjs:update')) return;
 
     const user = client.data['user'] as AuthUser;
@@ -534,13 +546,21 @@ export class EditorGateway
     // cached role) is never sufficient. This prevents an authenticated socket
     // from editing any document that merely happens to be loaded in this
     // process by another user.
-    const role = this.joinedDocumentRole(client, dto.documentId);
-    if (role === null) {
+    if (this.joinedDocumentRole(client, dto.documentId) === null) {
       client.emit('error', {
         message: 'yjs:update — send joinDocument and wait for joinedDocument first',
       });
       return;
     }
+
+
+    const accessInfo = await this.authorizeDocumentEvent(
+      client,
+      dto.documentId,
+      'yjs:update',
+    );
+    if (accessInfo === null) return;
+    const role = accessInfo.role;
 
     // Viewers may receive updates but must not persist or relay edits.
     if (role === WorkspaceRole.VIEWER) {
@@ -605,10 +625,10 @@ export class EditorGateway
   // ---------------------------------------------------------------------------
 
   @SubscribeMessage('awareness:update')
-  handleAwarenessUpdate(
+  async handleAwarenessUpdate(
     @MessageBody() dto: AwarenessUpdateDto,
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     if (!this.checkRateLimit(client, 'awareness:update')) return;
 
     if (this.joinedDocumentRole(client, dto.documentId) === null) {
@@ -617,6 +637,13 @@ export class EditorGateway
       });
       return;
     }
+
+    const accessInfo = await this.authorizeDocumentEvent(
+      client,
+      dto.documentId,
+      'awareness:update',
+    );
+    if (accessInfo === null) return;
 
     const update = toUint8Array(dto.update);
     if (update === null) {
@@ -812,6 +839,9 @@ export class EditorGateway
     if (session === null) {
       throw new Error('Session not found');
     }
+    if (session.userId !== payload.sub) {
+      throw new Error('Session user mismatch');
+    }
     if (session.expiresAt < new Date()) {
       throw new Error('Session expired');
     }
@@ -820,6 +850,7 @@ export class EditorGateway
     }
 
     socket.data['user'] = toAuthUser(session.user);
+    socket.data[SOCKET_SESSION_JTI] = payload.jti;
   }
 
   // ---------------------------------------------------------------------------
@@ -847,6 +878,233 @@ export class EditorGateway
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  private async authorizeDocumentEvent(
+    client: Socket,
+    documentId: string,
+    event: string,
+  ): Promise<{ workspaceId: string; role: WorkspaceRole } | null> {
+    const user = client.data['user'] as AuthUser | undefined;
+    const [sessionActive, accessInfo] = await Promise.all([
+      this.realtimeAuthorization.isSessionActive(client),
+      user === undefined
+        ? Promise.resolve(null)
+        : this.workspaces.getDocumentAccessInfo(user.id, documentId),
+    ]);
+
+    if (!sessionActive || user === undefined) {
+      this.disconnectForInvalidSession(client, event);
+      return null;
+    }
+
+    if (accessInfo === null) {
+      if (client.rooms.has(`document:${documentId}`)) {
+        await this.revokeDocumentAccess(client, documentId);
+      }
+      client.emit('error', { message: `Access denied to document ${documentId}` });
+      this.logger.warn(
+        { socketId: client.id, userId: user.id, documentId, event },
+        'Realtime document access rejected after reauthorization',
+      );
+      return null;
+    }
+
+    const roles =
+      (client.data['documentRoles'] as Record<string, WorkspaceRole> | undefined) ?? {};
+    roles[documentId] = accessInfo.role;
+    client.data['documentRoles'] = roles;
+
+    const workspaces =
+      (client.data['documentWorkspaces'] as Record<string, string> | undefined) ?? {};
+    workspaces[documentId] = accessInfo.workspaceId;
+    client.data['documentWorkspaces'] = workspaces;
+
+    return accessInfo;
+  }
+
+  private async authorizeWorkspaceEvent(
+    client: Socket,
+    workspaceId: string,
+    event: string,
+  ): Promise<WorkspaceRole | null> {
+    const user = client.data['user'] as AuthUser | undefined;
+    const [sessionActive, role] = await Promise.all([
+      this.realtimeAuthorization.isSessionActive(client),
+      user === undefined
+        ? Promise.resolve(null)
+        : this.workspaces.getMemberRole(user.id, workspaceId),
+    ]);
+
+    if (!sessionActive || user === undefined) {
+      this.disconnectForInvalidSession(client, event);
+      return null;
+    }
+    if (role === null) {
+      await this.revokeWorkspaceAccess(client, workspaceId);
+      client.emit('error', { message: `Access denied to workspace ${workspaceId}` });
+      this.logger.warn(
+        { socketId: client.id, userId: user.id, workspaceId, event },
+        'Realtime workspace access rejected after reauthorization',
+      );
+      return null;
+    }
+    return role;
+  }
+
+  private disconnectForInvalidSession(client: Socket, event: string): void {
+    this.logger.warn(
+      { socketId: client.id, event },
+      'Socket disconnected after session reauthorization failed',
+    );
+    client.emit('error', { message: 'Session is no longer active' });
+    client.disconnect(true);
+  }
+
+  private cacheWorkspaceRole(
+    client: Socket,
+    workspaceId: string,
+    role: WorkspaceRole,
+  ): void {
+    const roles =
+      (client.data['workspaceRoles'] as Record<string, WorkspaceRole> | undefined) ?? {};
+    roles[workspaceId] = role;
+    client.data['workspaceRoles'] = roles;
+  }
+
+  private async revokeDocumentAccess(client: Socket, documentId: string): Promise<void> {
+    const room = `document:${documentId}`;
+    if (!client.rooms.has(room)) return;
+
+    this.removeAwarenessForSocket(client, documentId);
+    const roles = client.data['documentRoles'] as
+      | Record<string, WorkspaceRole>
+      | undefined;
+    const workspaces = client.data['documentWorkspaces'] as
+      | Record<string, string>
+      | undefined;
+    if (roles !== undefined) delete roles[documentId];
+    if (workspaces !== undefined) delete workspaces[documentId];
+
+    await client.leave(room);
+    this.registry.leave(client.id, documentId);
+    this.documentManager.release(documentId);
+    this.server.to(room).emit('userLeft', {
+      documentId,
+      socketId: client.id,
+    });
+  }
+
+  private async revokeWorkspaceAccess(client: Socket, workspaceId: string): Promise<void> {
+    const workspaceRoom = `workspace:${workspaceId}`;
+    if (client.rooms.has(workspaceRoom)) await client.leave(workspaceRoom);
+
+    const workspaceRoles = client.data['workspaceRoles'] as
+      | Record<string, WorkspaceRole>
+      | undefined;
+    if (workspaceRoles !== undefined) delete workspaceRoles[workspaceId];
+
+    const documentWorkspaces = client.data['documentWorkspaces'] as
+      | Record<string, string>
+      | undefined;
+    if (documentWorkspaces === undefined) return;
+    const documentIds = Object.entries(documentWorkspaces)
+      .filter(([, cachedWorkspaceId]) => cachedWorkspaceId === workspaceId)
+      .map(([documentId]) => documentId);
+    for (const documentId of documentIds) {
+      await this.revokeDocumentAccess(client, documentId);
+    }
+  }
+
+  private handleAuthorizationInvalidation(
+    invalidation: RealtimeAuthorizationInvalidation,
+  ): void {
+    for (const client of this.connectedClients.values()) {
+      const user = client.data['user'] as AuthUser | undefined;
+      const jti = client.data[SOCKET_SESSION_JTI] as string | undefined;
+      if (
+        (invalidation.type === 'session' && invalidation.jti === jti) ||
+        (invalidation.type === 'user' && invalidation.userId === user?.id)
+      ) {
+        this.disconnectForInvalidSession(client, 'authorization:invalidate');
+        continue;
+      }
+      if (
+        invalidation.type === 'workspace' &&
+        invalidation.userId === user?.id
+      ) {
+        void this.refreshWorkspaceAccess(client, invalidation.workspaceId);
+      }
+    }
+  }
+
+  private async refreshWorkspaceAccess(
+    client: Socket,
+    workspaceId: string,
+  ): Promise<void> {
+    const user = client.data['user'] as AuthUser | undefined;
+    if (user === undefined) {
+      this.disconnectForInvalidSession(client, 'authorization:invalidate');
+      return;
+    }
+
+    const [sessionActive, role] = await Promise.all([
+      this.realtimeAuthorization.isSessionActive(client),
+      this.workspaces.getMemberRole(user.id, workspaceId),
+    ]);
+    if (!sessionActive) {
+      this.disconnectForInvalidSession(client, 'authorization:invalidate');
+      return;
+    }
+    if (role === null) {
+      await this.revokeWorkspaceAccess(client, workspaceId);
+      return;
+    }
+
+    this.cacheWorkspaceRole(client, workspaceId, role);
+    const documentRoles = client.data['documentRoles'] as
+      | Record<string, WorkspaceRole>
+      | undefined;
+    const documentWorkspaces = client.data['documentWorkspaces'] as
+      | Record<string, string>
+      | undefined;
+    if (documentRoles === undefined || documentWorkspaces === undefined) return;
+    for (const [documentId, cachedWorkspaceId] of Object.entries(documentWorkspaces)) {
+      if (cachedWorkspaceId === workspaceId) documentRoles[documentId] = role;
+    }
+  }
+
+  private async auditConnectedClients(): Promise<void> {
+    if (this.authorizationSweepRunning) return;
+    this.authorizationSweepRunning = true;
+    try {
+      for (const client of this.connectedClients.values()) {
+        if (!(await this.realtimeAuthorization.isSessionActive(client))) {
+          this.disconnectForInvalidSession(client, 'authorization:sweep');
+          continue;
+        }
+
+        const workspaceIds = new Set<string>();
+        const workspaceRoles = client.data['workspaceRoles'] as
+          | Record<string, WorkspaceRole>
+          | undefined;
+        const documentWorkspaces = client.data['documentWorkspaces'] as
+          | Record<string, string>
+          | undefined;
+        for (const workspaceId of Object.keys(workspaceRoles ?? {})) {
+          workspaceIds.add(workspaceId);
+        }
+        for (const workspaceId of Object.values(documentWorkspaces ?? {})) {
+          workspaceIds.add(workspaceId);
+        }
+
+        for (const workspaceId of workspaceIds) {
+          await this.refreshWorkspaceAccess(client, workspaceId);
+        }
+      }
+    } finally {
+      this.authorizationSweepRunning = false;
+    }
+  }
 
   private removeAwarenessForSocket(client: Socket, documentId: string): void {
     const docMap = this.socketAwarenessIds.get(client.id);
