@@ -16,6 +16,8 @@ import { WorkspaceRole } from '@prisma/client';
 import type { JwtPayload } from '../auth/types/auth-user.type';
 import { Doc } from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
+import * as encoding from 'lib0/encoding';
+import * as syncProtocol from 'y-protocols/sync';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -115,6 +117,7 @@ function makeSocket(overrides?: {
   data?: Record<string, unknown>;
   auth?: Record<string, unknown>;
   cookie?: string;
+  rooms?: string[];
 }): DeepMockProxy<Socket> {
   const socket = mockDeep<Socket>();
   const id = overrides?.id ?? 'sock-1';
@@ -129,6 +132,10 @@ function makeSocket(overrides?: {
       auth: overrides?.auth ?? {},
       headers: overrides?.cookie ? { cookie: overrides.cookie } : {},
     },
+    configurable: true,
+  });
+  Object.defineProperty(socket, 'rooms', {
+    value: new Set([id, ...(overrides?.rooms ?? [])]),
     configurable: true,
   });
   return socket;
@@ -386,6 +393,26 @@ describe('EditorGateway.handleJoinDocument', () => {
     );
 
     expect(workspaces.getDocumentAccessInfo).toHaveBeenCalledWith('user-1', 'doc-1');
+  });
+
+  it('does not acquire a second reference when the socket already joined', async () => {
+    const { gateway, workspaces, documentManager } = makeGateway();
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+      },
+      rooms: ['document:doc-1'],
+    });
+
+    await gateway.handleJoinDocument({ documentId: 'doc-1' }, socket);
+
+    expect(workspaces.getDocumentAccessInfo).not.toHaveBeenCalled();
+    expect(documentManager.acquire).not.toHaveBeenCalled();
+    expect(socket.emit).toHaveBeenCalledWith(
+      'joinedDocument',
+      expect.objectContaining({ documentId: 'doc-1' }) as object,
+    );
   });
 });
 
