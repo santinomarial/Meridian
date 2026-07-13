@@ -36,7 +36,10 @@ export function WorkspacePage() {
   const closeAllOverlays = useWorkspaceStore((state) => state.closeAllOverlays);
   const backendStatus = useWorkspaceStore((state) => state.backendStatus);
   const userRole = useWorkspaceStore((state) => state.userRole);
-  const isViewer = userRole === "VIEWER";
+  const isReadOnly =
+    backendStatus !== "unavailable" &&
+    userRole !== "OWNER" &&
+    userRole !== "EDITOR";
 
   const { saveActiveFile } = useSaveActiveFile();
 
@@ -48,9 +51,10 @@ export function WorkspacePage() {
   // Manage Socket.IO connection lifecycle
   useSessionSocket();
 
-  // Close panels on small screens on first mount
+  // Drawers start closed on every compact layout. Opening one later is
+  // exclusive, so tablet users never get two modal overlays at once.
   useEffect(() => {
-    if (window.matchMedia("(max-width: 640px)").matches) {
+    if (window.matchMedia("(max-width: 1024px)").matches) {
       useWorkspaceStore.setState({
         isExplorerOpen: false,
         isCollaborationPanelOpen: false,
@@ -119,14 +123,16 @@ export function WorkspacePage() {
         </div>
       ) : null}
 
-      {isViewer ? (
+      {isReadOnly && backendStatus === "available" ? (
         <div
           role="status"
           className="flex items-center gap-2 bg-tertiary/10 px-4 py-1.5 text-[11px] text-tertiary"
           data-testid="viewer-readonly-banner"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-tertiary" aria-hidden />
-          You have view-only access to this workspace.
+          {userRole === "VIEWER"
+            ? "You have view-only access to this workspace."
+            : "Editing is unavailable because your permissions could not be verified."}
         </div>
       ) : null}
 
@@ -134,7 +140,7 @@ export function WorkspacePage() {
         <ActivityBar />
 
         {!isCompact && isExplorerOpen ? (
-          <FileExplorer isLoading={!isWorkspaceReady} mode="inline" readOnly={isViewer} />
+          <FileExplorer isLoading={!isWorkspaceReady} mode="inline" readOnly={isReadOnly} />
         ) : null}
 
         <main
@@ -164,7 +170,7 @@ export function WorkspacePage() {
             isLoading={!isWorkspaceReady}
             mode="drawer"
             onClose={() => closePanel("explorer")}
-            readOnly={isViewer}
+            readOnly={isReadOnly}
           />
         </PanelOverlay>
       ) : null}

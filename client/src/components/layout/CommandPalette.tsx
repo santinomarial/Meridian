@@ -75,7 +75,10 @@ function CommandPaletteBody() {
   const selectedRef = useRef<HTMLLIElement>(null);
 
   // ── Derived role / availability ──────────────────────────────────────────────
-  const isViewer = userRole === "VIEWER";
+  const isViewer =
+    backendStatus !== "unavailable" &&
+    userRole !== "OWNER" &&
+    userRole !== "EDITOR";
   const isOwner = userRole === "OWNER";
   const hasActiveBackendFile =
     activeFileId !== null && !activeFileId.startsWith("local-");

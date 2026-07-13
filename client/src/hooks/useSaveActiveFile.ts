@@ -57,8 +57,13 @@ export function useSaveActiveFile(): UseSaveActiveFileReturn {
       if (latest.activeFileId === id) {
         latest.setSaveStatus(contentStillMatches ? "saved" : "unsaved");
       }
-      state.addNotification({ icon: "save", text: `Saved ${tabName}` });
-      return true;
+      state.addNotification({
+        icon: contentStillMatches ? "save" : "edit_note",
+        text: contentStillMatches
+          ? `Saved ${tabName}`
+          : `Newer edits in ${tabName} remain unsaved`,
+      });
+      return contentStillMatches;
     } catch (err) {
       if (useWorkspaceStore.getState().activeFileId === id) {
         state.setSaveStatus("error");

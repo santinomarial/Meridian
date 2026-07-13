@@ -89,7 +89,10 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   const backendStatus = useWorkspaceStore((state) => state.backendStatus);
   const userRole = useWorkspaceStore((state) => state.userRole);
   const isDemoMode = backendStatus === "unavailable";
-  const isViewer = userRole === "VIEWER";
+  const isViewer =
+    backendStatus !== "unavailable" &&
+    userRole !== "OWNER" &&
+    userRole !== "EDITOR";
 
   useYjsMonaco(mountedEditor, activeFileId, backendStatus === "available");
 

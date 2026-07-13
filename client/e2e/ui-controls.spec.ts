@@ -154,6 +154,21 @@ test.describe("share / invite dialog", () => {
 // ── Collaboration panel ───────────────────────────────────────────────────────
 
 test.describe("collaboration panel", () => {
+  test("tablet layout opens only one drawer at a time", async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await openDemoWorkspace(page);
+
+    await expect(page.getByRole("dialog", { name: "Explorer" })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "Collaboration" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Explorer", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Explorer" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Collaboration", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Explorer" })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "Collaboration" })).toBeVisible();
+  });
+
   test("activity bar toggles the desktop collaboration panel", async ({ page }) => {
     await openDemoWorkspace(page);
 

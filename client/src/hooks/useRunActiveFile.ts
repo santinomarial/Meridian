@@ -54,7 +54,7 @@ export function useRunActiveFile(): UseRunActiveFileReturn {
   const addNotification = useWorkspaceStore((s) => s.addNotification);
   const { saveActiveFile } = useSaveActiveFile();
 
-  const isViewer = userRole === "VIEWER";
+  const isViewer = userRole !== "OWNER" && userRole !== "EDITOR";
   const activeTab = openTabs.find((t) => t.fileId === activeFileId);
   const ext = activeTab ? extensionOf(activeTab.name) : "";
   const hasBackendFile = activeFileId !== null && !activeFileId.startsWith("local-");
@@ -80,7 +80,7 @@ export function useRunActiveFile(): UseRunActiveFileReturn {
       id === null ||
       wsId === null ||
       id.startsWith("local-") ||
-      state.userRole === "VIEWER" ||
+      (state.userRole !== "OWNER" && state.userRole !== "EDITOR") ||
       state.backendStatus !== "available"
     ) {
       return;
@@ -89,7 +89,16 @@ export function useRunActiveFile(): UseRunActiveFileReturn {
     // 1. Save the file if it has unsaved edits (server-side save also syncs the
     //    sandbox), so the terminal runs the latest content.
     const tab = state.openTabs.find((t) => t.fileId === id);
-    if (tab?.dirty) await saveActiveFile();
+    if (tab?.dirty) {
+      const saved = await saveActiveFile();
+      if (!saved) {
+        addNotification({
+          icon: "error",
+          text: `Could not run ${tab.name} because its latest changes were not saved`,
+        });
+        return;
+      }
+    }
 
     // 2. Make sure the terminal panel is open (this auto-starts a session).
     if (!state.isTerminalOpen) setTerminalOpen(true);

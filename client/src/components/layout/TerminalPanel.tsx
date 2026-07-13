@@ -36,7 +36,11 @@ export function TerminalPanel() {
   const toggleTerminal = useWorkspaceStore((s) => s.toggleTerminal);
   const theme = useWorkspaceStore((s) => s.theme);
   const userRole = useWorkspaceStore((s) => s.userRole);
-  const isViewer = userRole === "VIEWER";
+  const backendStatus = useWorkspaceStore((s) => s.backendStatus);
+  const isViewer =
+    backendStatus !== "unavailable" &&
+    userRole !== "OWNER" &&
+    userRole !== "EDITOR";
 
   const { terminalRef, start, stop, fit, focus, clear } = useTerminal(workspaceId);
 

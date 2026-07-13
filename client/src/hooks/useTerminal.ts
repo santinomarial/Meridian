@@ -147,7 +147,9 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
 
     const onError = ({ message }: ErrorPayload): void => {
       xtermRef.current?.writeln(`\r\n\x1b[31m[Error] ${message}\x1b[0m`);
-      setTerminalStatus("error");
+      setTerminalStatus(
+        /terminal (?:feature )?is disabled/i.test(message) ? "disabled" : "error",
+      );
     };
 
     const onExit = ({ code }: ExitPayload): void => {

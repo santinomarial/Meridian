@@ -1,3 +1,8 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
 import type { Workspace, WorkspaceMember } from '@prisma/client';
 import { WorkspaceRole } from '@prisma/client';
@@ -18,6 +23,13 @@ const BASE_MEMBER: WorkspaceMember = {
   userId: 'user-1',
   role: WorkspaceRole.OWNER,
   createdAt: new Date('2024-01-01'),
+};
+
+const EDITOR_MEMBER: WorkspaceMember = {
+  ...BASE_MEMBER,
+  id: 'member-2',
+  userId: 'user-2',
+  role: WorkspaceRole.EDITOR,
 };
 
 describe('WorkspacesService', () => {
@@ -109,14 +121,113 @@ describe('WorkspacesService', () => {
 
   describe('addMember', () => {
     it('creates and returns the membership record', async () => {
-      prisma.workspaceMember.create.mockResolvedValue(BASE_MEMBER);
+      prisma.workspaceMember.create.mockResolvedValue(EDITOR_MEMBER);
 
-      const result = await service.addMember('ws-1', 'user-1', WorkspaceRole.OWNER);
+      const result = await service.addMember('ws-1', 'user-2', WorkspaceRole.EDITOR);
 
       expect(prisma.workspaceMember.create).toHaveBeenCalledWith({
-        data: { workspaceId: 'ws-1', userId: 'user-1', role: WorkspaceRole.OWNER },
+        data: { workspaceId: 'ws-1', userId: 'user-2', role: WorkspaceRole.EDITOR },
       });
-      expect(result).toEqual(BASE_MEMBER);
+      expect(result).toEqual(EDITOR_MEMBER);
+    });
+
+    it('rejects assigning OWNER through the generic member API', async () => {
+      await expect(
+        service.addMember('ws-1', 'user-2', WorkspaceRole.OWNER),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.workspaceMember.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateMemberRole', () => {
+    it('updates a regular member to another non-owner role', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue({
+        userId: 'user-2',
+        role: WorkspaceRole.EDITOR,
+        workspace: { ownerId: 'user-1' },
+      } as never);
+      prisma.workspaceMember.update.mockResolvedValue({
+        ...EDITOR_MEMBER,
+        role: WorkspaceRole.VIEWER,
+      });
+
+      await service.updateMemberRole('member-2', WorkspaceRole.VIEWER);
+
+      expect(prisma.workspaceMember.update).toHaveBeenCalledWith({
+        where: { id: 'member-2' },
+        data: { role: WorkspaceRole.VIEWER },
+      });
+    });
+
+    it('rejects promoting any membership to OWNER', async () => {
+      await expect(
+        service.updateMemberRole('member-2', WorkspaceRole.OWNER),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.workspaceMember.findUnique).not.toHaveBeenCalled();
+      expect(prisma.workspaceMember.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects demoting the canonical owner membership', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue({
+        userId: 'user-1',
+        role: WorkspaceRole.OWNER,
+        workspace: { ownerId: 'user-1' },
+      } as never);
+
+      await expect(
+        service.updateMemberRole('member-1', WorkspaceRole.EDITOR),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.workspaceMember.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects mutating the canonical owner even if its role is malformed', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue({
+        userId: 'user-1',
+        role: WorkspaceRole.EDITOR,
+        workspace: { ownerId: 'user-1' },
+      } as never);
+
+      await expect(
+        service.updateMemberRole('member-1', WorkspaceRole.VIEWER),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('removeMember', () => {
+    it('removes a regular member', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue({
+        userId: 'user-2',
+        role: WorkspaceRole.EDITOR,
+        workspace: { ownerId: 'user-1' },
+      } as never);
+      prisma.workspaceMember.delete.mockResolvedValue(EDITOR_MEMBER);
+
+      await service.removeMember('member-2');
+
+      expect(prisma.workspaceMember.delete).toHaveBeenCalledWith({
+        where: { id: 'member-2' },
+      });
+    });
+
+    it('rejects removing the owner membership', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue({
+        userId: 'user-1',
+        role: WorkspaceRole.OWNER,
+        workspace: { ownerId: 'user-1' },
+      } as never);
+
+      await expect(service.removeMember('member-1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(prisma.workspaceMember.delete).not.toHaveBeenCalled();
+    });
+
+    it('returns NotFound for an unknown membership', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue(null);
+
+      await expect(service.removeMember('missing')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
     });
   });
 
@@ -208,7 +319,10 @@ describe('WorkspacesService', () => {
   describe('canManageWorkspace', () => {
     it('returns true for OWNER', async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue(
-        { role: WorkspaceRole.OWNER } as never,
+        {
+          role: WorkspaceRole.OWNER,
+          workspace: { ownerId: 'user-1' },
+        } as never,
       );
       expect(await service.canManageWorkspace('user-1', 'ws-1')).toBe(true);
     });
@@ -216,10 +330,22 @@ describe('WorkspacesService', () => {
     it.each([WorkspaceRole.EDITOR, WorkspaceRole.VIEWER])(
       'returns false for %s',
       async (role) => {
-        prisma.workspaceMember.findUnique.mockResolvedValue({ role } as never);
+        prisma.workspaceMember.findUnique.mockResolvedValue({
+          role,
+          workspace: { ownerId: 'user-1' },
+        } as never);
         expect(await service.canManageWorkspace('user-1', 'ws-1')).toBe(false);
       },
     );
+
+    it('returns false for a legacy extra OWNER membership', async () => {
+      prisma.workspaceMember.findUnique.mockResolvedValue({
+        role: WorkspaceRole.OWNER,
+        workspace: { ownerId: 'user-1' },
+      } as never);
+
+      expect(await service.canManageWorkspace('user-2', 'ws-1')).toBe(false);
+    });
 
     it('returns false for non-member', async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue(null);

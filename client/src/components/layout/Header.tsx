@@ -153,14 +153,17 @@ export function Header() {
 
   // ── Store ──────────────────────────────────────────────────────────────────
   const userRole = useWorkspaceStore((s) => s.userRole);
-  const isViewer = userRole === "VIEWER";
-  const isOwner = userRole === "OWNER";
+  const backendStatus = useWorkspaceStore((s) => s.backendStatus);
+  const isViewer =
+    backendStatus !== "unavailable" &&
+    userRole !== "OWNER" &&
+    userRole !== "EDITOR";
+  const isOwner = backendStatus === "available" && userRole === "OWNER";
   const collaborators = useWorkspaceStore((s) => s.collaborators);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const currentUser = useWorkspaceStore((s) => s.currentUser);
   const theme = useWorkspaceStore((s) => s.theme);
   const toggleTheme = useWorkspaceStore((s) => s.toggleTheme);
-  const backendStatus = useWorkspaceStore((s) => s.backendStatus);
   const connectionStatus = useWorkspaceStore((s) => s.connectionStatus);
   const togglePanel = useWorkspaceStore((s) => s.togglePanel);
   const isExplorerOpen = useWorkspaceStore((s) => s.isExplorerOpen);

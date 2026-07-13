@@ -58,7 +58,7 @@ export function ActivityBar() {
   const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
 
   const openPanel = (panel: PanelKey): void => {
-    if (breakpoint === "mobile") {
+    if (breakpoint !== "desktop") {
       useWorkspaceStore.setState({
         isExplorerOpen: panel === "explorer",
         isCollaborationPanelOpen: panel === "collaboration",
@@ -75,7 +75,7 @@ export function ActivityBar() {
     const isOpen =
       activity.panel === "explorer" ? isExplorerOpen : isCollaborationPanelOpen;
 
-    if (breakpoint === "mobile") {
+    if (breakpoint !== "desktop") {
       if (isOpen) togglePanel(activity.panel);
       else openPanel(activity.panel);
       return;
