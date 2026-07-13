@@ -1,150 +1,208 @@
 # Meridian Client
 
-## E2E Tests (Playwright)
+The Meridian client is a React and TypeScript single-page application for the
+collaborative workspace. It provides authentication, workspace navigation,
+Monaco-based editing, file operations, version history, invitations, presence,
+chat, and the browser side of the optional integrated terminal.
 
-### Quick start — frontend-only tests (no backend needed)
+The client communicates with the [Meridian server](../server/README.md) through
+credentialed HTTP requests and Socket.IO. For repository-wide architecture and
+setup information, see the [main README](../README.md).
 
-These tests cover auth form validation, the demo workspace, theme toggle,
-share dialog, invite link, and backend-unavailable behaviour.
+## Technical overview
+
+| Concern | Implementation |
+|---|---|
+| Application shell | React 18, React Router, and route-level lazy loading |
+| Build system | TypeScript project references and Vite 8 |
+| Styling | Tailwind CSS with shared component primitives |
+| Workspace state | Zustand |
+| Code editor | Monaco Editor with bundled language workers |
+| Collaborative editing | Yjs, y-monaco, and the Yjs awareness protocol |
+| Realtime transport | Socket.IO with credentialed WebSocket and polling transports |
+| Terminal UI | xterm.js; PTY execution remains a server responsibility |
+| Unit tests | Vitest in a Node environment |
+| Browser tests | Playwright using Chromium |
+
+Monaco and its editor, TypeScript, JSON, CSS, and HTML workers are built into
+the application. The editor does not depend on a public CDN at runtime.
+
+## Prerequisites
+
+- Node.js `^20.19.0` or `>=22.12.0`, as required by Vite 8
+- npm
+- A running Meridian server for authentication, persistence, collaboration,
+  invitations, version history, export, and terminal features
+
+The workspace falls back to a clearly identified local demonstration dataset
+when the server cannot be reached. This fallback is not persistent and does not
+replace the server for integration testing.
+
+## Local development
+
+Install the locked dependency set and start the Vite development server:
 
 ```bash
-# From the client/ directory:
-npm run test:e2e
+cd client
+npm ci
+npm run dev
 ```
 
-Playwright starts the Vite dev server automatically (`npm run dev` on port
-5173) and re-uses it if already running.
+The application is available at `http://localhost:5173`. In development, REST
+and Socket.IO connections default to `http://localhost:3000`. Follow the
+[server setup](../server/README.md#setup) to run the complete application.
 
-### Full test suite — requires a running backend
+## Configuration
 
-Auth, workspace, file-create/rename/delete, Monaco editing, save/persist,
-and file-import tests require both the Vite dev server **and** the NestJS
-backend.
+All client configuration is evaluated by Vite. Variables prefixed with
+`VITE_` are embedded in browser assets and must never contain secrets.
+
+| Variable | Development default | Production default | Purpose |
+|---|---|---|---|
+| `VITE_API_URL` | `http://localhost:3000` | Browser origin | REST API base URL |
+| `VITE_SOCKET_URL` | `http://localhost:3000` | Browser origin | Socket.IO server URL |
+
+For a non-default local server, create `client/.env.local`:
+
+```dotenv
+VITE_API_URL=http://localhost:3001
+VITE_SOCKET_URL=http://localhost:3001
+```
+
+Restart the development server after changing these values. Production values
+must be present when `npm run build` runs because Vite replaces them at build
+time.
+
+The HTTP client sends cookies with every request, and the Socket.IO client also
+enables credentials. The server's `CLIENT_ORIGIN` must match the browser origin
+for a split-origin development deployment.
+
+## Commands
+
+Run these commands from `client/`.
+
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Start the Vite development server |
+| `npm run build` | Type-check the project and create a production bundle in `dist/` |
+| `npm run preview` | Serve the current production bundle for local verification |
+| `npm run lint` | Run ESLint over the client source |
+| `npm test` | Run the Vitest suite once |
+| `npm run test:watch` | Run Vitest in watch mode |
+| `npm run test:e2e` | Run the Playwright suite |
+| `npm run test:e2e:ui` | Open Playwright's interactive test runner |
+| `npm run test:e2e:headed` | Run Playwright with a visible browser |
+
+The standard local verification sequence is:
 
 ```bash
-# Terminal 1 — start the backend with E2E rate-limit bypass (from server/)
-E2E_TEST=true npm run start:dev
+npm run lint
+npm test
+npm run build
+```
 
-# Terminal 2 — run all tests (from client/)
+## End-to-end tests
+
+Install the Playwright browser once after installing dependencies:
+
+```bash
+npx playwright install chromium
+```
+
+Playwright starts `npm run dev` automatically, waits for the configured client
+URL, and reuses an existing development server. The suite runs serially in one
+Chromium worker. Without a reachable backend, offline and request-stubbed tests
+still run while backend-dependent groups skip themselves.
+
+### Complete suite
+
+The complete suite requires a migrated PostgreSQL database and a configured
+server. Run Redis as well to exercise the standard realtime topology. Start the
+server in its dedicated E2E mode with terminal support:
+
+```bash
+# From server/
+E2E_TEST=true ENABLE_TERMINAL=true npm run start:dev
+```
+
+Then run Playwright from the client directory:
+
+```bash
+# From client/
 MERIDIAN_BACKEND_URL=http://localhost:3000 npm run test:e2e
 ```
 
-`E2E_TEST=true` is **required** when the backend is running alongside the
-Playwright suite.  Without it the strict auth rate limiter (10 req/60 s)
-will return 429 errors for `POST /auth/register` and `GET /auth/me` as the
-suite signs up many throwaway accounts.
+`E2E_TEST=true` is a server-only setting. It raises test rate limits and enables
+the scoped cleanup and password-reset helpers used by the suite. Server startup
+rejects this setting when `NODE_ENV=production`. `ENABLE_TERMINAL=true` is
+required for the terminal and command-palette scenarios in the complete suite.
 
-Tests that need the backend call `isBackendAvailable()` at runtime and skip
-themselves gracefully when the backend is not reachable.
+When testing against non-default ports, keep `MERIDIAN_BACKEND_URL`,
+`VITE_API_URL`, and `VITE_SOCKET_URL` aligned.
 
-### Interactive UI mode
-
-```bash
-npm run test:e2e:ui
-```
-
-### Headed mode (watch the browser)
-
-```bash
-npm run test:e2e:headed
-```
-
-### Environment variables
+### Playwright configuration
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MERIDIAN_BASE_URL` | `http://localhost:5173` | Playwright `baseURL` |
-| `MERIDIAN_BACKEND_URL` | `http://localhost:3000` | Backend availability probe |
-| `E2E_TEST` | `false` | Set to `true` on a non-production **server** to relax test rate limits and enable scoped E2E helpers |
+| `MERIDIAN_BASE_URL` | `http://localhost:5173` | Browser base URL and Vite readiness URL |
+| `MERIDIAN_BACKEND_URL` | `http://localhost:3000` | Backend probe and E2E helper base URL |
+| `CI` | Unset | Reject focused tests and enable one retry when set |
 
-### Test files
+The global setup creates the deterministic ZIP import fixture and attempts to
+remove stale `e2e-` test accounts through the guarded server helper. Traces and
+videos are retained on the first retry, and the HTML report never opens
+automatically.
 
-| File | Backend needed | Covers |
-|---|---|---|
-| `e2e/auth.spec.ts` | No (offline), Yes (backend group) | Landing page, login default, weak-password block, forgot-password, sign-up, sign-out |
-| `e2e/workspace.spec.ts` | Yes | Workspace load, auto-create, file/folder CRUD, Monaco edit, Cmd+S save, content persistence |
-| `e2e/file-import.spec.ts` | Yes | Open local file, import ZIP, file appears in explorer |
-| `e2e/ui-controls.spec.ts` | No (theme/share), Yes (collab empty state) | Theme toggle, share dialog, copy link, invite route, collaboration panel |
-| `e2e/offline.spec.ts` | No | Backend-unavailable banner, demo mode labels, no crash |
+## Source layout
 
-### Generated fixture
-
-`e2e/global-setup.ts` writes `e2e/fixtures/test-project.zip` before the
-suite runs. The ZIP contains a single `hello.ts` file and requires no
-external dependencies.
-
----
-
-# React + TypeScript + Vite
-
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
-
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```text
+client/
+|-- e2e/                    Playwright specifications, fixtures, and helpers
+|-- public/                 Static assets copied directly into the build
+|-- src/
+|   |-- components/editor/ Monaco editor integration
+|   |-- components/layout/ Workspace shell, panels, dialogs, and menus
+|   |-- components/ui/     Shared UI primitives
+|   |-- data/              Local demonstration workspace data
+|   |-- hooks/             Workspace, persistence, realtime, and terminal flows
+|   |-- lib/               API, Socket.IO, Yjs, Monaco, and utility modules
+|   |-- pages/             Route-level application pages
+|   |-- store/             Zustand workspace state
+|   `-- types/             Client domain types
+|-- playwright.config.ts   Browser test configuration
+|-- vite.config.ts         Production and development bundling
+`-- vitest.config.ts       Unit test discovery and runtime
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Unit tests use the `src/**/*.test.ts` convention. Playwright tests use
+`e2e/*.spec.ts`, which keeps the two runners isolated.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Production deployment
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Create the static bundle with:
+
+```bash
+npm ci
+npm run build
 ```
+
+Deploy only the generated `dist/` directory. The static host must return
+`index.html` for unknown application routes because the client uses
+`BrowserRouter`; this includes workspace, session, invite, and password-reset
+deep links.
+
+The default production topology serves the client and server from one origin.
+Route the server's HTTP endpoints and `/socket.io/` transport through that
+origin. This matches the production defaults for both client URLs and the
+server's `SameSite=Lax` authentication cookie. Evaluate backend proxy rules
+before the SPA fallback so API requests never receive `index.html`. Production
+must use HTTPS because the server marks the authentication cookie as `Secure`.
+
+A genuinely cross-site client and API deployment is not supported by
+configuration alone: the current authentication cookie policy prevents
+cross-site credential delivery. Such a topology requires an explicit security
+review and coordinated server changes to CORS, cookie attributes, TLS, and CSRF
+protection.
+
+For static caching, keep `index.html` revalidatable and allow long-lived caching
+for Vite's content-hashed assets.
