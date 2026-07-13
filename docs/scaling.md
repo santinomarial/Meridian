@@ -13,7 +13,8 @@ Shared PostgreSQL, shared Redis, and Socket.IO session affinity are required for
 more than one API replica, but they are not sufficient to make every workflow
 cross-replica safe.
 
-The current implementation has two data-integrity limitations:
+Even with healthy dependencies, the current implementation has two primary
+data-integrity limitations:
 
 1. Yjs sequence allocation is global, but PostgreSQL writes and compaction are
    serialized only within each API process. A lower sequence can be inserted
@@ -150,9 +151,9 @@ write a second copy to PostgreSQL. A replica that does not have the document
 loaded can reconstruct later from PostgreSQL.
 
 Redis Pub/Sub has no replay or acknowledgement. If a loaded replica misses an
-update, its in-memory `Y.Doc` and connected clients can diverge until the
-document is re-synchronized or the process reloads durable state. Redis
-recovery alone does not repair a missed live update.
+update, its in-memory `Y.Doc` and connected clients can diverge until the socket
+rejoins and synchronizes or the process reloads durable state. Redis recovery
+alone does not repair a missed live update.
 
 ### Awareness and chat
 
@@ -177,12 +178,13 @@ the first allocation by a process reads the maximum sequence from both
 `meridian:doc:<documentId>:seq` only if absent and increments it atomically.
 Later allocations by that process use `INCR`.
 
-This prevents duplicate allocations while every writer uses the same healthy
-Redis counter. If Redis is unavailable or a counter command fails, the service
-falls back to a process-local counter seeded from the PostgreSQL high-water
-mark. That fallback is collision-free only when one API process is writing.
-PostgreSQL has a unique constraint on `(documentId, seq)`; a collision causes
-that update write to fail, be logged, and be dropped from durable history.
+In the absence of a concurrent history reset, this prevents duplicate
+allocations while every writer uses the same healthy Redis counter. If Redis is
+unavailable or a counter command fails, the service falls back to a
+process-local counter seeded from the PostgreSQL high-water mark. That fallback
+is collision-free only when one API process is writing. PostgreSQL has a unique
+constraint on `(documentId, seq)`; a collision causes that update write to fail,
+be logged, and be dropped from durable history.
 
 The first CRDT seed for a saved document uses a deterministic Yjs client ID and
 inserts sequence zero with duplicate skipping. This protects the initial
@@ -266,11 +268,26 @@ A safe Redis recovery procedure is:
    to finish.
 3. Restore Redis and verify it independently.
 4. Restart the entire API fleet and require Redis `ok` before admitting it.
-5. Reconnect clients so live documents are rebuilt or synchronized.
+5. Reconnect clients so Socket.IO rooms and passive realtime state are rebuilt.
 
-If persistence failed before the outage, restarting cannot recreate updates
-that existed only in process or client memory. Recover those from clients,
-backups, or application-specific repair procedures.
+Reconnect and Yjs sync do not provide a durable recovery protocol for an update
+the server accepted and then failed to persist. If persistence failed before
+the outage, restarting cannot recreate updates that existed only in process or
+client memory. Recover those through explicit client export, backups, or an
+application-specific repair procedure.
+
+## Other failure modes
+
+| Failure | Actual behavior | Operational consequence |
+|---|---|---|
+| PostgreSQL unavailable | `/ready` returns 503; HTTP data paths fail; protected socket events lose their database reauthorization path; asynchronous persistence errors are logged without retry | Remove the replica from traffic and stop writes until PostgreSQL is healthy; do not treat in-memory Yjs state as durable |
+| Graceful replica termination | Nest shutdown hooks drain that process's write chains, close its PTYs, and close database and Redis clients | Allow enough termination grace; clients must reconnect and rejoin rooms on another replica |
+| Crash, `SIGKILL`, or host loss | No drain occurs; pending Yjs writes, awareness, chat, sockets, and PTYs on that process are lost | Durable rows can be reloaded, but accepted asynchronous updates may be unrecoverable |
+| Socket.IO affinity loss | Polling and upgrade requests can reach a process that does not own the Socket.IO session; local rooms, authorization caches, and PTYs do not follow the client | Expect connection errors or reconnects; fix affinity before relying on realtime behavior |
+
+Both `/health` and `/ready` are exempt from the stricter authentication
+throttler but remain subject to the default per-process HTTP throttle. Configure
+probe frequency so infrastructure checks do not exhaust that budget.
 
 ## Terminal behavior across replicas
 

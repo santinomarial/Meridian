@@ -2,7 +2,7 @@
 
 Meridian is a full-stack collaborative browser IDE. It combines a React and
 Monaco client with a NestJS API, Yjs-based realtime editing, PostgreSQL
-persistence, and Redis coordination for multi-instance deployments.
+persistence, and optional Redis-backed cross-process coordination.
 
 The repository is organized as two independently managed Node.js applications.
 There is no root package manifest; run package commands from `client/` or
@@ -23,8 +23,9 @@ There is no root package manifest; run package commands from `client/` or
   sessions, password reset, and expiring workspace invitations.
 - An optional PTY terminal that projects saved workspace files into a temporary
   server-side directory and can run supported source files.
-- Structured logging, request identifiers, HTTP and WebSocket rate limits,
-  health probes, readiness checks, and generated OpenAPI documentation.
+- Structured logging, HTTP request identifiers, HTTP throttling,
+  collaboration-event limits, health probes, readiness checks, and generated
+  OpenAPI documentation.
 - A clearly labeled, non-persistent local demonstration workspace when backend
   workspace loading fails; authentication failures return to sign-in instead.
 
@@ -37,12 +38,23 @@ There is no root package manifest; run package commands from `client/` or
 | Primary datastore | PostgreSQL 16, Prisma | Users, sessions, memberships, documents, invitations, versions, Yjs updates, and snapshots |
 | Coordination | Redis 7, ioredis | Cross-instance realtime fan-out, authorization invalidation, sequence allocation, chat, and terminal file synchronization |
 
-PostgreSQL stores the durable application state. Each active collaborative
-document also has an in-memory `Y.Doc`; incremental updates are queued for
-asynchronous persistence and periodically compacted into snapshots. A database
-write failure is logged; the affected update can be lost once no connected
-client or server memory retains it. Redis is optional for a single server
-process and required when more than one server instance is active.
+PostgreSQL stores all durable application data, but file content has two
+distinct representations. `Document.content` is the explicitly saved value
+used by the REST API, versions, exports, and terminal materialization. Each open
+collaborative document also has an in-memory `Y.Doc`; its incremental updates
+are queued for asynchronous PostgreSQL persistence and periodically compacted
+into snapshots. Live Yjs edits do not update `Document.content` until the
+client performs an explicit Save. A database write failure is logged, and an
+accepted update can be lost once no client or server memory retains it.
+
+One API process is the recommended deployment topology for collaborative state.
+Redis is optional in that topology and enables cross-process event fan-out when
+present.
+Redis is necessary but not sufficient for safe horizontal API scaling: update
+sequence allocation can race cross-replica compaction, and version restore does
+not invalidate live Yjs state on other replicas. Treat multi-replica operation
+as an implementation boundary, not a production guarantee; see
+[Horizontal scaling](docs/scaling.md).
 
 Detailed diagrams and runtime sequences are available in
 [Architecture](docs/architecture.md). Multi-instance requirements and failure
@@ -230,7 +242,9 @@ Backend-dependent tests skip when the API cannot be reached. `E2E_TEST=true`
 must never be used for normal operation; startup rejects it when
 `NODE_ENV=production`. Run it only in an isolated local or CI process against a
 disposable test database: its tightly scoped cleanup and password-reset helpers
-are intentionally unauthenticated.
+are intentionally unauthenticated. The committed suites do not exercise
+multi-process update ordering, cross-replica restore, Redis outage behavior, or
+cross-replica terminal projection ordering.
 
 ## Production considerations
 
@@ -248,25 +262,38 @@ are intentionally unauthenticated.
   `/ready`, `/docs`, and `/docs-json` before applying the SPA fallback.
 - Use TLS. Authentication cookies are `HttpOnly`, `SameSite=Lax`, and `Secure`
   when `NODE_ENV=production`.
-- For multiple API replicas, use shared PostgreSQL and Redis services and keep
-  each Socket.IO connection pinned to the instance that accepted it. If Redis
-  is unavailable, run only one server instance. The server does not retry an
-  initial Redis connection failure; start Redis first or restart the API after
-  Redis becomes available.
-- HTTP throttling is per server process and WebSocket throttling is per socket.
-  Apply ingress-level request limits and abuse controls when running multiple
-  replicas or accepting untrusted public traffic.
+- Deploy a single API replica to avoid the known cross-replica document-state
+  hazards. If the current multi-replica path is evaluated, use shared PostgreSQL
+  and Redis and pin the entire Socket.IO session, including polling and
+  transport upgrade, to one replica. Cross-replica compaction and restore are
+  not safe under all interleavings. Redis Pub/Sub also has no replay guarantee.
+  An initial Redis connection failure is not retried; restore Redis and restart
+  the API.
+- HTTP throttling is process-local. The collaboration gateway applies a
+  per-socket event limit, but `leaveDocument` and all terminal events are outside
+  that limiter. Body parsing also occurs before authorization. Enforce request
+  size, connection, and abuse limits at the ingress; Express `trust proxy` is
+  not configured, so application IP-based throttling must not be treated as the
+  client-address control behind a reverse proxy.
 - The terminal is disabled by default. When enabled, it launches a host OS
   shell as the server user. Its temporary workspace directory, reduced
   environment, path validation, and authorization checks are not container or
   virtual-machine isolation. Keep it disabled for untrusted multi-tenant use
-  unless the server process is isolated appropriately.
+  unless the server process is isolated appropriately. Terminal file projection
+  is one-way: saved document writes are copied into active sandboxes, but shell
+  changes are not written back to the database or editor.
 - Configure `RESEND_API_KEY` and a verified `MAIL_FROM` address when password
   reset or email invitations must be delivered. Without a provider, development
   logs action URLs; production records the delivery failure without revealing
   whether an account exists.
 - Registration does not verify ownership of the supplied email address. Add an
   email-verification flow before treating email identity as verified.
+- Invitation links are reusable bearer credentials until expiry. The recorded
+  invite email is delivery metadata, not an acceptance constraint, and
+  acceptance does not consume or revoke the token. Share links accordingly.
+- Expired or revoked sessions, used password-reset tokens, and expired invites
+  are rejected during use, but the application does not schedule row purging;
+  define retention and cleanup outside the process.
 - The Swagger UI is mounted at `/docs` in every environment. Restrict it at the
   ingress layer if the API schema should not be public.
 
