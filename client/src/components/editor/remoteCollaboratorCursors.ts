@@ -1,5 +1,5 @@
-import * as monaco from "monaco-editor";
 import type { editor } from "monaco-editor";
+import { monaco } from "../../lib/monacoLoader";
 import type { Collaborator } from "../../types";
 
 export type RemoteCursorPosition = {

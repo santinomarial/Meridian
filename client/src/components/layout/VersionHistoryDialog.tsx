@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
+import "../../lib/monacoLoader";
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { EmptyState } from "../ui/EmptyState";
 import { toast } from "../ui/Toast";

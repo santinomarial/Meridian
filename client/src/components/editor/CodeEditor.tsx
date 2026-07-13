@@ -1,5 +1,6 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
+import "../../lib/monacoLoader";
 import { useEffect, useRef, useState } from "react";
 import { EmptyState } from "../ui/EmptyState";
 import { EditorSkeleton } from "../ui/Skeleton";
