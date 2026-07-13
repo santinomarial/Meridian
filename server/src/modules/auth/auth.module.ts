@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MailModule } from '../mail/mail.module';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
+import { RealtimeAuthorizationModule } from '../realtime-authorization/realtime-authorization.module';
 import { E2eOnlyGuard } from '../../e2e/e2e-safety';
 
 // @Global ensures JwtService and JwtAuthGuard are injectable in every module
@@ -15,6 +16,7 @@ import { E2eOnlyGuard } from '../../e2e/e2e-safety';
 @Module({
   imports: [
     MailModule,
+    RealtimeAuthorizationModule,
     JwtModule.registerAsync({
       // global: true makes JwtService available in every module without
       // needing to re-export JwtModule from AuthModule.  This avoids the

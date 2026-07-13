@@ -6,9 +6,10 @@ import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
 import { DocumentRestoreService } from './document-restore.service';
 import { WsRateLimiter } from './ws-rate-limiter.service';
+import { RealtimeAuthorizationModule } from '../realtime-authorization/realtime-authorization.module';
 
 @Module({
-  imports: [WorkspacesModule],
+  imports: [WorkspacesModule, RealtimeAuthorizationModule],
   providers: [
     EditorGateway,
     ConnectionRegistryService,
