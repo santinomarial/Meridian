@@ -71,6 +71,9 @@ secret distribution are outside this repository.
 In non-development environments, HTTP and Socket.IO CORS allow exactly
 `CLIENT_ORIGIN` with credentials. Development allows only the
 hard-coded localhost and 127.0.0.1 origins on ports 5173 through 5175.
+The application does not install Helmet or configure a Content Security Policy
+or other deployment security headers. TLS and required response headers must
+be supplied by the static host, reverse proxy, or deployment platform.
 
 ## 3. Client architecture
 
@@ -284,6 +287,10 @@ are sent through the Resend HTTP API. Development without a key prints the
 action URL. In other environments without a key, sending throws internally.
 Password-reset requests still return the generic response, and invite creation
 still returns the shareable link; the delivery failure is logged.
+
+The actual reset-token lifetime uses `FORGOT_PASSWORD_TTL_MINUTES`, but the
+email copy currently says 30 minutes through a separate hard-coded constant.
+Changing the environment value does not update that message.
 
 The cookie policy is suitable for a same-site frontend/API deployment. A
 cross-site deployment requires a deliberate cookie and CSRF design change.
@@ -531,12 +538,14 @@ The default Socket.IO namespace and path are used. Rooms are named
 `document:<documentId>` and
 `workspace:<workspaceId>`.
 
-After handshake authentication, every editor-gateway event checks the socket's
-session and relevant membership. Active-event checks may use a one-second
-authorization cache. Local and Redis invalidations evict cached access and can
-disconnect sockets or remove room access. A ten-second sweep rechecks passive
-connections so a socket that sends nothing does not retain room delivery
-indefinitely.
+After handshake authentication, document join, workspace join, chat, Yjs, and
+awareness events check the socket's session and relevant membership. Active
+checks may use a one-second authorization cache. `leaveDocument` instead
+requires that the socket is already in the room and performs cleanup without a
+new database authorization check. Local and Redis invalidations evict cached
+access and can disconnect sockets or remove room access. A ten-second sweep
+rechecks passive connections so a socket that sends nothing does not retain
+room delivery indefinitely.
 
 The editor gateway applies a per-socket fixed one-second rate limit, default 50
 events per second, to document join, workspace join, chat, Yjs sync/update, and
@@ -606,16 +615,17 @@ sequenceDiagram
     Gateway-->>Peer: yjs:update
     Gateway->>Persist: enqueue update
     Gateway->>Redis: publish cross-instance update
-    Persist->>Pg: allocate seq, then insert DocumentUpdate
+    Persist->>Redis: allocate seq when available
+    Persist->>Pg: insert DocumentUpdate
     Note over Sender,Gateway: No success acknowledgement or durable-write acknowledgement
 ```
 
 The sender is excluded from the local relay because it already applied the
 update. Persistence is asynchronous and process-local: the gateway does not
-wait for PostgreSQL, and failures are logged and swallowed. An acknowledged
-Socket.IO send therefore does not mean the update is durable. Graceful shutdown
-waits for currently known write-chain tails, but a crash or failed write can
-lose changes after all live copies disappear.
+wait for PostgreSQL, and failures are logged and swallowed. A client emit,
+continued connection, or peer relay therefore does not mean the update is
+durable. Graceful shutdown waits for currently known write-chain tails, but a
+crash or failed write can lose changes after all live copies disappear.
 
 Yjs sync messages, Yjs updates, and awareness updates each have a configurable
 one MiB default cap. Chat is limited to 2,000 characters. Chat sender ID and
@@ -689,8 +699,8 @@ Restore is not one atomic transaction across all representations:
 2. `DocumentRestoreService` runs after that commit.
 3. If this process has the document loaded, it replaces its Yjs text, emits a
    local `yjs:update`, flushes this process's persistence chain,
-   replaces CRDT history with a sequence-zero snapshot, clears the Redis
-   sequence key, and emits `document:restored`.
+   replaces CRDT history with a sequence-zero snapshot, best-effort clears the
+   Redis sequence key, and emits `document:restored`.
 4. If this process does not have the document loaded, it deletes CRDT history
    so the next local cold load seeds from `Document.content`.
 5. The controller then best-effort syncs restored text into active terminal
@@ -766,6 +776,10 @@ One terminal session is allowed per socket. Starting a session:
    that directory as `cwd`.
 4. Passes a reduced environment containing HOME, PATH, terminal/locale values,
    shell, and optional USER/LOGNAME, rather than application secrets.
+
+The directory path is keyed by workspace and user, not socket. Two concurrent
+sockets for the same user and workspace can therefore share and recreate the
+same projection even though each socket has its own PTY session.
 
 REST file creates, updates, renames, deletes, and restores are projected into
 active terminal directories locally and over Redis on a best-effort basis.
@@ -944,7 +958,7 @@ guarantees:
 2. Version restore reconciles only the handling process and is non-atomic
    across plain text, CRDT state, and terminal projection.
 3. Live edit persistence is asynchronous, has no client durability
-   acknowledgement, and logs/swallow failures without durable retry.
+   acknowledgement, and logs and swallows failures without durable retry.
 4. `Document.content` and CRDT history can diverge after unsaved
    edits, arbitrary REST updates, bulk overwrite, failed persistence, or failed
    restore reconciliation.
@@ -965,6 +979,8 @@ guarantees:
     an authenticated user lookup can disclose another user's email by ID.
 13. Expired/revoked authentication and invite records have no scheduled
     retention cleanup.
-14. Production infrastructure, ingress controls, isolation, observability
-    backend, backup policy, and disaster-recovery behavior are not defined in
-    this repository.
+14. Reset-token email copy remains fixed at 30 minutes even when its configured
+    lifetime changes.
+15. Production infrastructure, security headers, ingress controls, isolation,
+    observability backend, backup policy, and disaster-recovery behavior are
+    not defined in this repository.
