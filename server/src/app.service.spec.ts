@@ -23,6 +23,10 @@ describe('AppService', () => {
   });
 
   describe('getReadiness', () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
     it('returns ready when postgres is reachable and redis is available + responsive', async () => {
       const { service, prisma, redis } = makeService();
 
@@ -88,6 +92,19 @@ describe('AppService', () => {
 
       expect(result.status).toBe('ready');
       expect(result.dependencies.redis).toBe('error');
+    });
+
+    it('clears dependency timeout guards after checks settle', async () => {
+      jest.useFakeTimers();
+      const { service, prisma, redis } = makeService();
+
+      prisma.$queryRaw.mockResolvedValue([{ '?column?': 1 }] as never);
+      Object.defineProperty(redis, 'isAvailable', { get: () => true, configurable: true });
+      redis.ping.mockResolvedValue(true);
+
+      await service.getReadiness();
+
+      expect(jest.getTimerCount()).toBe(0);
     });
   });
 });
