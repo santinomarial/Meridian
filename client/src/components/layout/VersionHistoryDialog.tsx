@@ -30,6 +30,8 @@ const DIFF_OPTIONS: editor.IDiffEditorConstructionOptions = {
   automaticLayout: true,
   scrollBeyondLastLine: false,
   renderOverviewRuler: false,
+  occurrencesHighlight: "off",
+  selectionHighlight: false,
 };
 
 function formatTimestamp(iso: string): string {

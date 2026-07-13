@@ -68,10 +68,7 @@ test.describe("version history (backend required)", () => {
     }
   });
 
-  test.beforeEach(({ page }) => {
-    page.on("pageerror", (error) => {
-      console.log("VERSION_HISTORY_PAGE_ERROR", error.message, error.stack);
-    });
+  test.beforeEach(() => {
     test.skip(!backendAvailable, "Backend not available — skipping version history tests");
   });
 
