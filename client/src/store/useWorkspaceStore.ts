@@ -258,6 +258,8 @@ function createWorkspaceSessionState(theme: WorkspaceTheme): WorkspaceData {
     terminalSyncStatus: null,
     backendStatus: "pending",
     connectionStatus: "disconnected",
+    documentGenerations: {},
+    documentResyncEpoch: {},
   };
 }
 
