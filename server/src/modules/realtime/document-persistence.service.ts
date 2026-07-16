@@ -22,23 +22,20 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   // document so updates can be ordered/filtered against snapshots when
   // rebuilding a document (Yjs updates are themselves commutative/idempotent).
   //
-  // Allocation strategy:
-  //   - When Redis is available, seq is allocated with an atomic Redis counter
-  //     (seeded once from the DB high-water mark). This is correct across
-  //     multiple server instances — two replicas persisting the same document
-  //     never collide.
-  //   - When Redis is unavailable, it falls back to a per-process in-memory
-  //     counter (also seeded from the DB high-water mark). This matches the
-  //     original single-instance behavior and avoids a DB round-trip per
-  //     keystroke, but is only collision-free within one process.
+  // Allocation and persistence strategy:
+  //   - Every write runs inside a PostgreSQL transaction that takes a
+  //     transaction-scoped advisory lock derived from the document id.
+  //   - When Redis is available, the transaction allocates from the shared
+  //     counter while holding that lock. Redis keeps the hot path inexpensive.
+  //   - When Redis is unavailable, the transaction reads the durable high-water
+  //     mark while holding the same lock and assigns the next value.
   //
-  // Writes for the same document are serialised through the per-document
-  // promise chain below, so an allocated seq is always written before the next
-  // is allocated — which keeps the in-memory fallback self-correcting (the DB
-  // high-water mark stays current). See docs/scaling.md.
+  // Compaction and reset acquire the same advisory lock. That prevents a
+  // replica from compacting through a sequence while another replica still has
+  // an earlier allocated update waiting to be inserted. The per-process promise
+  // chain below is retained as a local batching and shutdown mechanism; it is
+  // not the cross-process correctness boundary.
   // ---------------------------------------------------------------------------
-  private readonly seqMap = new Map<string, number>();
-
   // Documents whose Redis seq counter this process has already seeded, so the
   // hot path can use a plain INCR instead of re-seeding from the DB each write.
   private readonly redisSeeded = new Set<string>();
@@ -145,6 +142,7 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     await this.flushDocument(documentId);
 
     await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await this.acquireDocumentLock(tx, documentId);
       await tx.documentUpdate.deleteMany({ where: { documentId } });
       await tx.snapshot.deleteMany({ where: { documentId } });
       if (fullState !== null) {
@@ -162,12 +160,6 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     // handles it (snapshot seq 0 → next seq 1; no rows → next seq 0).
     await this.redis.del(seqKey(documentId));
     this.redisSeeded.delete(documentId);
-
-    if (fullState !== null) {
-      this.seqMap.set(documentId, 1);
-    } else {
-      this.seqMap.delete(documentId);
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -175,50 +167,58 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   // ---------------------------------------------------------------------------
 
   private async doWrite(documentId: string, update: Uint8Array): Promise<void> {
-    const seq = await this.nextSeq(documentId);
-    await this.prisma.documentUpdate.create({
-      data: {
-        documentId,
-        update: Buffer.from(update),
-        seq,
+    const seq = await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient): Promise<number> => {
+        await this.acquireDocumentLock(tx, documentId);
+        const nextSeq = await this.nextSeq(tx, documentId);
+        await tx.documentUpdate.create({
+          data: {
+            documentId,
+            update: Buffer.from(update),
+            seq: nextSeq,
+          },
+        });
+        return nextSeq;
       },
-    });
+    );
     this.lastPersistedSeq.set(documentId, seq);
   }
 
-  private async nextSeq(documentId: string): Promise<number> {
-    // Prefer the shared Redis counter (multi-instance safe). On any Redis
-    // miss/error this returns null and we fall back to the in-memory counter.
+  private async nextSeq(
+    tx: Prisma.TransactionClient,
+    documentId: string,
+  ): Promise<number> {
+    // Prefer the shared Redis counter. On any Redis miss/error we derive the
+    // value from PostgreSQL while holding the document advisory lock, which is
+    // collision-free across all application processes using this service.
     if (this.redis.isAvailable) {
-      const fromRedis = await this.redisNextSeq(documentId);
+      const fromRedis = await this.redisNextSeq(tx, documentId);
       if (fromRedis !== null) return fromRedis;
     }
-    return this.inMemoryNextSeq(documentId);
+    return this.databaseNextSeq(tx, documentId);
   }
 
-  private async redisNextSeq(documentId: string): Promise<number | null> {
+  private async redisNextSeq(
+    tx: Prisma.TransactionClient,
+    documentId: string,
+  ): Promise<number | null> {
     const key = seqKey(documentId);
     if (this.redisSeeded.has(documentId)) {
       return this.redis.incr(key);
     }
     // First allocation on this process: seed the counter to the DB high-water
     // mark (only applied if no other instance has seeded it yet) and increment.
-    const floor = await this.dbHighWaterMark(documentId);
+    const floor = await this.dbHighWaterMark(tx, documentId);
     const allocated = await this.redis.allocateSeq(key, floor);
     if (allocated !== null) this.redisSeeded.add(documentId);
     return allocated;
   }
 
-  private async inMemoryNextSeq(documentId: string): Promise<number> {
-    if (!this.seqMap.has(documentId)) {
-      // Only query the DB on the first write of this process — subsequent
-      // writes increment the cached counter (no per-keystroke round-trip).
-      const floor = await this.dbHighWaterMark(documentId);
-      this.seqMap.set(documentId, floor < 0 ? 0 : floor + 1);
-    }
-    const seq = this.seqMap.get(documentId) as number;
-    this.seqMap.set(documentId, seq + 1);
-    return seq;
+  private async databaseNextSeq(
+    tx: Prisma.TransactionClient,
+    documentId: string,
+  ): Promise<number> {
+    return (await this.dbHighWaterMark(tx, documentId)) + 1;
   }
 
   /**
@@ -227,13 +227,16 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
    * table may be empty while the Snapshot table holds the latest seq, so we
    * take the max of both to resume from the right number.
    */
-  private async dbHighWaterMark(documentId: string): Promise<number> {
+  private async dbHighWaterMark(
+    tx: Prisma.TransactionClient,
+    documentId: string,
+  ): Promise<number> {
     const [updateResult, snapshot] = await Promise.all([
-      this.prisma.documentUpdate.aggregate({
+      tx.documentUpdate.aggregate({
         where: { documentId },
         _max: { seq: true },
       }),
-      this.prisma.snapshot.findFirst({
+      tx.snapshot.findFirst({
         where: { documentId },
         orderBy: { seq: 'desc' },
         select: { seq: true },
@@ -242,6 +245,20 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     const maxUpdateSeq = updateResult._max.seq ?? -1;
     const maxSnapshotSeq = snapshot?.seq ?? -1;
     return Math.max(maxUpdateSeq, maxSnapshotSeq);
+  }
+
+  /**
+   * Serializes all persistence lifecycle operations for one document across
+   * API processes. PostgreSQL releases this transaction-scoped lock on commit,
+   * rollback, or connection loss, so it cannot remain orphaned after a crash.
+   */
+  private async acquireDocumentLock(
+    tx: Prisma.TransactionClient,
+    documentId: string,
+  ): Promise<void> {
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtextextended(${documentId}, 0))
+    `;
   }
 
   // ---------------------------------------------------------------------------
@@ -270,6 +287,7 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     // replicas are editing and compacting the same document concurrently.
     const compacted = await this.prisma.$transaction(
       async (tx: Prisma.TransactionClient): Promise<boolean> => {
+        await this.acquireDocumentLock(tx, documentId);
         const base = await tx.snapshot.findFirst({
           where: { documentId },
           orderBy: { seq: 'desc' },
