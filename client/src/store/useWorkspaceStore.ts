@@ -301,6 +301,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // ── Backend / socket state ────────────────────────────────────────────────
   backendStatus: "pending",
   connectionStatus: "disconnected",
+  documentGenerations: {},
+  documentResyncEpoch: {},
 
   // ── File actions ──────────────────────────────────────────────────────────
 
@@ -434,6 +436,31 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       ),
       saveStatus: state.activeFileId === fileId ? "saved" : state.saveStatus,
     }));
+  },
+
+  // Bumps the per-document resync epoch when a newer CRDT generation is
+  // observed. useYjsMonaco depends on the epoch, so it discards the dead
+  // lineage and re-runs the join/sync handshake against the restored state.
+  requestDocumentResync: (documentId, generation) => {
+    set((state) => {
+      const known = state.documentGenerations[documentId] ?? 0;
+      if (generation <= known) return state;
+      return {
+        documentGenerations: {
+          ...state.documentGenerations,
+          [documentId]: generation,
+        },
+        documentResyncEpoch: {
+          ...state.documentResyncEpoch,
+          [documentId]: (state.documentResyncEpoch[documentId] ?? 0) + 1,
+        },
+        openTabs: state.openTabs.map((tab) =>
+          tab.fileId === documentId ? { ...tab, dirty: false } : tab,
+        ),
+        saveStatus:
+          state.activeFileId === documentId ? "saved" : state.saveStatus,
+      };
+    });
   },
 
   setTheme: (theme) => {

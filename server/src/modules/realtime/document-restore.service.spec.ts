@@ -161,10 +161,6 @@ describe('DocumentRestoreService.auditGenerations', () => {
 });
 
 describe('DocumentRestoreService Redis restore-control handler', () => {
-  afterEach(async () => {
-    // Suites below call onModuleInit (audit timer + Redis subscribe).
-  });
-
   it('ignores messages that carry this replica\'s own originId', async () => {
     const { service, documentManager, persistence, redis } = setup();
     documentManager.hasDocument.mockReturnValue(false);

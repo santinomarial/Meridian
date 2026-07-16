@@ -51,6 +51,11 @@ export function useYjsMonaco(
   backendAvailable: boolean,
 ): void {
   const currentUser = useWorkspaceStore((s) => s.currentUser);
+  // Bumped by document:restored / local restore so this effect tears down the
+  // dead CRDT lineage and re-joins the new generation.
+  const resyncEpoch = useWorkspaceStore((s) =>
+    documentId !== null ? (s.documentResyncEpoch[documentId] ?? 0) : 0,
+  );
 
   useEffect(() => {
     if (!monacoEditor || !documentId || !backendAvailable) return;
@@ -222,5 +227,5 @@ export function useYjsMonaco(
       releaseDocumentState(documentId);
       useWorkspaceStore.getState().setCollaborators([]);
     };
-  }, [monacoEditor, documentId, backendAvailable, currentUser]);
+  }, [monacoEditor, documentId, backendAvailable, currentUser, resyncEpoch]);
 }

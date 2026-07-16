@@ -52,6 +52,10 @@ describe('DocumentManagerService', () => {
     persistence = mockDeep<DocumentPersistenceService>();
     persistence.releaseDocument.mockResolvedValue(true);
     // Default: no existing DB state.
+    prisma.document.findUnique.mockResolvedValue({
+      content: null,
+      crdtGeneration: 0,
+    } as never);
     prisma.snapshot.findFirst.mockResolvedValue(NO_SNAPSHOT);
     prisma.documentUpdate.findMany.mockResolvedValue(NO_UPDATES);
 
@@ -311,7 +315,10 @@ describe('DocumentManagerService', () => {
     });
 
     it('seeds plain-text content as a conflict-safe seq-0 Yjs update', async () => {
-      prisma.document.findUnique.mockResolvedValue({ content: 'seed me' } as never);
+      prisma.document.findUnique.mockResolvedValue({
+        content: 'seed me',
+        crdtGeneration: 0,
+      } as never);
       prisma.documentUpdate.createMany.mockResolvedValue({ count: 1 });
 
       const doc = await manager.acquire('doc-1');
@@ -321,6 +328,7 @@ describe('DocumentManagerService', () => {
         data: [
           expect.objectContaining({
             documentId: 'doc-1',
+            generation: 0,
             seq: 0,
             update: expect.any(Buffer),
           }),
@@ -330,7 +338,10 @@ describe('DocumentManagerService', () => {
     });
 
     it('produces identical seed state on concurrent replicas', async () => {
-      prisma.document.findUnique.mockResolvedValue({ content: 'same content' } as never);
+      prisma.document.findUnique.mockResolvedValue({
+        content: 'same content',
+        crdtGeneration: 0,
+      } as never);
       prisma.documentUpdate.createMany.mockResolvedValue({ count: 1 });
       const secondManager = makeManager();
 
@@ -377,7 +388,7 @@ describe('DocumentManagerService', () => {
       await manager.acquire('doc-1');
 
       expect(prisma.documentUpdate.findMany).toHaveBeenCalledWith({
-        where: { documentId: 'doc-1', seq: { gt: 5 } },
+        where: { documentId: 'doc-1', generation: 0, seq: { gt: 5 } },
         orderBy: { seq: 'asc' },
       });
     });
@@ -387,7 +398,7 @@ describe('DocumentManagerService', () => {
       await manager.acquire('doc-1');
 
       expect(prisma.documentUpdate.findMany).toHaveBeenCalledWith({
-        where: { documentId: 'doc-1', seq: { gt: -1 } },
+        where: { documentId: 'doc-1', generation: 0, seq: { gt: -1 } },
         orderBy: { seq: 'asc' },
       });
     });
@@ -481,7 +492,7 @@ describe('DocumentManagerService', () => {
       expect(doc.getText('content').toString()).toBe('compacted content');
       // Must query only updates AFTER the snapshot seq, not all updates.
       expect(prisma.documentUpdate.findMany).toHaveBeenCalledWith({
-        where: { documentId: 'doc-1', seq: { gt: 99 } },
+        where: { documentId: 'doc-1', generation: 0, seq: { gt: 99 } },
         orderBy: { seq: 'asc' },
       });
     });

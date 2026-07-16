@@ -110,12 +110,23 @@ export function useSessionSocket(): void {
       });
     };
 
-    // A document was restored to an earlier version on the server. The restored
-    // text arrives via the preceding yjs:update (applied above), which the
-    // Monaco binding reflects in the editor. This event then reconciles the
-    // dirty/save indicators so the tab is not left looking like an unsaved edit.
-    const onDocumentRestored = ({ documentId }: { documentId: string }): void => {
-      useWorkspaceStore.getState().markDocumentRestored(documentId);
+    // A document was restored to an earlier version. Discard our local CRDT
+    // lineage (via the resync epoch that useYjsMonaco depends on) and re-run
+    // the join/sync handshake against the new generation. Duplicate events
+    // for an already-known generation are ignored.
+    const onDocumentRestored = ({
+      documentId,
+      generation,
+    }: {
+      documentId: string;
+      generation?: number;
+    }): void => {
+      if (typeof generation === "number") {
+        useWorkspaceStore.getState().requestDocumentResync(documentId, generation);
+      } else {
+        // Older servers may omit generation — still clear dirty indicators.
+        useWorkspaceStore.getState().markDocumentRestored(documentId);
+      }
     };
 
     const onAwarenessUpdate = ({ documentId, update }: UpdatePayload): void => {

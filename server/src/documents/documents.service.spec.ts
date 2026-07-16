@@ -29,6 +29,7 @@ const BASE_DOC: Document = {
   name: 'index.ts',
   language: 'typescript',
   content: 'export {};',
+  crdtGeneration: 0,
   createdAt: new Date('2024-01-01'),
   updatedAt: new Date('2024-01-01'),
 };
@@ -661,7 +662,7 @@ describe('DocumentsService', () => {
       );
     });
 
-    it('updates content and records a new version with a restore message', async () => {
+    it('atomically increments generation, swaps CRDT history, and records a restore version', async () => {
       prisma.documentVersion.findUnique.mockResolvedValue({
         id: 'v-1',
         documentId: 'doc-1',
@@ -672,10 +673,15 @@ describe('DocumentsService', () => {
         createdAt: new Date('2024-01-01'),
         createdById: 'user-1',
       } as DocumentVersion);
-      prisma.document.update.mockResolvedValue({
+      const restoredDoc = {
         ...BASE_DOC,
         content: 'restored body',
-      });
+        crdtGeneration: 1,
+      };
+      prisma.document.update.mockResolvedValue(restoredDoc);
+      prisma.documentUpdate.deleteMany.mockResolvedValue({ count: 2 } as never);
+      prisma.snapshot.deleteMany.mockResolvedValue({ count: 1 } as never);
+      prisma.snapshot.create.mockResolvedValue({ id: 'snap-new' } as never);
       prisma.documentVersion.findFirst.mockResolvedValue({
         versionNumber: 3,
       } as DocumentVersion);
@@ -685,9 +691,27 @@ describe('DocumentsService', () => {
 
       const result = await service.restoreVersion('doc-1', 'v-1', 'user-9');
 
+      expect(prisma.$executeRaw).toHaveBeenCalled();
       expect(prisma.document.update).toHaveBeenCalledWith({
         where: { id: 'doc-1' },
-        data: { content: 'restored body' },
+        data: {
+          content: 'restored body',
+          crdtGeneration: { increment: 1 },
+        },
+      });
+      expect(prisma.documentUpdate.deleteMany).toHaveBeenCalledWith({
+        where: { documentId: 'doc-1' },
+      });
+      expect(prisma.snapshot.deleteMany).toHaveBeenCalledWith({
+        where: { documentId: 'doc-1' },
+      });
+      expect(prisma.snapshot.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          documentId: 'doc-1',
+          generation: 1,
+          seq: 0,
+          state: expect.any(Buffer),
+        }),
       });
       expect(prisma.documentVersion.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -698,10 +722,14 @@ describe('DocumentsService', () => {
         }),
       });
       expect(result).toEqual({
-        document: expect.objectContaining({ content: 'restored body' }),
+        document: expect.objectContaining({
+          content: 'restored body',
+          crdtGeneration: 1,
+        }),
         restoredFromVersion: 1,
         newVersionNumber: 4,
         content: 'restored body',
+        generation: 1,
       });
     });
 

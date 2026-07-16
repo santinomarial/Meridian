@@ -136,7 +136,7 @@ export class RealtimeAuthorizationService
     this.evict(invalidation);
     this.notify(invalidation);
 
-    const envelope: InvalidationEnvelope = { originId: ORIGIN_ID, invalidation };
+    const envelope: InvalidationEnvelope = { originId: this.originId, invalidation };
     await this.redis.publish(INVALIDATION_CHANNEL, JSON.stringify(envelope));
   }
 
@@ -149,7 +149,7 @@ export class RealtimeAuthorizationService
       return;
     }
 
-    if (envelope.originId === ORIGIN_ID) return;
+    if (envelope.originId === this.originId) return;
     if (!isInvalidation(envelope.invalidation)) {
       this.logger.warn('Ignored invalid realtime authorization invalidation');
       return;
