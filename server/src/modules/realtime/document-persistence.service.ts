@@ -115,6 +115,39 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   }
 
   /**
+   * Releases process-local bookkeeping after the in-memory document has been
+   * torn down. The Redis sequence key remains authoritative and is not
+   * deleted; a later local open simply re-seeds its hot-path flag from the
+   * durable high-water mark.
+   *
+   * A write appended while the captured tail is draining prevents cleanup so
+   * shutdown flushing can still observe that newer chain.
+   */
+  async releaseDocument(documentId: string): Promise<boolean> {
+    const tail = this.writeChain.get(documentId);
+    if (tail !== undefined) {
+      await tail;
+      if (this.writeChain.get(documentId) !== tail) return false;
+    }
+
+    this.writeChain.delete(documentId);
+    this.redisSeeded.delete(documentId);
+    this.updateCountSinceSnapshot.delete(documentId);
+    this.lastPersistedSeq.delete(documentId);
+    return true;
+  }
+
+  /** Number of document ids retained in any process-local persistence map. */
+  trackedDocumentCount(): number {
+    return new Set([
+      ...this.writeChain.keys(),
+      ...this.redisSeeded,
+      ...this.updateCountSinceSnapshot.keys(),
+      ...this.lastPersistedSeq.keys(),
+    ]).size;
+  }
+
+  /**
    * Resets the persisted Yjs history for a document — used by version restore.
    *
    * Restore makes the plain-text `content` column authoritative again, so the

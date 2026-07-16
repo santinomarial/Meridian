@@ -6,6 +6,7 @@ import * as awarenessProtocol from 'y-protocols/awareness';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 import { PrismaService } from '../../prisma/prisma.service';
+import { DocumentPersistenceService } from './document-persistence.service';
 
 interface DocEntry {
   doc: Y.Doc;
@@ -33,6 +34,7 @@ export class DocumentManagerService {
   constructor(
     configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly persistence: DocumentPersistenceService,
   ) {
     const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
     this.graceMs = config.docTeardownGraceMs;
@@ -150,6 +152,7 @@ export class DocumentManagerService {
     entry.awareness.destroy();
     entry.doc.destroy();
     this.docs.delete(documentId);
+    void this.persistence.releaseDocument(documentId);
   }
 
   // ---------------------------------------------------------------------------

@@ -329,6 +329,36 @@ describe('DocumentPersistenceService', () => {
     });
   });
 
+  describe('releaseDocument', () => {
+    it('evicts all local bookkeeping after the final write settles', async () => {
+      service.persistUpdate('doc-1', new Uint8Array([1]));
+      expect(service.trackedDocumentCount()).toBe(1);
+
+      await expect(service.releaseDocument('doc-1')).resolves.toBe(true);
+
+      expect(service.trackedDocumentCount()).toBe(0);
+    });
+
+    it('retains a newer chain appended while the captured tail drains', async () => {
+      let releaseFirstWrite!: () => void;
+      prisma.documentUpdate.create.mockImplementationOnce(
+        () => new Promise<never>((resolve) => {
+          releaseFirstWrite = () => resolve(NOOP_CREATE);
+        }),
+      );
+
+      service.persistUpdate('doc-1', new Uint8Array([1]));
+      while (releaseFirstWrite === undefined) await Promise.resolve();
+      const release = service.releaseDocument('doc-1');
+      service.persistUpdate('doc-1', new Uint8Array([2]));
+      releaseFirstWrite();
+
+      await expect(release).resolves.toBe(false);
+      await service.flushDocument('doc-1');
+      expect(service.trackedDocumentCount()).toBe(1);
+    });
+  });
+
   // ── Compaction ──────────────────────────────────────────────────────────
 
   describe('compaction', () => {

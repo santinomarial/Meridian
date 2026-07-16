@@ -5,6 +5,7 @@ import { DocumentManagerService } from './document-manager.service';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 import { PrismaService } from '../../prisma/prisma.service';
+import { DocumentPersistenceService } from './document-persistence.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,14 +36,21 @@ function makeConfigService(graceMs: number): ConfigService {
 
 describe('DocumentManagerService', () => {
   let prisma: DeepMockProxy<PrismaService>;
+  let persistence: DeepMockProxy<DocumentPersistenceService>;
   let manager: DocumentManagerService;
 
   function makeManager(graceMs = DEFAULT_GRACE_MS): DocumentManagerService {
-    return new DocumentManagerService(makeConfigService(graceMs), prisma);
+    return new DocumentManagerService(
+      makeConfigService(graceMs),
+      prisma,
+      persistence,
+    );
   }
 
   beforeEach(() => {
     prisma = mockDeep<PrismaService>();
+    persistence = mockDeep<DocumentPersistenceService>();
+    persistence.releaseDocument.mockResolvedValue(true);
     // Default: no existing DB state.
     prisma.snapshot.findFirst.mockResolvedValue(NO_SNAPSHOT);
     prisma.documentUpdate.findMany.mockResolvedValue(NO_UPDATES);
@@ -265,6 +273,7 @@ describe('DocumentManagerService', () => {
       jest.advanceTimersByTime(TEST_GRACE_MS + 1);
 
       expect(tm.hasDocument('doc-1')).toBe(false);
+      expect(persistence.releaseDocument).toHaveBeenCalledWith('doc-1');
     });
 
     it('document is fully unavailable after teardown', async () => {
