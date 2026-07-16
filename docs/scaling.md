@@ -332,10 +332,9 @@ pass through `WsRateLimiter`; use ingress controls and OS-level resource limits.
 
 There is one PTY per socket but no global PTY, process, CPU, or memory quota. A
 single user can open multiple sockets. Sandbox directories use local temporary
-storage and may outlive a PTY. A natural PTY exit currently removes the terminal
-session but does not unregister its sandbox projection, so later sync messages
-can continue touching that inactive directory until the registration is
-replaced or the process restarts.
+storage and may outlive a PTY. Natural PTY exit releases its active sandbox
+projection, so later sync messages do not target the exited session; the
+directory remains until re-materialization or external cleanup.
 
 The sandbox changes the shell's working directory and reduces its environment,
 but it is not an OS isolation boundary. The shell runs as the API server's OS

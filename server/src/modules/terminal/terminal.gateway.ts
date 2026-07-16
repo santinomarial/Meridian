@@ -29,6 +29,7 @@ import { TerminalStartDto } from './dto/terminal-start.dto';
 import { TerminalInputDto } from './dto/terminal-input.dto';
 import { TerminalResizeDto } from './dto/terminal-resize.dto';
 import { TerminalRunFileDto } from './dto/terminal-run-file.dto';
+import { WsRateLimiter } from '../realtime/ws-rate-limiter.service';
 import {
   RealtimeAuthorizationService,
   SOCKET_SESSION_JTI,
@@ -37,6 +38,7 @@ import {
 
 const AUTHORIZATION_SWEEP_MS = 10_000;
 const AUTHORIZATION_EVENT_CACHE_MS = 1_000;
+const TERMINAL_RATE_LIMIT_PREFIX = 'terminal:';
 
 /**
  * Maps a file extension to the shell command that runs it. Returns null for
@@ -69,6 +71,7 @@ export class TerminalGateway
   implements OnGatewayInit, OnGatewayDisconnect, OnModuleDestroy
 {
   private readonly enabled: boolean;
+  private readonly wsMessageLimit: number;
   private readonly terminalClients = new Map<string, Socket>();
   private readonly unsubscribeAuthorization: () => void;
   private authorizationSweep: NodeJS.Timeout | undefined;
@@ -79,12 +82,16 @@ export class TerminalGateway
     private readonly workspaces: WorkspacesService,
     private readonly prisma: PrismaService,
     private readonly realtimeAuthorization: RealtimeAuthorizationService,
+    private readonly rateLimiter: WsRateLimiter,
     configService: ConfigService,
     @InjectPinoLogger(TerminalGateway.name)
     private readonly logger: PinoLogger,
   ) {
     const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
     this.enabled = config.enableTerminal;
+    this.wsMessageLimit = process.env['E2E_TEST'] === 'true'
+      ? 100_000
+      : config.wsMessageLimitPerSecond;
     this.unsubscribeAuthorization = this.realtimeAuthorization.onInvalidation(
       (invalidation) => this.handleAuthorizationInvalidation(invalidation),
     );
@@ -111,6 +118,7 @@ export class TerminalGateway
       this.terminalService.killSession(client.id);
       this.logger.info({ socketId: client.id }, 'Terminal session cleaned up on disconnect');
     }
+    this.rateLimiter.clear(this.rateLimitKey(client.id));
     this.terminalClients.delete(client.id);
   }
 
@@ -123,6 +131,7 @@ export class TerminalGateway
       client.emit('terminal:error', { message: 'Terminal feature is disabled on this server' });
       return;
     }
+    if (!this.checkRateLimit(client, 'terminal:start')) return;
 
     const user = client.data['user'] as AuthUser | undefined;
     if (!user) {
@@ -183,6 +192,7 @@ export class TerminalGateway
       client.emit('terminal:error', { message: 'Terminal feature is disabled on this server' });
       return;
     }
+    if (!this.checkRateLimit(client, 'terminal:run-file')) return;
 
     const user = client.data['user'] as AuthUser | undefined;
     if (!user) {
@@ -266,6 +276,7 @@ export class TerminalGateway
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
     if (!this.enabled) return;
+    if (!this.checkRateLimit(client, 'terminal:input')) return;
 
     const session = this.terminalService.getSession(client.id);
     if (session === undefined) {
@@ -296,6 +307,7 @@ export class TerminalGateway
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
     if (!this.enabled) return;
+    if (!this.checkRateLimit(client, 'terminal:resize')) return;
 
     const session = this.terminalService.getSession(client.id);
     if (session === undefined) return;
@@ -321,6 +333,24 @@ export class TerminalGateway
     this.terminalClients.delete(client.id);
     client.emit('terminal:exit', { code: null });
     this.logger.info({ socketId: client.id }, 'Terminal session stopped by client');
+  }
+
+  private rateLimitKey(socketId: string): string {
+    return `${TERMINAL_RATE_LIMIT_PREFIX}${socketId}`;
+  }
+
+  private checkRateLimit(client: Socket, event: string): boolean {
+    if (this.rateLimiter.check(this.rateLimitKey(client.id), this.wsMessageLimit)) {
+      return true;
+    }
+    this.logger.warn(
+      { socketId: client.id, event, limit: this.wsMessageLimit },
+      'Terminal WebSocket rate limit exceeded — message dropped',
+    );
+    client.emit('terminal:error', {
+      message: `Rate limit exceeded: max ${this.wsMessageLimit} messages/s`,
+    });
+    return false;
   }
 
   private async currentWorkspaceRole(

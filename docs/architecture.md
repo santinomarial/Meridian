@@ -815,10 +815,9 @@ after three seconds. Terminal events use DTO validation and authorization but
 do not use `WsRateLimiter`; `terminal:input` also has no
 application-level string-length cap.
 
-A natural PTY exit removes the `TerminalService` session but does not call
-`TerminalSandboxService.unregister`. Its active projection entry, socket
-reference, and file-sync activity can remain until that socket ID starts a
-replacement session or the process exits. Terminal teardown does not delete
+Natural PTY exit, explicit stop, disconnect, timeout, and process shutdown all
+release the `TerminalSandboxService` registration, so an exited shell cannot
+receive later document projection operations. Terminal teardown does not delete
 the temporary directory; it remains until a later materialization recreates it
 or an external cleanup removes it.
 
@@ -980,9 +979,8 @@ guarantees:
 4. Redis pub/sub has no replay or reconnect path; multi-replica operation
    during Redis failure can diverge in memory. Inbound pub/sub events trust
    Redis, and names are not environment-prefixed.
-5. The terminal is host command execution, not a security sandbox, lacks
-   editor-gateway message-rate protection, and leaks its active projection
-   registration after a natural PTY exit.
+5. The terminal is host command execution, not a security sandbox, and lacks
+   editor-gateway message-rate protection and directory cleanup on teardown.
 6. HTTP request parsing precedes Nest authentication/throttling; HTTP
    throttling is process-local and proxy trust is not configured.
 7. Client CRDT objects and server persistence bookkeeping grow per touched

@@ -350,7 +350,11 @@ Cross-process file operations use Redis Pub/Sub with no replay, acknowledgement,
 
 Terminal events have no application-level rate limiter. `terminal:input` validates only that `data` is a string and has no terminal-specific length cap. Enforce Socket.IO and ingress limits appropriate to the deployment.
 
-On a natural PTY exit, `TerminalService` clears timers and removes the session but does not unregister the corresponding active sandbox entry. That stale registry entry and its temporary files can remain until the socket starts another session with the same ID or the process restarts. Explicit stop, disconnect while a session is active, timeout, and process shutdown use the normal unregister path, but sandbox directories are still not deleted.
+Natural PTY exit, explicit stop, disconnect, timeout, and process shutdown all
+release the active sandbox registration, so an exited shell no longer receives
+document projection operations. Sandbox directories themselves are still not
+deleted; they remain until a later materialization recreates them or an external
+cleanup process removes them.
 
 The sandbox is not an operating-system security boundary. The shell runs as the server's OS user and can access whatever that account can access. A changed working directory, minimal child environment, path validation, and symlink checks do not provide container, namespace, syscall, network, CPU, or memory isolation. Do not enable the terminal for untrusted or multi-tenant workloads without an external isolation system. At minimum, run the server as a dedicated unprivileged account with no host secrets or infrastructure credentials accessible to that account.
 
