@@ -1,0 +1,41 @@
+# Meridian public edge — TLS termination + reverse proxy.
+# Set DOMAIN (and optionally ACME_EMAIL) in the Compose environment.
+#
+# Same-origin model: SPA + API + Socket.IO share https://{$DOMAIN}.
+# Do not publish api:3000 or web:8080 on the host — only this service's 80/443.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Keep scrape and tooling endpoints off the public internet.
+	@blocked path /metrics /docs /docs/* /e2e /e2e/*
+	respond @blocked 404
+
+	# Nest API + Socket.IO (must win over SPA fallback).
+	@api path /auth /auth/* /users /users/* /workspaces /workspaces/* /documents /documents/* /invites /invites/* /health /ready /socket.io /socket.io/*
+	handle @api {
+		reverse_proxy api:3000
+	}
+
+	# Static SPA (nginx on web:8080)
+	handle {
+		reverse_proxy web:8080
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

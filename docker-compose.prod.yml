@@ -1,12 +1,13 @@
-# Production-oriented Compose sketch for Meridian.
-# Not a complete cloud topology — pair with sticky WebSocket LB, TLS
-# termination, secrets management, and backups described in docs/operations.md.
+# Production Compose for Meridian (single API replica + Caddy TLS edge).
 #
-# Usage (from repo root):
-#   docker compose -f docker-compose.prod.yml up --build
+# Public VPS (recommended):
+#   1. Copy .env.production.example → .env and fill secrets + DOMAIN
+#   2. Point DNS A/AAAA at the VPS
+#   3. docker compose -f docker-compose.prod.yml up --build -d
 #
-# Required env (create a .env next to this file or export):
-#   JWT_SECRET, CLIENT_ORIGIN, DATABASE_URL (optional override), REDIS_KEY_PREFIX
+# Only Caddy publishes 80/443. Postgres, Redis, API, and SPA stay on the
+# internal Compose network. Prefer one API replica for Socket.IO simplicity.
+# See docs/operations.md § Public deploy.
 
 services:
   postgres:
@@ -22,6 +23,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Never publish Postgres to the host / public internet.
+    expose:
+      - "5432"
 
   redis:
     image: redis:7
@@ -33,6 +37,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Never publish Redis to the host / public internet.
+    expose:
+      - "6379"
 
   migrate:
     build:
@@ -41,7 +48,7 @@ services:
     environment:
       DATABASE_URL: postgresql://meridian:${POSTGRES_PASSWORD}@postgres:5432/meridian?schema=public
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
-      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:8080}
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:?set CLIENT_ORIGIN to https://YOUR_DOMAIN}
       NODE_ENV: production
     depends_on:
       postgres:
@@ -61,10 +68,12 @@ services:
       REDIS_REQUIRED: "true"
       REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-prod:}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
-      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:8080}
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:?set CLIENT_ORIGIN to https://YOUR_DOMAIN}
       TRUST_PROXY: "1"
       METRICS_ENABLED: "true"
       ENABLE_TERMINAL: "false"
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -72,8 +81,9 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    ports:
-      - "3001:3000"
+    # Internal only — Caddy is the public edge. Do not map 3000 to the host.
+    expose:
+      - "3000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -86,14 +96,42 @@ services:
       context: ./client
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
-        VITE_SOCKET_URL: ${VITE_SOCKET_URL:-http://localhost:3000}
-    ports:
-      - "8080:8080"
+        # Same-origin via Caddy: leave empty so the SPA uses window.location.origin.
+        # Or set both to https://YOUR_DOMAIN explicitly.
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_SOCKET_URL: ${VITE_SOCKET_URL:-}
+        # Same-origin CSP ('self'). For a split API host, e.g.:
+        # CSP_CONNECT_SRC_EXTRA= https://api.example.com wss://api.example.com
+        CSP_CONNECT_SRC_EXTRA: ${CSP_CONNECT_SRC_EXTRA:-}
+    # Internal only — reached through Caddy.
+    expose:
+      - "8080"
     depends_on:
       api:
         condition: service_healthy
 
+  caddy:
+    image: caddy:2.9-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN to your public hostname}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+
 volumes:
   postgres_data:
   redis_data:
+  caddy_data:
+  caddy_config:
