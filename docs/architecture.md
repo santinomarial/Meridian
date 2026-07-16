@@ -36,7 +36,7 @@ flowchart LR
     StaticHost["Static web host<br/>Vite build output"]
     Api["Meridian server<br/>NestJS REST and Socket.IO"]
     Pg[("PostgreSQL<br/>application and document data")]
-    Redis[("Redis<br/>coordination and sequence counters")]
+    Redis[("Redis<br/>fan-out and sequence acceleration")]
     Mail["Resend API<br/>optional email delivery"]
     Temp["Host temporary filesystem<br/>terminal projections"]
     Pty["Host PTY and runtimes<br/>optional terminal execution"]
@@ -64,7 +64,7 @@ secret distribution are outside this repository.
 | Static host | Delivers the Vite assets and must provide SPA fallback for browser routes. It is not implemented by the NestJS server. |
 | NestJS process | Authentication, authorization, validation, document coordination, and optional host command execution occur here. A process owns its sockets, loaded Yjs documents, rate-limit state, and PTYs. |
 | PostgreSQL | Durable store for users, sessions, workspaces, documents, versions, Yjs updates, and Yjs snapshots. It is required for readiness. |
-| Redis | Best-effort cross-process message fan-out plus shared document sequence counters. It is not document storage and pub/sub has no replay. Multiple replicas are not safe without it, and current multi-replica persistence and restore limitations remain even with it. |
+| Redis | Best-effort cross-process message fan-out plus accelerated document sequence allocation. It is not document storage and pub/sub has no replay. PostgreSQL serializes durable document persistence, but Redis loss and local-only restore still make multi-replica editing unsafe. |
 | Mail provider | Receives email addresses and action links when Resend is configured. Development without a provider logs action URLs; other environments report delivery failures internally. |
 | PTY and temporary filesystem | High-risk boundary. A terminal shell runs as the server OS user. The temporary working directory and reduced environment are not an OS sandbox. |
 
@@ -169,7 +169,7 @@ many documents retains their CRDT state until the page reloads.
 | Realtime authorization | Short-lived session cache, local invalidation, and Redis invalidation fan-out |
 | Terminal | Optional PTY lifecycle, run-file dispatch, temporary workspace projection, and cross-instance projection sync |
 | Prisma | PostgreSQL connection lifecycle and typed database access |
-| Redis | Two ioredis connections, pattern subscriptions, publication, and atomic sequence allocation |
+| Redis | Two ioredis connections, pattern subscriptions, publication, and accelerated atomic sequence allocation |
 
 Swagger is exposed at `/docs` in every environment. The repository
 does not disable or authenticate it in production. Test-only controllers are
@@ -654,37 +654,30 @@ workspace member.
 | Active CRDT and awareness | Server process memory | Until grace-period teardown or process exit |
 | Client CRDT and awareness | Browser module maps | Until page reload |
 | Chat and presence events | Socket.IO and Redis pub/sub | Ephemeral |
-| Document sequence counter | Redis, with process-local fallback | Coordination state, not document content |
+| Document sequence allocation | PostgreSQL advisory lock with Redis acceleration | Durable update ordering; Redis is not the correctness boundary |
 | Terminal projection | Host temporary directory | Disposable, process/host local |
 
 ### 10.2 Sequence allocation and compaction
 
-When Redis is available, a Lua seed-and-increment operation allocates a unique
-sequence number from `meridian:doc:<documentId>:seq`. The seed
-uses the maximum sequence found in update and snapshot tables. Without Redis,
-each process uses an in-memory counter seeded from the database high-water
-mark; this fallback is safe only when exactly one server process can write the
-document.
+Every durable write starts a PostgreSQL transaction and acquires a
+transaction-scoped advisory lock derived from the document ID. While holding
+that lock, the service allocates the next sequence and inserts the update. A
+Redis Lua seed-and-increment operation provides the fast shared counter when it
+is available. If Redis is unavailable or its command fails, the locked
+transaction reads the durable update/snapshot high-water mark and assigns the
+next number directly.
 
-Each process serializes its own writes per document through a promise chain.
-Every `SNAPSHOT_EVERY_N_UPDATES` successful local writes, default
-100, that process attempts a serializable transaction:
+The local promise chain preserves local call order and supports shutdown, but
+the advisory lock is the cross-process ordering boundary. Compaction and reset
+acquire the same lock. Every `SNAPSHOT_EVERY_N_UPDATES` successful local writes,
+default 100, the initiating process rebuilds a snapshot from durable rows,
+inserts it, and deletes covered rows while holding that lock. A later write
+cannot insert a lower sequence after the compaction cutoff, so cold load does
+not skip a late update.
 
-1. Read the latest durable snapshot.
-2. Read update rows after the base and through the last sequence persisted by
-   this process.
-3. Apply those rows to a temporary Yjs document.
-4. Insert a new snapshot tagged with the local cutoff sequence.
-5. Delete covered update rows and older snapshots.
-
-The threshold is per process, not a global count. More importantly, Redis
-allocation happens before each PostgreSQL insert while write chains are
-process-local. Across replicas, sequence 6 can commit and compact while an
-earlier allocated sequence 5 is still pending on another process. A snapshot
-tagged 6 can therefore omit 5; a later insert of 5 is then below the snapshot
-cutoff and cold load ignores it. Serializable isolation of the compaction
-transaction does not close that later-insert gap. Current compaction is not a
-safe cross-replica durability mechanism.
+The threshold remains per process and compaction remains asynchronous; neither
+is a client durability acknowledgement. Redis still matters for live fan-out,
+but it is no longer required for sequence uniqueness or compaction ordering.
 
 Persistence bookkeeping maps and settled promise-chain entries are not evicted
 when a server-side `Y.Doc` is torn down. A long-lived process that
