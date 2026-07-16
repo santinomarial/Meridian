@@ -78,13 +78,35 @@ describe('DocumentPersistenceService', () => {
     logger = mockDeep<PinoLogger>();
     documentManager = mockDeep<DocumentManagerService>();
     service = makeService(prisma, logger, documentManager);
+    const persistedSeqByDocument = new Map<string, number>();
 
-    // Sensible defaults — most tests override as needed.
-    prisma.documentUpdate.aggregate.mockResolvedValue(NOOP_AGGREGATE);
-    prisma.documentUpdate.create.mockResolvedValue(NOOP_CREATE);
+    // Sensible defaults — emulate the durable high-water mark updated by each
+    // insert. This is important now that Redis-less allocation reads PostgreSQL
+    // on every write rather than retaining a process-local sequence cache.
+    prisma.documentUpdate.aggregate.mockImplementation(
+      ((args: { where: { documentId: string } }) =>
+        Promise.resolve({
+          _max: { seq: persistedSeqByDocument.get(args.where.documentId) ?? null },
+        })) as never,
+    );
+    prisma.documentUpdate.create.mockImplementation(
+      ((args: { data: { documentId: string; seq: number } }) => {
+        const previous = persistedSeqByDocument.get(args.data.documentId) ?? -1;
+        persistedSeqByDocument.set(
+          args.data.documentId,
+          Math.max(previous, args.data.seq),
+        );
+        return Promise.resolve(NOOP_CREATE);
+      }) as never,
+    );
     // nextSeq now also reads the latest snapshot seq so the counter resumes
     // correctly after compaction.  Return null by default (no existing snapshot).
     prisma.snapshot.findFirst.mockResolvedValue(NO_SNAPSHOT);
+    // Transactions run against the same deep mock by default. Individual
+    // compaction tests replace this when they need to simulate a failure.
+    prisma.$transaction.mockImplementation(
+      ((fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)) as never,
+    );
   });
 
   // ── Sequence counter ────────────────────────────────────────────────────
@@ -157,13 +179,45 @@ describe('DocumentPersistenceService', () => {
       expect(seqByDoc['doc-b']).toEqual([0]);
     });
 
-    it('queries DB for seq only once per document across multiple updates', async () => {
+    it('reads the DB high-water mark for every Redis-less write', async () => {
       service.persistUpdate('doc-1', new Uint8Array([1]));
       service.persistUpdate('doc-1', new Uint8Array([2]));
       await service.flushDocument('doc-1');
 
-      expect(prisma.documentUpdate.aggregate).toHaveBeenCalledTimes(1);
-      expect(prisma.snapshot.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.documentUpdate.aggregate).toHaveBeenCalledTimes(2);
+      expect(prisma.snapshot.findFirst).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not reuse a Redis-less sequence after another service advances the document', async () => {
+      let highWater = -1;
+      prisma.documentUpdate.aggregate.mockImplementation(
+        (() => Promise.resolve({ _max: { seq: highWater } })) as never,
+      );
+      prisma.documentUpdate.create.mockImplementation(
+        ((args: { data: { seq: number } }) => {
+          highWater = Math.max(highWater, args.data.seq);
+          return Promise.resolve(NOOP_CREATE);
+        }) as never,
+      );
+      const otherService = makeService(prisma, logger, documentManager);
+
+      service.persistUpdate('doc-1', new Uint8Array([1]));
+      await service.flushDocument('doc-1');
+      otherService.persistUpdate('doc-1', new Uint8Array([2]));
+      await otherService.flushDocument('doc-1');
+      service.persistUpdate('doc-1', new Uint8Array([3]));
+      await service.flushDocument('doc-1');
+
+      expect(prisma.documentUpdate.create.mock.calls.map(
+        ([args]) => (args as { data: { seq: number } }).data.seq,
+      )).toEqual([0, 1, 2]);
+    });
+
+    it('takes the PostgreSQL document lock before allocating and writing', async () => {
+      service.persistUpdate('doc-1', new Uint8Array([1]));
+      await service.flushDocument('doc-1');
+
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -294,8 +348,8 @@ describe('DocumentPersistenceService', () => {
       updates = makeIncrementalUpdates(THRESHOLD * 2 + 1);
       durableRows = [];
 
-      // Transaction mock: run the callback synchronously against the same
-      // prisma mock so assertions on snapshot.create / deleteMany just work.
+      // Transaction mock: run each callback against the same prisma mock so
+      // assertions on snapshot.create / deleteMany just work.
       prisma.$transaction.mockImplementation(
         ((fn: (tx: typeof prisma) => Promise<void>) => fn(prisma)) as never,
       );
@@ -316,6 +370,14 @@ describe('DocumentPersistenceService', () => {
           return Promise.resolve({});
         }) as never,
       );
+      prisma.documentUpdate.aggregate.mockImplementation(
+        ((args: { where: { documentId: string } }) => {
+          const seqs = durableRows
+            .filter((row) => row.documentId === args.where.documentId)
+            .map((row) => row.seq);
+          return Promise.resolve({ _max: { seq: seqs.length > 0 ? Math.max(...seqs) : null } });
+        }) as never,
+      );
       prisma.documentUpdate.findMany.mockImplementation(
         (() => Promise.resolve(durableRows)) as never,
       );
@@ -327,7 +389,9 @@ describe('DocumentPersistenceService', () => {
       }
       await cs.flushDocument('doc-1');
 
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      // Every durable write is transactional; no additional transaction means
+      // compaction has not run yet.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(THRESHOLD - 1);
     });
 
     it('runs a transaction exactly once when the threshold is hit', async () => {
@@ -336,7 +400,7 @@ describe('DocumentPersistenceService', () => {
       }
       await cs.flushDocument('doc-1');
 
-      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(THRESHOLD + 1);
     });
 
     it('creates a snapshot with the correct documentId and last-written seq', async () => {
@@ -381,7 +445,7 @@ describe('DocumentPersistenceService', () => {
       }
       await cs.flushDocument('doc-1');
 
-      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(THRESHOLD * 2 + 2);
     });
 
     it('does not create a snapshot when no durable updates remain to compact', async () => {
@@ -397,7 +461,18 @@ describe('DocumentPersistenceService', () => {
     });
 
     it('continues accepting writes after a compaction failure', async () => {
-      prisma.$transaction.mockRejectedValueOnce(new Error('tx failed'));
+      let transactionCount = 0;
+      prisma.$transaction.mockImplementation(
+        ((fn: (tx: typeof prisma) => Promise<unknown>) => {
+          transactionCount++;
+          // The first three transactions write updates; the fourth is the
+          // threshold-triggered compaction transaction.
+          if (transactionCount === THRESHOLD + 1) {
+            return Promise.reject(new Error('tx failed'));
+          }
+          return fn(prisma);
+        }) as never,
+      );
 
       // First batch triggers failed compaction.
       for (let i = 0; i < THRESHOLD; i++) {
