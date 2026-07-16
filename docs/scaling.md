@@ -238,22 +238,23 @@ hold or write the document.
 ## Redis failure behavior
 
 Redis is optional at application startup because a single API process can use
-local collaboration and counters. It is a hard operational dependency for any
-multi-replica topology.
+local collaboration and PostgreSQL-backed sequence ordering. It is an
+operational dependency for cross-replica realtime fan-out, not for durable
+sequence allocation or compaction ordering.
 
 The publisher and subscriber each have a three-second startup connection
 timeout, no offline command queue, and no automatic reconnect strategy. An
 initial connection failure is caught and the API continues to start. Publish
-failures are logged and discarded. Sequence allocation failures fall back to a
-local counter. The application does not automatically remove other replicas or
-fail closed.
+failures are logged and discarded. Sequence allocation failures fall back to the
+PostgreSQL high-water mark while holding the document advisory lock. The
+application does not automatically remove other replicas or fail closed.
 
 | Failure | Observable behavior | Required response for a multi-replica deployment |
 |---|---|---|
-| Redis unavailable at startup | API starts; `/ready` can return 200 with Redis `disabled`; Pub/Sub is not subscribed; sequence allocation is local | Do not admit traffic to multiple replicas; restore Redis and restart the full API fleet |
-| Redis lost after startup | Pub/Sub and counters fail without retry; `/ready` can still return 200 with Redis `error`; loaded documents and sandboxes may diverge | Stop collaborative writes, drain replicas, restore Redis, and restart every replica |
-| Redis command fails transiently | The affected update can use a local sequence and its publication can be lost | Treat as loss of multi-replica safety, not as a harmless transient |
-| Redis data is replaced or restored | Fresh processes can seed counters from durable PostgreSQL, but running processes can retain stale client state and seed flags | Quiesce writes and perform a coordinated restart before resuming multiple replicas |
+| Redis unavailable at startup | API starts; `/ready` can return 200 with Redis `disabled`; Pub/Sub is not subscribed; durable sequences still use PostgreSQL locks | Do not admit cross-replica collaboration; restore Redis and restart the API fleet before enabling it |
+| Redis lost after startup | Pub/Sub and counters fail without retry; `/ready` can still return 200 with Redis `error`; loaded documents and sandboxes may diverge, while durable sequence ordering continues | Stop collaborative writes, drain replicas, restore Redis, and restart every replica |
+| Redis command fails transiently | The update uses PostgreSQL high-water allocation under the document lock; its publication can still be lost | Treat as loss of cross-replica realtime safety, not as a harmless transient |
+| Redis data is replaced or restored | Fresh processes can reseed acceleration keys from PostgreSQL, but running processes can retain stale client state and Redis seed flags | Quiesce writes and perform a coordinated restart before resuming cross-replica collaboration |
 
 `GET /health` only confirms that the process is running. `GET /ready` returns
 503 only when PostgreSQL is unavailable. Redis appears as `ok`, `error`, or
