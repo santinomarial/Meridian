@@ -248,10 +248,11 @@ export class DocumentsController {
       user.id,
     );
 
-    // Reconcile the realtime layer (live Y.Doc, persisted CRDT history, and
-    // connected clients) with the restored content.  See DocumentRestoreService
-    // for the synchronization strategy.
-    await this.documentRestore.applyRestore(documentId, result.content);
+    // Reconcile the realtime layer: evict the stale Y.Doc on this replica,
+    // publish the restore-control event so every other replica does the same,
+    // and force connected clients to resynchronize against the new CRDT
+    // generation.  See DocumentRestoreService for the strategy.
+    await this.documentRestore.applyRestore(documentId, result.generation);
 
     // Mirror the restored content into any active terminal sandbox.
     await this.sandbox.syncWriteFile(

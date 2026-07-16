@@ -24,11 +24,11 @@ import * as decoding from 'lib0/decoding';
 import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import { WorkspaceRole } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { WorkspacesService } from '../../workspaces/workspaces.service';
 import { toAuthUser } from '../auth/auth.service';
-import { ORIGIN_ID } from './origin';
 import { ConnectionRegistryService } from './connection-registry.service';
 import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
@@ -61,6 +61,9 @@ const AUTHORIZATION_EVENT_CACHE_MS = 1_000;
 interface CrossInstanceUpdate {
   originId: string;
   documentId: string;
+  // CRDT generation the update belongs to — receivers drop updates for a
+  // lineage they are not (or no longer) serving.
+  generation: number;
   update: string; // base64-encoded Yjs update bytes
 }
 

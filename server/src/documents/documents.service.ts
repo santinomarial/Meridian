@@ -834,10 +834,21 @@ export class DocumentsService {
   /**
    * Restores a document to a previous version's content.
    *
-   * In one transaction: rewrites the document content and records a new
-   * version capturing the restored content with a "Restored from version X"
-   * message.  The realtime reconciliation (live Y.Doc + broadcast) is handled
-   * by the caller via DocumentRestoreService, after this transaction commits.
+   * The whole restore is one transaction holding the document advisory lock,
+   * which serializes it against every persistence write, compaction, and
+   * concurrent restore across all API replicas. Atomically it:
+   *
+   *   1. increments Document.crdtGeneration (the restore fence);
+   *   2. rewrites Document.content;
+   *   3. records a new version capturing the restored content;
+   *   4. replaces the CRDT history with a single seq-0 snapshot of the
+   *      restored text under the new generation.
+   *
+   * Any in-flight Yjs write tagged with the old generation is rejected by
+   * DocumentPersistenceService's in-transaction fence, so pre-restore state
+   * can never be committed after this transaction. The cross-replica
+   * eviction/resync broadcast is handled by the caller via
+   * DocumentRestoreService after this commits.
    */
   async restoreVersion(
     documentId: string,
@@ -849,9 +860,32 @@ export class DocumentsService {
     const source = await this.findVersionForDocument(documentId, versionId);
 
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await acquireDocumentLock(tx, documentId);
+
       const document = await tx.document.update({
         where: { id: documentId },
-        data: { content: source.content },
+        data: {
+          content: source.content,
+          crdtGeneration: { increment: 1 },
+        },
+      });
+      const generation = document.crdtGeneration;
+
+      // Replace the CRDT history: the old lineage still encodes pre-restore
+      // text and must never be replayed. The new lineage starts as a single
+      // snapshot so cold loads on any replica rebuild exactly the restored
+      // state.
+      await tx.documentUpdate.deleteMany({ where: { documentId } });
+      await tx.snapshot.deleteMany({ where: { documentId } });
+      await tx.snapshot.create({
+        data: {
+          documentId,
+          generation,
+          seq: 0,
+          state: Buffer.from(
+            encodeSeededState(documentId, generation, source.content),
+          ),
+        },
       });
 
       const newVersion = await this.createVersionTx(tx, {
@@ -867,6 +901,7 @@ export class DocumentsService {
         restoredFromVersion: source.versionNumber,
         newVersionNumber: newVersion.versionNumber,
         content: source.content,
+        generation,
       };
     });
   }
