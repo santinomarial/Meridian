@@ -58,6 +58,9 @@ describe('DocumentsService', () => {
 
   beforeEach(() => {
     prisma = mockDeep<PrismaService>();
+    prisma.$transaction.mockImplementation(
+      async (cb: (tx: typeof prisma) => unknown) => cb(prisma),
+    );
     prisma.$queryRaw.mockResolvedValue([
       { documentCount: 0n, fileCount: 0n, contentBytes: 0n },
     ] as never);

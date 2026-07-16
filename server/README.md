@@ -264,7 +264,7 @@ Yjs collaboration does not update `Document.content`. Conversely, ordinary HTTP 
 
 Version numbers are calculated as the current maximum plus one while the transaction holds a PostgreSQL advisory lock derived from the document ID. This serializes allocation across API replicas; the database uniqueness constraint remains the final invariant.
 
-The ZIP exporter still assembles the archive in process memory, but the operation is bounded. A PostgreSQL preflight rejects more than 2,000 documents, 1,000 files, or 25 MiB of source content before rows are loaded. The fetched rows are checked again for concurrent growth, and the final archive may not exceed 25 MiB.
+The ZIP exporter still assembles the archive in process memory, but the operation is bounded. In a repeatable-read transaction, a PostgreSQL preflight rejects more than 2,000 documents, 1,000 files, or 25 MiB of source content before rows are loaded, and the content fetch uses the same snapshot. The fetched rows are checked again, and the final archive may not exceed 25 MiB.
 
 ### Compaction and sequence allocation
 

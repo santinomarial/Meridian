@@ -5,8 +5,8 @@ import {
   NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import type { Document, DocumentVersion, Prisma } from '@prisma/client';
-import { DocumentType } from '@prisma/client';
+import type { Document, DocumentVersion } from '@prisma/client';
+import { DocumentType, Prisma } from '@prisma/client';
 import JSZip from 'jszip';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertSafeRelPath } from '../modules/terminal/path-safety';
@@ -271,47 +271,53 @@ export class DocumentsService {
    * The archive is assembled in memory, so a database preflight and a second
    * check over the fetched rows bound document count, file count, source bytes,
    * and final archive bytes before the response is returned.
-   */
+  */
   async exportWorkspaceZip(workspaceId: string): Promise<WorkspaceExport> {
-    const workspace = await this.prisma.workspace.findUnique({
-      where: { id: workspaceId },
-      select: { name: true },
-    });
+    const { workspace, docs } = await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        const workspace = await tx.workspace.findUnique({
+          where: { id: workspaceId },
+          select: { name: true },
+        });
 
-    // Reject oversized workspaces before loading document content into the
-    // Node.js heap. The second in-memory check below closes the ordinary race
-    // where documents are added after this preflight query.
-    const [metrics] = await this.prisma.$queryRaw<WorkspaceExportMetrics[]>`
-      SELECT
-        COUNT(*)::bigint AS "documentCount",
-        COUNT(*) FILTER (WHERE "type" = 'FILE')::bigint AS "fileCount",
-        COALESCE(SUM(octet_length(COALESCE("content", ''))), 0)::bigint AS "contentBytes"
-      FROM "Document"
-      WHERE "workspaceId" = ${workspaceId}
-    `;
-    this.assertWorkspaceExportLimits(
-      Number(metrics?.documentCount ?? 0),
-      Number(metrics?.fileCount ?? 0),
-      Number(metrics?.contentBytes ?? 0),
-    );
+        // Reject oversized workspaces before loading document content into the
+        // Node.js heap. Repeatable-read keeps the subsequent fetch on the same
+        // snapshot so concurrent writes cannot invalidate this preflight.
+        const [metrics] = await tx.$queryRaw<WorkspaceExportMetrics[]>`
+          SELECT
+            COUNT(*)::bigint AS "documentCount",
+            COUNT(*) FILTER (WHERE "type" = 'FILE')::bigint AS "fileCount",
+            COALESCE(SUM(octet_length(COALESCE("content", ''))), 0)::bigint AS "contentBytes"
+          FROM "Document"
+          WHERE "workspaceId" = ${workspaceId}
+        `;
+        this.assertWorkspaceExportLimits(
+          Number(metrics?.documentCount ?? 0),
+          Number(metrics?.fileCount ?? 0),
+          Number(metrics?.contentBytes ?? 0),
+        );
 
-    const docs = await this.prisma.document.findMany({
-      where: { workspaceId },
-      orderBy: { path: 'asc' },
-      select: { type: true, path: true, content: true },
-      take: WORKSPACE_EXPORT_MAX_DOCUMENTS + 1,
-    });
+        const docs = await tx.document.findMany({
+          where: { workspaceId },
+          orderBy: { path: 'asc' },
+          select: { type: true, path: true, content: true },
+          take: WORKSPACE_EXPORT_MAX_DOCUMENTS + 1,
+        });
 
-    let observedFiles = 0;
-    let observedContentBytes = 0;
-    for (const doc of docs) {
-      if (doc.type === DocumentType.FILE) observedFiles += 1;
-      observedContentBytes += Buffer.byteLength(doc.content ?? '', 'utf8');
-    }
-    this.assertWorkspaceExportLimits(
-      docs.length,
-      observedFiles,
-      observedContentBytes,
+        let observedFiles = 0;
+        let observedContentBytes = 0;
+        for (const doc of docs) {
+          if (doc.type === DocumentType.FILE) observedFiles += 1;
+          observedContentBytes += Buffer.byteLength(doc.content ?? '', 'utf8');
+        }
+        this.assertWorkspaceExportLimits(
+          docs.length,
+          observedFiles,
+          observedContentBytes,
+        );
+        return { workspace, docs };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
 
     const zip = new JSZip();

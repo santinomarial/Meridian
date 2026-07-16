@@ -524,11 +524,12 @@ filters are not security controls; server semantic limits are independent.
 Workspace export builds a ZIP in server memory from
 `Document.content`. It skips unsafe paths and the reserved
 `.meridian-build` and `.terminal-sandboxes` prefixes.
-Before loading content, a PostgreSQL aggregate query rejects workspaces above
-the document, file, or source-byte limits. The fetched rows are checked again
-to catch ordinary concurrent growth, and the generated archive has a final
-25 MiB cap. Construction is still in memory rather than streamed, but its
-application-level inputs and output are bounded.
+Within a repeatable-read transaction, a PostgreSQL aggregate query rejects
+workspaces above the document, file, or source-byte limits before content is
+loaded, and the subsequent fetch uses the same snapshot. The fetched rows are
+checked again, and the generated archive has a final 25 MiB cap. Construction
+is still in memory rather than streamed, but its application-level inputs and
+output are bounded.
 
 A meaningful content PATCH creates the next plain-text version in the same
 transaction as the content change. Version numbers are selected as
