@@ -2,7 +2,12 @@
 
 Meridian's server is a NestJS 11 application that exposes an HTTP API and a Socket.IO endpoint on one port. PostgreSQL stores accounts, authorization state, workspace metadata, saved document content, version history, and persisted Yjs history. Redis provides optional cross-process coordination; it is not a durable data store.
 
-The recommended deployment is one server process backed by PostgreSQL. Redis may be enabled for coordination, but the current document persistence and restore implementations do not provide a safe multi-replica consistency model. See [Deployment topology and Redis](#deployment-topology-and-redis) before adding replicas.
+The recommended deployment is one server process backed by PostgreSQL. Durable
+Yjs writes and compaction are serialized across processes by PostgreSQL, but
+live Redis fan-out and version restore still do not provide a complete
+multi-replica consistency model. See
+[Deployment topology and Redis](#deployment-topology-and-redis) before adding
+replicas.
 
 For system-wide context, see [architecture.md](../docs/architecture.md). For capacity and failure-mode analysis, see [scaling.md](../docs/scaling.md).
 
@@ -13,7 +18,7 @@ For system-wide context, see [architecture.md](../docs/architecture.md). For cap
 | NestJS and Express | HTTP routing, validation, throttling, exception handling, Swagger, and Socket.IO integration |
 | Prisma and PostgreSQL | Users, sessions, workspaces, memberships, invites, document metadata and saved content, versions, Yjs updates, and snapshots |
 | Yjs | Live collaborative state in one in-memory `Y.Doc` per open document per process |
-| Redis | Best-effort event fan-out, authorization invalidation, terminal projection operations, and document sequence allocation |
+| Redis | Best-effort event fan-out, authorization invalidation, terminal projection operations, and accelerated document sequence allocation |
 | Pino | Structured HTTP and application logs; HTTP request/error entries include request IDs, and selected credential fields are redacted |
 | `node-pty` | Optional host-backed interactive terminal |
 
@@ -262,11 +267,25 @@ The ZIP exporter assembles the complete archive in process memory. Bulk import h
 
 ### Compaction and sequence allocation
 
-In one process, document writes are serialized by a per-document promise chain. Sequence allocation uses a Redis counter when available and a process-local counter otherwise. Compaction rebuilds a Yjs snapshot from durable rows through a chosen sequence, creates the snapshot, and removes covered updates in a serializable PostgreSQL transaction.
+The local promise chain batches writes and supports graceful shutdown, but it is
+not the cross-process ordering mechanism. Every durable write begins a
+PostgreSQL transaction, acquires a transaction-scoped advisory lock derived from
+the document ID, allocates and inserts the next sequence, then commits. Redis
+provides the fast shared counter when available; if it is unavailable, the
+locked transaction derives the next value from the durable update/snapshot
+high-water mark. Compaction and history reset acquire the same lock before
+reading, deleting, or replacing history.
 
-Redis makes sequence values unique across processes, but it does not make allocation and insertion atomic. The per-document write chain is also process-local. For example, replica A can allocate sequence `n` and pause, while replica B allocates and inserts `n+1` and compacts through `n+1`. If A inserts `n` afterward, cold load starts from the `n+1` snapshot and ignores that late row because its sequence is not greater than the snapshot. Serializable isolation does not close this gap. Multi-replica collaboration with compaction is therefore not consistency-safe in the current implementation.
+This prevents a lower sequence from being inserted after another replica has
+compacted through a higher sequence. It does not make live collaboration fully
+safe across replicas: accepted updates still have no durability acknowledgement,
+Redis Pub/Sub has no replay, and version restore remains local-only.
 
-The persistence service also retains per-document write chains, counters, seed flags, and compaction counters for the lifetime of the process after a document is touched. The live `Y.Doc` itself is torn down after its configured grace period, but those persistence bookkeeping maps are not evicted.
+The persistence service also retains per-document write chains, Redis seed
+flags, compaction counters, and last-sequence entries for the lifetime of the
+process after a document is touched. The live `Y.Doc` itself is torn down after
+its configured grace period, but those persistence bookkeeping maps are not
+evicted.
 
 ### Version restore
 
@@ -284,7 +303,12 @@ These steps are not one atomic transaction. A failure after step 1 can leave sav
 
 Use one Meridian server process for document correctness. PostgreSQL is required. Redis is optional in that topology and adds no durability; when enabled, it supports coordination features and makes local development closer to CI.
 
-Multiple replicas are not currently recommended for production, even with shared PostgreSQL and Redis. The known blockers are the cross-replica allocation/compaction gap and restore's local-only reconciliation. Redis Pub/Sub also provides no replay, acknowledgement, or total ordering for collaboration, authorization invalidation, chat, awareness, or sandbox operations.
+Multiple replicas are not currently recommended for production, even with
+shared PostgreSQL and Redis. PostgreSQL now orders durable update persistence
+and compaction, but restore's local-only reconciliation remains a blocker.
+Redis Pub/Sub also provides no replay, acknowledgement, or total ordering for
+collaboration, authorization invalidation, chat, awareness, or sandbox
+operations.
 
 If multiple replicas are used for evaluation, they require:
 
@@ -298,7 +322,14 @@ Redis messages are treated as trusted internal input. Keep Redis network access 
 
 Both Redis clients use lazy connection, a three-second startup timeout, no offline queue, and no retry strategy. If either startup connection fails, the application logs a warning, marks Redis unavailable, and continues in single-process mode. It does not reconnect automatically; restart the process after Redis is restored.
 
-After a connection was established, a later client error or close does not change the service's `isAvailable` flag. Publish operations log and drop failed messages. Sequence operations return `null` on failure and fall back to process-local counters. In a multi-replica deployment this silently removes fan-out and cross-process sequence safety while replicas continue serving traffic. The application does not reduce the replica count or fail readiness automatically.
+After a connection was established, a later client error or close does not
+change the service's `isAvailable` flag. Publish operations log and drop failed
+messages. A failed Redis sequence operation falls back to the PostgreSQL
+high-water mark while holding the document advisory lock, so durable sequence
+ordering remains intact. Cross-replica fan-out, awareness, chat, authorization
+invalidation, and terminal projection still fail open while replicas continue
+serving traffic. The application does not reduce the replica count or fail
+readiness automatically.
 
 Readiness returns HTTP 200 whenever PostgreSQL is healthy, including when the Redis check reports `error` or `disabled`. Monitor Redis separately and treat any loss of Redis as an incident if evaluating multiple replicas.
 
@@ -354,7 +385,13 @@ npm run test:integration
 
 The integration suite creates prefixed synthetic accounts and removes them afterward. Use a disposable test database despite that cleanup boundary. Browser end-to-end tests live in the client package; see the [client test documentation](../client/README.md).
 
-CI uses PostgreSQL 16, Redis 7, Node.js 22, `prisma migrate deploy`, serial HTTP integration tests, and Playwright against one server process. Unit tests cover the Redis and persistence services with mocks, but CI does not start multiple application processes or verify cross-replica update ordering, compaction, restore, Redis outage behavior, or terminal Pub/Sub ordering. Redis being present in CI is not evidence that the unsupported multi-replica topology is safe.
+CI uses PostgreSQL 16, Redis 7, Node.js 22, `prisma migrate deploy`, serial
+HTTP integration tests, and Playwright against one server process. Unit tests
+cover the Redis and persistence services with mocks, but CI does not start
+multiple application processes or verify PostgreSQL advisory locking against a
+real concurrent replica pair, restore, Redis outage behavior, or terminal
+Pub/Sub ordering. Redis being present in CI is not evidence that the unsupported
+multi-replica topology is safe.
 
 ### E2E-only server mode
 
