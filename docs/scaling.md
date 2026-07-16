@@ -37,7 +37,8 @@ generally safe for horizontal collaborative editing.
 | Terminal PTY | Local to one process and one socket |
 | Terminal sandbox projection | Best-effort Redis fan-out with no replay or global operation ordering |
 | HTTP rate limiting | In-memory and per process |
-| Editor/chat gateway rate limiting | In-memory and per socket; terminal events are not covered |
+| Editor/chat gateway rate limiting | In-memory and per socket; selected `EditorGateway` events only |
+| Terminal gateway rate limiting | In-memory and per socket for start, run-file, input, and resize; stop is unmetered |
 
 ## Required topology
 
@@ -97,6 +98,7 @@ channels.
 | Authorization cache | Each API process | One-second cache; invalidated locally and through Redis |
 | HTTP throttle counters | Each API process | No shared global budget |
 | Editor/chat throttle counters | Each API process, keyed by socket ID | One fixed one-second budget per socket |
+| Terminal throttle counters | Each API process, keyed by `terminal:<socketId>` | Separate fixed one-second budget per socket |
 | Terminal process and sandbox directory | One API process | Cannot migrate; a new session materializes saved database content |
 
 ## HTTP and authorization behavior
@@ -327,8 +329,9 @@ during a Redis gap. Re-materialization from PostgreSQL is the repair path.
 Terminal start, input, resize, and run-file operations recheck session and role
 state with the same one-second cache and 10-second audit cadence described
 above. Redis invalidations can kill affected terminals on other replicas, but
-missed invalidations fall back to the database audit. Terminal events do not
-pass through `WsRateLimiter`; use ingress controls and OS-level resource limits.
+missed invalidations fall back to the database audit. Those four operations use
+an independent, namespaced per-socket `WsRateLimiter` budget; `terminal:stop`
+is unmetered. Use ingress controls and OS-level resource limits as well.
 
 There is one PTY per socket but no global PTY, process, CPU, or memory quota. A
 single user can open multiple sockets. Sandbox directories use local temporary
@@ -352,9 +355,10 @@ and ingress controls use the intended client address.
 
 `WsRateLimiter` applies a fixed one-second budget per socket to selected
 `EditorGateway` events, including document joins, workspace joins, chat, Yjs
-sync/update, and awareness. It is not a per-user or distributed limit. Multiple
-sockets receive multiple budgets. `leaveDocument` and all `TerminalGateway`
-events are outside that limiter.
+sync/update, and awareness. A separate namespaced budget protects
+`TerminalGateway` start, run-file, input, and resize events. Neither budget is
+per user or distributed, so multiple sockets receive multiple budgets.
+`leaveDocument` and `terminal:stop` are unmetered.
 
 Each replica retains one in-memory `Y.Doc` and awareness object for every open
 document routed to it. The object remains for `DOC_TEARDOWN_GRACE_MS` after its

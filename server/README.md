@@ -110,13 +110,13 @@ The seed is intended for disposable environments. It updates the demo users' pas
 | `HTTP_LIMIT` | `120` | Requests allowed in the default HTTP window |
 | `AUTH_TTL_SECONDS` | `60` | Additional throttle window applied to `/auth` routes |
 | `AUTH_LIMIT` | `10` | Requests allowed in the auth window |
-| `WS_MESSAGE_LIMIT_PER_SECOND` | `50` | Per-socket limit for rate-checked collaboration events in `EditorGateway` |
+| `WS_MESSAGE_LIMIT_PER_SECOND` | `50` | Per-socket limit for rate-checked editor and terminal gateway events |
 | `WS_MAX_YJS_UPDATE_BYTES` | `1048576` | Maximum binary payload accepted by Yjs sync, update, and awareness handlers |
 | `ENABLE_TERMINAL` | `false` | Enables host-backed PTY events and terminal projection subscriptions |
 | `RESEND_API_KEY` | Unset | Resend API key for password-reset and invite email delivery |
 | `MAIL_FROM` | `Meridian <no-reply@meridian.local>` | Sender passed to Resend |
 | `FORGOT_PASSWORD_TTL_MINUTES` | `30` | Password-reset token lifetime |
-| `E2E_TEST` | `false` | Enables test helpers and raises configured HTTP/editor-event limits; rejected in production |
+| `E2E_TEST` | `false` | Enables test helpers and raises configured HTTP/editor/terminal event limits; rejected in production |
 
 In development, HTTP and Socket.IO CORS accept only `localhost` and `127.0.0.1` on ports 5173 through 5175. `CLIENT_ORIGIN` does not expand that development allowlist; it still controls generated invite and reset URLs. In test and production, CORS accepts only the exact `CLIENT_ORIGIN`. Credentials are enabled for both transports.
 
@@ -236,7 +236,7 @@ Core collaboration events are:
 
 Protected events require the exact Socket.IO room relationship and revalidate both the session and current role, with authorization results cached for at most one second. Logout, password reset, account deletion, membership changes, and workspace deletion trigger local invalidations and, when Redis works, cross-process invalidations. A ten-second audit sweep is the passive-socket fallback.
 
-The configured one-second rate limiter applies to `joinWorkspace`, `chat:message`, `joinDocument`, `yjs:sync`, `yjs:update`, and `awareness:update` in `EditorGateway`. `leaveDocument` is not checked. Terminal events use a different gateway and are not covered. Yjs sync, update, and awareness payloads use `WS_MAX_YJS_UPDATE_BYTES`.
+The configured one-second rate limiter applies to `joinWorkspace`, `chat:message`, `joinDocument`, `yjs:sync`, `yjs:update`, and `awareness:update` in `EditorGateway`. `leaveDocument` is not checked. `TerminalGateway` uses the same configured budget under a separate per-socket namespace for `terminal:start`, `terminal:run-file`, `terminal:input`, and `terminal:resize`; `terminal:stop` is unmetered. Yjs sync, update, and awareness payloads use `WS_MAX_YJS_UPDATE_BYTES`.
 
 Awareness is ephemeral and is never written to PostgreSQL. The server authorizes the socket and bounds the binary payload, but the user metadata inside an awareness update is client-asserted and is not rebound to the authenticated account. Do not use awareness fields as an authorization or audit identity. Chat sender identity, by contrast, is constructed by the server from the authenticated user.
 
@@ -348,7 +348,7 @@ The projection is intentionally one-way:
 
 Cross-process file operations use Redis Pub/Sub with no replay, acknowledgement, deduplication, or global ordering. Missed or reordered operations can leave a sandbox stale until it is re-materialized. The server emits a sync-failure signal when a local operation throws, but publication is fire-and-forget.
 
-Terminal events have no application-level rate limiter. `terminal:input` validates only that `data` is a string and has no terminal-specific length cap. Enforce Socket.IO and ingress limits appropriate to the deployment.
+`terminal:start`, `terminal:run-file`, `terminal:input`, and `terminal:resize` use an independent per-socket one-second rate limit set by `WS_MESSAGE_LIMIT_PER_SECOND` (100,000 during E2E tests). `terminal:stop` is unmetered. `terminal:input` accepts at most 16,384 UTF-16 code units per frame. Enforce Socket.IO frame-size, ingress connection, and OS-level resource limits appropriate to the deployment.
 
 Natural PTY exit, explicit stop, disconnect, timeout, and process shutdown all
 release the active sandbox registration, so an exited shell no longer receives
@@ -399,7 +399,7 @@ multi-replica topology is safe.
 
 ### E2E-only server mode
 
-`E2E_TEST=true` raises configured HTTP and editor-event rate limits and enables two Swagger-hidden helper endpoints:
+`E2E_TEST=true` raises configured HTTP, editor-event, and terminal-event rate limits and enables two Swagger-hidden helper endpoints:
 
 - `POST /e2e/cleanup` with an allow-listed synthetic email prefix
 - `POST /auth/e2e/password-reset-token` with an allow-listed synthetic `@example.com` address

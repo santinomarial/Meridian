@@ -271,12 +271,14 @@ cross-replica terminal projection ordering.
   persistence and compaction, but restore is local-only and Redis Pub/Sub has no
   replay guarantee. An initial Redis connection failure is not retried; restore
   Redis and restart the API.
-- HTTP throttling is process-local. The collaboration gateway applies a
-  per-socket event limit, but `leaveDocument` and all terminal events are outside
-  that limiter. Body parsing also occurs before authorization. Enforce request
-  size, connection, and abuse limits at the ingress; Express `trust proxy` is
-  not configured, so application IP-based throttling must not be treated as the
-  client-address control behind a reverse proxy.
+- HTTP throttling is process-local. The editor and terminal gateways apply
+  independent per-socket event limits to their protected high-volume handlers.
+  `leaveDocument` and `terminal:stop` are deliberately unmetered, while
+  `terminal:input` is capped at 16,384 UTF-16 code units. Body parsing also
+  occurs before authorization. Enforce request size, connection, and abuse
+  limits at the ingress; Express `trust proxy` is not configured, so
+  application IP-based throttling must not be treated as the client-address
+  control behind a reverse proxy.
 - The terminal is disabled by default. When enabled, it launches a host OS
   shell as the server user. Its temporary workspace directory, reduced
   environment, path validation, and authorization checks are not container or

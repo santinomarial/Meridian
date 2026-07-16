@@ -551,7 +551,9 @@ room delivery indefinitely.
 
 The editor gateway applies a per-socket fixed one-second rate limit, default 50
 events per second, to document join, workspace join, chat, Yjs sync/update, and
-awareness handlers. It does not cover terminal gateway events.
+awareness handlers. The terminal gateway uses a separate namespaced per-socket
+budget for terminal start, run-file, input, and resize handlers; terminal stop
+is unmetered.
 
 ### 9.2 Initial document synchronization
 
@@ -811,9 +813,11 @@ filesystem, network, and syscall controls.
 
 Sessions have a 30-minute idle limit and a four-hour absolute limit. They are
 killed on socket disconnect and module shutdown, with a force-kill attempt
-after three seconds. Terminal events use DTO validation and authorization but
-do not use `WsRateLimiter`; `terminal:input` also has no
-application-level string-length cap.
+after three seconds. `terminal:start`, `terminal:run-file`, `terminal:input`,
+and `terminal:resize` use DTO validation, authorization, and an independent
+per-socket `WsRateLimiter` budget based on `WS_MESSAGE_LIMIT_PER_SECOND`.
+`terminal:stop` is unmetered. `terminal:input` is limited to 16,384 UTF-16 code
+units per frame.
 
 Natural PTY exit, explicit stop, disconnect, timeout, and process shutdown all
 release the `TerminalSandboxService` registration, so an exited shell cannot
@@ -861,7 +865,7 @@ Startup uses a Zod schema and fails on invalid required values.
 | `SNAPSHOT_EVERY_N_UPDATES` | 100 |
 | `HTTP_TTL_SECONDS` / `HTTP_LIMIT` | 60 / 120 |
 | `AUTH_TTL_SECONDS` / `AUTH_LIMIT` | 60 / 10 |
-| `WS_MESSAGE_LIMIT_PER_SECOND` | 50 for editor-gateway handlers |
+| `WS_MESSAGE_LIMIT_PER_SECOND` | 50 for rate-checked editor and terminal gateway handlers |
 | `WS_MAX_YJS_UPDATE_BYTES` | 1048576 |
 | `ENABLE_TERMINAL` | false |
 | `RESEND_API_KEY` | Optional |
@@ -979,8 +983,8 @@ guarantees:
 4. Redis pub/sub has no replay or reconnect path; multi-replica operation
    during Redis failure can diverge in memory. Inbound pub/sub events trust
    Redis, and names are not environment-prefixed.
-5. The terminal is host command execution, not a security sandbox, and lacks
-   editor-gateway message-rate protection and directory cleanup on teardown.
+5. The terminal is host command execution, not a security sandbox, and does
+   not delete temporary projection directories on teardown.
 6. HTTP request parsing precedes Nest authentication/throttling; HTTP
    throttling is process-local and proxy trust is not configured.
 7. Client CRDT objects and server persistence bookkeeping grow per touched

@@ -14,6 +14,7 @@ import type { TerminalResizeDto } from './dto/terminal-resize.dto';
 import type { TerminalRunFileDto } from './dto/terminal-run-file.dto';
 import type { TerminalSession } from './terminal.service';
 import { RealtimeAuthorizationService } from '../realtime-authorization/realtime-authorization.service';
+import { WsRateLimiter } from '../realtime/ws-rate-limiter.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,28 +53,42 @@ function makeGateway(enableTerminal: boolean): {
   workspaces: DeepMockProxy<WorkspacesService>;
   prisma: DeepMockProxy<PrismaService>;
   realtimeAuthorization: DeepMockProxy<RealtimeAuthorizationService>;
+  rateLimiter: DeepMockProxy<WsRateLimiter>;
 } {
   const terminalService = mockDeep<TerminalService>();
   const workspaces = mockDeep<WorkspacesService>();
   const prisma = mockDeep<PrismaService>();
   const realtimeAuthorization = mockDeep<RealtimeAuthorizationService>();
+  const rateLimiter = mockDeep<WsRateLimiter>();
   const configService = mockDeep<ConfigService>();
   const logger = mockDeep<PinoLogger>();
 
-  configService.getOrThrow.mockReturnValue({ enableTerminal } as never);
+  configService.getOrThrow.mockReturnValue({
+    enableTerminal,
+    wsMessageLimitPerSecond: 50,
+  } as never);
   realtimeAuthorization.isSessionActive.mockResolvedValue(true);
   realtimeAuthorization.onInvalidation.mockReturnValue(jest.fn());
+  rateLimiter.check.mockReturnValue(true);
 
   const gateway = new TerminalGateway(
     terminalService,
     workspaces,
     prisma,
     realtimeAuthorization,
+    rateLimiter,
     configService,
     logger,
   );
 
-  return { gateway, terminalService, workspaces, prisma, realtimeAuthorization };
+  return {
+    gateway,
+    terminalService,
+    workspaces,
+    prisma,
+    realtimeAuthorization,
+    rateLimiter,
+  };
 }
 
 function activeSession(
@@ -112,6 +127,22 @@ describe('TerminalGateway', () => {
       await gateway.handleStart(dto, socket);
 
       expect(emitted).toContainEqual(['terminal:error', { message: 'Unauthenticated' }]);
+    });
+
+    it('drops start before authorization when the terminal message rate limit is exceeded', async () => {
+      const { gateway, rateLimiter, workspaces, terminalService } = makeGateway(true);
+      rateLimiter.check.mockReturnValue(false);
+      const { socket, emitted } = makeSocket();
+
+      await gateway.handleStart(dto, socket);
+
+      expect(workspaces.getMemberRole).not.toHaveBeenCalled();
+      expect(terminalService.createSession).not.toHaveBeenCalled();
+      expect(emitted).toContainEqual([
+        'terminal:error',
+        { message: 'Rate limit exceeded: max 50 messages/s' },
+      ]);
+      expect(rateLimiter.check).toHaveBeenCalledWith('terminal:socket-1', 50);
     });
 
     it('emits terminal:error when user is not a workspace member', async () => {
@@ -235,6 +266,22 @@ describe('TerminalGateway', () => {
 
       expect(terminalService.writeToSession).toHaveBeenCalledWith('socket-1', 'ls\n');
     });
+
+    it('drops input that exceeds the terminal message rate limit', async () => {
+      const { gateway, terminalService, rateLimiter } = makeGateway(true);
+      terminalService.getSession.mockReturnValue(activeSession());
+      rateLimiter.check.mockReturnValue(false);
+      const { socket, emitted } = makeSocket();
+
+      await gateway.handleInput(dto, socket);
+
+      expect(terminalService.writeToSession).not.toHaveBeenCalled();
+      expect(emitted).toContainEqual([
+        'terminal:error',
+        { message: 'Rate limit exceeded: max 50 messages/s' },
+      ]);
+      expect(rateLimiter.check).toHaveBeenCalledWith('terminal:socket-1', 50);
+    });
   });
 
   // ── terminal:resize ────────────────────────────────────────────────────────
@@ -261,6 +308,21 @@ describe('TerminalGateway', () => {
       // Resize never emits to the socket directly.
       expect(emitted).toHaveLength(0);
     });
+
+    it('drops resize before touching the session when the rate limit is exceeded', async () => {
+      const { gateway, terminalService, rateLimiter } = makeGateway(true);
+      rateLimiter.check.mockReturnValue(false);
+      const { socket, emitted } = makeSocket();
+
+      await gateway.handleResize(dto, socket);
+
+      expect(terminalService.getSession).not.toHaveBeenCalled();
+      expect(terminalService.resizeSession).not.toHaveBeenCalled();
+      expect(emitted).toContainEqual([
+        'terminal:error',
+        { message: 'Rate limit exceeded: max 50 messages/s' },
+      ]);
+    });
   });
 
   // ── terminal:stop ──────────────────────────────────────────────────────────
@@ -278,13 +340,14 @@ describe('TerminalGateway', () => {
     });
 
     it('kills the session and emits terminal:exit', () => {
-      const { gateway, terminalService } = makeGateway(true);
+      const { gateway, terminalService, rateLimiter } = makeGateway(true);
       terminalService.hasSession.mockReturnValue(true);
       const { socket, emitted } = makeSocket();
 
       gateway.handleStop(socket);
 
       expect(terminalService.killSession).toHaveBeenCalledWith('socket-1');
+      expect(rateLimiter.check).not.toHaveBeenCalled();
       expect(emitted).toContainEqual(['terminal:exit', { code: null }]);
     });
   });
@@ -293,13 +356,14 @@ describe('TerminalGateway', () => {
 
   describe('handleDisconnect', () => {
     it('kills the session when one exists on disconnect', () => {
-      const { gateway, terminalService } = makeGateway(true);
+      const { gateway, terminalService, rateLimiter } = makeGateway(true);
       terminalService.hasSession.mockReturnValue(true);
       const { socket } = makeSocket();
 
       gateway.handleDisconnect(socket);
 
       expect(terminalService.killSession).toHaveBeenCalledWith('socket-1');
+      expect(rateLimiter.clear).toHaveBeenCalledWith('terminal:socket-1');
     });
 
     it('does not crash when no session exists on disconnect', () => {
@@ -341,6 +405,22 @@ describe('TerminalGateway', () => {
       const { socket, emitted } = makeSocket();
       await gateway.handleRunFile(dto, socket);
       expect(emitted).toContainEqual(['terminal:error', { message: 'Viewers cannot run files' }]);
+    });
+
+    it('drops run-file before authorization when the terminal message rate limit is exceeded', async () => {
+      const { gateway, rateLimiter, workspaces, prisma, terminalService } = makeGateway(true);
+      rateLimiter.check.mockReturnValue(false);
+      const { socket, emitted } = makeSocket();
+
+      await gateway.handleRunFile(dto, socket);
+
+      expect(workspaces.getMemberRole).not.toHaveBeenCalled();
+      expect(prisma.document.findUnique).not.toHaveBeenCalled();
+      expect(terminalService.writeToSession).not.toHaveBeenCalled();
+      expect(emitted).toContainEqual([
+        'terminal:error',
+        { message: 'Rate limit exceeded: max 50 messages/s' },
+      ]);
     });
 
     it('rejects a non-member', async () => {
