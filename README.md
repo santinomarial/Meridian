@@ -50,11 +50,11 @@ accepted update can be lost once no client or server memory retains it.
 One API process is the recommended deployment topology for collaborative state.
 Redis is optional in that topology and enables cross-process event fan-out when
 present. PostgreSQL transaction-scoped advisory locks serialize durable document
-updates, compaction, and history reset across API processes; Redis accelerates
-sequence allocation but is not the durability boundary. Multi-replica operation
-is still not a production guarantee because Redis Pub/Sub has no replay and a
-version restore does not invalidate live Yjs state on other replicas. See
-[Horizontal scaling](docs/scaling.md).
+updates, compaction, and version restore across API processes; Redis accelerates
+sequence allocation but is not the durability boundary. Version restore is
+generation-fenced and convergent across replicas. Remaining multi-replica gaps
+are asynchronous edit durability (no client ack) and Redis Pub/Sub with no
+replay for live fan-out. See [Horizontal scaling](docs/scaling.md).
 
 Detailed diagrams and runtime sequences are available in
 [Architecture](docs/architecture.md). Multi-instance requirements and failure
@@ -242,9 +242,10 @@ Backend-dependent tests skip when the API cannot be reached. `E2E_TEST=true`
 must never be used for normal operation; startup rejects it when
 `NODE_ENV=production`. Run it only in an isolated local or CI process against a
 disposable test database: its tightly scoped cleanup and password-reset helpers
-are intentionally unauthenticated. The committed suites do not exercise
-multi-process update ordering, cross-replica restore, Redis outage behavior, or
-cross-replica terminal projection ordering.
+are intentionally unauthenticated. Cross-replica restore fencing is covered by
+the server integration test `restore-fencing.e2e-spec.ts` (two AppModules,
+shared PostgreSQL/Redis). The committed suites do not yet exercise Redis outage
+behavior under load or cross-replica terminal projection ordering.
 
 ## Production considerations
 
@@ -264,13 +265,15 @@ cross-replica terminal projection ordering.
   when `NODE_ENV=production`. The application does not install Helmet or a
   Content Security Policy; define the required response headers at the API
   ingress and static host.
-- Deploy a single API replica to avoid the remaining cross-replica document
-  state hazards. If the current multi-replica path is evaluated, use shared
-  PostgreSQL and Redis and pin the entire Socket.IO session, including polling
-  and transport upgrade, to one replica. PostgreSQL serializes durable update
-  persistence and compaction, but restore is local-only and Redis Pub/Sub has no
-  replay guarantee. An initial Redis connection failure is not retried; restore
-  Redis and restart the API.
+- Prefer a single API replica for the simplest operations model. Multi-replica
+  evaluation requires shared PostgreSQL and Redis and sticky Socket.IO routing
+  (including polling and transport upgrade). Durable update persistence,
+  compaction, and version restore are generation-fenced via PostgreSQL.
+  Live Yjs updates are acknowledged after PostgreSQL commit (`yjs:ack`) with
+  client IndexedDB retry and post-commit Redis `seq` catch-up. Remaining gap:
+  Redis Pub/Sub still has no native replay for awareness/chat fan-out. An
+  initial Redis connection failure is not retried; restore Redis and restart
+  the API.
 - HTTP throttling is process-local. The editor and terminal gateways apply
   independent per-socket event limits to their protected high-volume handlers.
   `leaveDocument` and `terminal:stop` are deliberately unmetered, while

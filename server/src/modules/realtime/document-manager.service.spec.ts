@@ -330,6 +330,7 @@ describe('DocumentManagerService', () => {
             documentId: 'doc-1',
             generation: 0,
             seq: 0,
+            updateId: 'seed:doc-1:0',
             update: expect.any(Buffer),
           }),
         ],
