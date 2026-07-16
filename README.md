@@ -36,7 +36,7 @@ There is no root package manifest; run package commands from `client/` or
 | Web client | React 18, TypeScript, Vite, Monaco, Zustand | Workspace UI, editor state, REST calls, and realtime bindings |
 | API server | NestJS 11, TypeScript, Socket.IO | Authentication, authorization, workspace and document APIs, realtime rooms, and terminal sessions |
 | Primary datastore | PostgreSQL 16, Prisma | Users, sessions, memberships, documents, invitations, versions, Yjs updates, and snapshots |
-| Coordination | Redis 7, ioredis | Cross-process realtime fan-out, authorization invalidation, sequence allocation, chat, and terminal projection events |
+| Coordination | Redis 7, ioredis | Cross-process realtime fan-out, authorization invalidation, accelerated sequence allocation, chat, and terminal projection events |
 
 PostgreSQL stores all durable application data, but file content has two
 distinct representations. `Document.content` is the explicitly saved value
@@ -49,11 +49,12 @@ accepted update can be lost once no client or server memory retains it.
 
 One API process is the recommended deployment topology for collaborative state.
 Redis is optional in that topology and enables cross-process event fan-out when
-present. Redis is necessary but not sufficient for safe horizontal API
-scaling: update sequence allocation can race cross-replica compaction, and a
-version restore does not invalidate live Yjs state on other replicas. Treat
-multi-replica operation as an implementation boundary, not a production
-guarantee; see [Horizontal scaling](docs/scaling.md).
+present. PostgreSQL transaction-scoped advisory locks serialize durable document
+updates, compaction, and history reset across API processes; Redis accelerates
+sequence allocation but is not the durability boundary. Multi-replica operation
+is still not a production guarantee because Redis Pub/Sub has no replay and a
+version restore does not invalidate live Yjs state on other replicas. See
+[Horizontal scaling](docs/scaling.md).
 
 Detailed diagrams and runtime sequences are available in
 [Architecture](docs/architecture.md). Multi-instance requirements and failure
@@ -263,13 +264,13 @@ cross-replica terminal projection ordering.
   when `NODE_ENV=production`. The application does not install Helmet or a
   Content Security Policy; define the required response headers at the API
   ingress and static host.
-- Deploy a single API replica to avoid the known cross-replica document-state
-  hazards. If the current multi-replica path is evaluated, use shared PostgreSQL
-  and Redis and pin the entire Socket.IO session, including polling and
-  transport upgrade, to one replica. Cross-replica compaction and restore are
-  not safe under all interleavings. Redis Pub/Sub also has no replay guarantee.
-  An initial Redis connection failure is not retried; restore Redis and restart
-  the API.
+- Deploy a single API replica to avoid the remaining cross-replica document
+  state hazards. If the current multi-replica path is evaluated, use shared
+  PostgreSQL and Redis and pin the entire Socket.IO session, including polling
+  and transport upgrade, to one replica. PostgreSQL serializes durable update
+  persistence and compaction, but restore is local-only and Redis Pub/Sub has no
+  replay guarantee. An initial Redis connection failure is not retried; restore
+  Redis and restart the API.
 - HTTP throttling is process-local. The collaboration gateway applies a
   per-socket event limit, but `leaveDocument` and all terminal events are outside
   that limiter. Body parsing also occurs before authorization. Enforce request
