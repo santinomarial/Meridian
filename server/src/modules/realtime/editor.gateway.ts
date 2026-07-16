@@ -368,13 +368,17 @@ export class EditorGateway
 
     this.removeAwarenessForSocket(client, dto.documentId);
 
-    // Clean up cached role for this document.
+    // Clean up cached role/generation for this document.
     const docRoles = client.data['documentRoles'] as Record<string, WorkspaceRole> | undefined;
     if (docRoles !== undefined) delete docRoles[dto.documentId];
     const docWorkspaces = client.data['documentWorkspaces'] as
       | Record<string, string>
       | undefined;
     if (docWorkspaces !== undefined) delete docWorkspaces[dto.documentId];
+    const docGenerations = client.data['documentGenerations'] as
+      | Record<string, number>
+      | undefined;
+    if (docGenerations !== undefined) delete docGenerations[dto.documentId];
 
     await client.leave(room);
     this.registry.leave(client.id, dto.documentId);
@@ -624,6 +628,34 @@ export class EditorGateway
       return;
     }
 
+    // Restore fencing at the gateway: the document was restored (new CRDT
+    // generation) since this socket synchronized, so its update belongs to a
+    // dead lineage. Drop it and point the client at the new generation so it
+    // rebuilds its local doc and rejoins. The durable fence inside
+    // DocumentPersistenceService remains the correctness boundary; this check
+    // just avoids relaying garbage and resyncs stragglers immediately.
+    const currentGeneration =
+      this.documentManager.getGeneration(dto.documentId) ?? 0;
+    const joinedGeneration = (
+      client.data['documentGenerations'] as Record<string, number> | undefined
+    )?.[dto.documentId];
+    if (joinedGeneration !== currentGeneration) {
+      this.logger.warn(
+        {
+          socketId: client.id,
+          documentId: dto.documentId,
+          joinedGeneration,
+          currentGeneration,
+        },
+        'Dropped Yjs update from stale CRDT generation — client told to resync',
+      );
+      client.emit('document:restored', {
+        documentId: dto.documentId,
+        generation: currentGeneration,
+      });
+      return;
+    }
+
     this.documentManager.applyUpdate(dto.documentId, update);
 
     client.to(`document:${dto.documentId}`).emit('yjs:update', {
@@ -631,9 +663,17 @@ export class EditorGateway
       update,
     });
 
-    this.persistence.persistUpdate(dto.documentId, update);
+    this.persistence.persistUpdate(
+      dto.documentId,
+      update,
+      currentGeneration,
+      // A fenced write means a restore raced this update between the gateway
+      // check above and the durable transaction. Resync this replica now
+      // rather than waiting for the control event or the periodic audit.
+      () => void this.documentRestore.resyncFromDatabase(dto.documentId),
+    );
 
-    void this.publishYjsUpdate(dto.documentId, update);
+    void this.publishYjsUpdate(dto.documentId, update, currentGeneration);
 
     this.logger.debug(
       { socketId: client.id, documentId: dto.documentId, bytes: update.byteLength },
@@ -723,6 +763,20 @@ export class EditorGateway
     if (payload.originId === this.originId) return;
     if (!this.documentManager.hasDocument(payload.documentId)) return;
 
+    // Drop updates from a lineage this replica is not serving: either the
+    // sender has not yet processed a restore-control event (stale sender) or
+    // this replica has not (stale receiver — the control event or generation
+    // audit will resync it; merging cross-lineage updates would corrupt the
+    // in-memory doc).
+    const localGeneration = this.documentManager.getGeneration(payload.documentId);
+    if (payload.generation !== localGeneration) {
+      this.logger.warn(
+        { documentId: payload.documentId, remote: payload.generation, local: localGeneration },
+        'Dropped cross-instance Yjs update from a different CRDT generation',
+      );
+      return;
+    }
+
     try {
       const update = Buffer.from(payload.update, 'base64');
       this.documentManager.applyUpdate(payload.documentId, update);
@@ -793,10 +847,12 @@ export class EditorGateway
   private async publishYjsUpdate(
     documentId: string,
     update: Uint8Array,
+    generation: number,
   ): Promise<void> {
     const payload: CrossInstanceUpdate = {
       originId: this.originId,
       documentId,
+      generation,
       update: Buffer.from(update).toString('base64'),
     };
     await this.redis.publish(
