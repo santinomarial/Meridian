@@ -7,10 +7,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
+import { acquireDocumentLock } from '../../common/crdt/crdt-lineage';
 
-/** Redis key holding the shared sequence counter for a document. */
-function seqKey(documentId: string): string {
-  return `meridian:doc:${documentId}:seq`;
+/** Redis key holding the shared sequence counter for one document lineage. */
+function seqKey(documentId: string, generation: number): string {
+  return `meridian:doc:${documentId}:gen:${generation}:seq`;
+}
+
+function seededKey(documentId: string, generation: number): string {
+  return `${documentId}:${generation}`;
 }
 
 @Injectable()
@@ -18,26 +23,32 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   // ---------------------------------------------------------------------------
   // Sequence counters
   //
-  // The `seq` column only needs to be globally unique and monotonic per
-  // document so updates can be ordered/filtered against snapshots when
-  // rebuilding a document (Yjs updates are themselves commutative/idempotent).
+  // The `seq` column only needs to be unique and monotonic per document
+  // lineage (documentId, generation) so updates can be ordered/filtered
+  // against snapshots when rebuilding a document (Yjs updates are themselves
+  // commutative/idempotent).
   //
   // Allocation and persistence strategy:
   //   - Every write runs inside a PostgreSQL transaction that takes a
   //     transaction-scoped advisory lock derived from the document id.
+  //   - The transaction re-reads Document.crdtGeneration while holding that
+  //     lock and rejects the write when it differs from the generation the
+  //     in-memory Y.Doc was loaded with (restore fencing).
   //   - When Redis is available, the transaction allocates from the shared
-  //     counter while holding that lock. Redis keeps the hot path inexpensive.
+  //     per-lineage counter while holding that lock. Redis keeps the hot path
+  //     inexpensive.
   //   - When Redis is unavailable, the transaction reads the durable high-water
   //     mark while holding the same lock and assigns the next value.
   //
-  // Compaction and reset acquire the same advisory lock. That prevents a
+  // Compaction and restore acquire the same advisory lock. That prevents a
   // replica from compacting through a sequence while another replica still has
   // an earlier allocated update waiting to be inserted. The per-process promise
   // chain below is retained as a local batching and shutdown mechanism; it is
   // not the cross-process correctness boundary.
   // ---------------------------------------------------------------------------
-  // Documents whose Redis seq counter this process has already seeded, so the
-  // hot path can use a plain INCR instead of re-seeding from the DB each write.
+  // Lineages (documentId:generation) whose Redis seq counter this process has
+  // already seeded, so the hot path can use a plain INCR instead of re-seeding
+  // from the DB each write.
   private readonly redisSeeded = new Set<string>();
 
   // Per-document write chain.  Each new write is appended to the tail of the
@@ -73,28 +84,42 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   }
 
   /**
-   * Enqueues a durable write for one Yjs update.
+   * Enqueues a durable write for one Yjs update belonging to `generation`
+   * (the generation the in-memory Y.Doc was loaded with).
    *
    * Returns immediately so the gateway can relay the update to peers without
    * waiting for the database.  After the write settles, compaction is
    * attempted if the per-document counter reaches the threshold.  Errors are
    * caught, logged, and swallowed so a transient DB failure never crashes the
    * gateway or disrupts live editing.
+   *
+   * When PostgreSQL holds a different generation (the document was restored),
+   * the write is rejected and `onFenced` is invoked so the caller can trigger
+   * an immediate resynchronization instead of waiting for the periodic audit.
    */
-  persistUpdate(documentId: string, update: Uint8Array): void {
+  persistUpdate(
+    documentId: string,
+    update: Uint8Array,
+    generation: number,
+    onFenced?: () => void,
+  ): void {
     const previous = this.writeChain.get(documentId) ?? Promise.resolve();
     const next = previous
-      .then(() => this.doWrite(documentId, update))
-      .then(() =>
+      .then(() => this.doWrite(documentId, update, generation))
+      .then((written) => {
+        if (!written) {
+          onFenced?.();
+          return;
+        }
         // Compaction errors are caught separately so a failed compaction does
         // not prevent subsequent updates from being written.
-        this.maybeCompact(documentId).catch((err: unknown) => {
+        return this.maybeCompact(documentId, generation).catch((err: unknown) => {
           this.logger.error(
             { documentId, err },
             'Compaction failed — will retry after next batch of updates',
           );
-        }),
-      )
+        });
+      })
       .catch((err: unknown) => {
         this.logger.error(
           { documentId, err },
@@ -131,7 +156,7 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     }
 
     this.writeChain.delete(documentId);
-    this.redisSeeded.delete(documentId);
+    this.clearSeededFlags(documentId);
     this.updateCountSinceSnapshot.delete(documentId);
     this.lastPersistedSeq.delete(documentId);
     return true;
@@ -141,71 +166,60 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   trackedDocumentCount(): number {
     return new Set([
       ...this.writeChain.keys(),
-      ...this.redisSeeded,
+      ...[...this.redisSeeded].map((key) => key.slice(0, key.lastIndexOf(':'))),
       ...this.updateCountSinceSnapshot.keys(),
       ...this.lastPersistedSeq.keys(),
     ]).size;
   }
 
   /**
-   * Resets the persisted Yjs history for a document — used by version restore.
-   *
-   * Restore makes the plain-text `content` column authoritative again, so the
-   * old CRDT history (which still encodes the pre-restore text) must be
-   * discarded or a cold load would reconstruct the wrong document.
-   *
-   *  - When `fullState` is provided (the document is live in memory), it is
-   *    written as the sole Snapshot at seq 0 so cold loads rebuild exactly the
-   *    restored state, and the seq counter resumes at 1.
-   *  - When `fullState` is null (the document is not loaded), all rows are
-   *    deleted so the next collaborative open re-seeds from `content` via
-   *    DocumentManager.seedFromContent, and the seq counter is forgotten so it
-   *    is re-derived from the database.
-   *
-   * The shared Redis seq counter is cleared too (best-effort) so the next
-   * write on any instance re-seeds from the post-reset DB high-water mark.
+   * Resets process-local bookkeeping after a document's CRDT generation
+   * changed (restore). Enqueued writes for the old generation are rejected by
+   * the in-transaction fence; this only clears counters so the new lineage
+   * starts clean. Best-effort deletes the previous lineage's shared Redis seq
+   * counter, which no writer will use again.
    */
-  async resetDocument(
-    documentId: string,
-    fullState: Uint8Array | null,
-  ): Promise<void> {
-    // Let any in-flight writes settle first so the delete below can't race a
-    // create that would otherwise resurrect stale history.
-    await this.flushDocument(documentId);
-
-    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await this.acquireDocumentLock(tx, documentId);
-      await tx.documentUpdate.deleteMany({ where: { documentId } });
-      await tx.snapshot.deleteMany({ where: { documentId } });
-      if (fullState !== null) {
-        await tx.snapshot.create({
-          data: { documentId, state: Buffer.from(fullState), seq: 0 },
-        });
-      }
-    });
-
+  handleGenerationChange(documentId: string, newGeneration: number): void {
+    this.clearSeededFlags(documentId);
     this.updateCountSinceSnapshot.delete(documentId);
     this.lastPersistedSeq.delete(documentId);
-
-    // Drop the shared Redis counter and the local seed flag so the next write
-    // re-seeds from the post-reset DB high-water mark on whichever instance
-    // handles it (snapshot seq 0 → next seq 1; no rows → next seq 0).
-    await this.redis.del(seqKey(documentId));
-    this.redisSeeded.delete(documentId);
+    if (newGeneration > 0) {
+      void this.redis.del(seqKey(documentId, newGeneration - 1));
+    }
   }
 
   // ---------------------------------------------------------------------------
   // Private — write
   // ---------------------------------------------------------------------------
 
-  private async doWrite(documentId: string, update: Uint8Array): Promise<void> {
+  /**
+   * Writes one update inside a locked transaction, fencing against restores:
+   * if PostgreSQL's Document.crdtGeneration no longer matches the generation
+   * this update was produced under, the write is dropped. Returns whether the
+   * update was written.
+   */
+  private async doWrite(
+    documentId: string,
+    update: Uint8Array,
+    generation: number,
+  ): Promise<boolean> {
     const seq = await this.prisma.$transaction(
-      async (tx: Prisma.TransactionClient): Promise<number> => {
-        await this.acquireDocumentLock(tx, documentId);
-        const nextSeq = await this.nextSeq(tx, documentId);
+      async (tx: Prisma.TransactionClient): Promise<number | null> => {
+        await acquireDocumentLock(tx, documentId);
+
+        const document = await tx.document.findUnique({
+          where: { id: documentId },
+          select: { crdtGeneration: true },
+        });
+        if (document === null || document.crdtGeneration !== generation) {
+          return null;
+        }
+
+        const nextSeq = await this.nextSeq(tx, documentId, generation);
         await tx.documentUpdate.create({
           data: {
             documentId,
+            generation,
             update: Buffer.from(update),
             seq: nextSeq,
           },
@@ -213,63 +227,79 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
         return nextSeq;
       },
     );
+
+    if (seq === null) {
+      this.logger.warn(
+        { documentId, generation },
+        'Persistence write fenced — stale CRDT generation after restore',
+      );
+      return false;
+    }
+
     this.lastPersistedSeq.set(documentId, seq);
+    return true;
   }
 
   private async nextSeq(
     tx: Prisma.TransactionClient,
     documentId: string,
+    generation: number,
   ): Promise<number> {
     // Prefer the shared Redis counter. On any Redis miss/error we derive the
     // value from PostgreSQL while holding the document advisory lock, which is
     // collision-free across all application processes using this service.
     if (this.redis.isAvailable) {
-      const fromRedis = await this.redisNextSeq(tx, documentId);
+      const fromRedis = await this.redisNextSeq(tx, documentId, generation);
       if (fromRedis !== null) return fromRedis;
     }
-    return this.databaseNextSeq(tx, documentId);
+    return this.databaseNextSeq(tx, documentId, generation);
   }
 
   private async redisNextSeq(
     tx: Prisma.TransactionClient,
     documentId: string,
+    generation: number,
   ): Promise<number | null> {
-    const key = seqKey(documentId);
-    if (this.redisSeeded.has(documentId)) {
+    const key = seqKey(documentId, generation);
+    if (this.redisSeeded.has(seededKey(documentId, generation))) {
       return this.redis.incr(key);
     }
     // First allocation on this process: seed the counter to the DB high-water
     // mark (only applied if no other instance has seeded it yet) and increment.
-    const floor = await this.dbHighWaterMark(tx, documentId);
+    const floor = await this.dbHighWaterMark(tx, documentId, generation);
     const allocated = await this.redis.allocateSeq(key, floor);
-    if (allocated !== null) this.redisSeeded.add(documentId);
+    if (allocated !== null) {
+      this.redisSeeded.add(seededKey(documentId, generation));
+    }
     return allocated;
   }
 
   private async databaseNextSeq(
     tx: Prisma.TransactionClient,
     documentId: string,
+    generation: number,
   ): Promise<number> {
-    return (await this.dbHighWaterMark(tx, documentId)) + 1;
+    return (await this.dbHighWaterMark(tx, documentId, generation)) + 1;
   }
 
   /**
-   * The current maximum seq for a document across both update and snapshot
-   * tables, or -1 when neither exists. After compaction the DocumentUpdate
-   * table may be empty while the Snapshot table holds the latest seq, so we
-   * take the max of both to resume from the right number.
+   * The current maximum seq for a document lineage across both update and
+   * snapshot tables, or -1 when neither exists. After compaction the
+   * DocumentUpdate table may be empty while the Snapshot table holds the
+   * latest seq, so we take the max of both to resume from the right number.
    */
   private async dbHighWaterMark(
     tx: Prisma.TransactionClient,
     documentId: string,
+    generation: number,
   ): Promise<number> {
     const [updateResult, snapshot] = await Promise.all([
       tx.documentUpdate.aggregate({
-        where: { documentId },
+        where: { documentId, generation },
         _max: { seq: true },
       }),
       tx.snapshot.findFirst({
-        where: { documentId },
+        where: { documentId, generation },
         orderBy: { seq: 'desc' },
         select: { seq: true },
       }),
@@ -279,25 +309,21 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     return Math.max(maxUpdateSeq, maxSnapshotSeq);
   }
 
-  /**
-   * Serializes all persistence lifecycle operations for one document across
-   * API processes. PostgreSQL releases this transaction-scoped lock on commit,
-   * rollback, or connection loss, so it cannot remain orphaned after a crash.
-   */
-  private async acquireDocumentLock(
-    tx: Prisma.TransactionClient,
-    documentId: string,
-  ): Promise<void> {
-    await tx.$executeRaw`
-      SELECT pg_advisory_xact_lock(hashtextextended(${documentId}, 0))
-    `;
+  private clearSeededFlags(documentId: string): void {
+    const prefix = `${documentId}:`;
+    for (const key of this.redisSeeded) {
+      if (key.startsWith(prefix)) this.redisSeeded.delete(key);
+    }
   }
 
   // ---------------------------------------------------------------------------
   // Private — compaction
   // ---------------------------------------------------------------------------
 
-  private async maybeCompact(documentId: string): Promise<void> {
+  private async maybeCompact(
+    documentId: string,
+    generation: number,
+  ): Promise<void> {
     const count = (this.updateCountSinceSnapshot.get(documentId) ?? 0) + 1;
 
     if (count < this.snapshotEveryN) {
@@ -319,9 +345,19 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     // replicas are editing and compacting the same document concurrently.
     const compacted = await this.prisma.$transaction(
       async (tx: Prisma.TransactionClient): Promise<boolean> => {
-        await this.acquireDocumentLock(tx, documentId);
+        await acquireDocumentLock(tx, documentId);
+
+        // Restore fencing: never compact a lineage that is no longer current.
+        const document = await tx.document.findUnique({
+          where: { id: documentId },
+          select: { crdtGeneration: true },
+        });
+        if (document === null || document.crdtGeneration !== generation) {
+          return false;
+        }
+
         const base = await tx.snapshot.findFirst({
-          where: { documentId },
+          where: { documentId, generation },
           orderBy: { seq: 'desc' },
         });
         if (base !== null && base.seq >= snapshotSeq) return false;
@@ -329,6 +365,7 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
         const updates = await tx.documentUpdate.findMany({
           where: {
             documentId,
+            generation,
             seq: { gt: base?.seq ?? -1, lte: snapshotSeq },
           },
           orderBy: { seq: 'asc' },
@@ -343,16 +380,18 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
           const created = await tx.snapshot.create({
             data: {
               documentId,
+              generation,
               state: Buffer.from(Y.encodeStateAsUpdate(durableDoc)),
               seq: snapshotSeq,
             },
           });
           await tx.documentUpdate.deleteMany({
-            where: { documentId, seq: { lte: snapshotSeq } },
+            where: { documentId, generation, seq: { lte: snapshotSeq } },
           });
           await tx.snapshot.deleteMany({
             where: {
               documentId,
+              generation,
               seq: { lte: snapshotSeq },
               id: { not: created.id },
             },
@@ -367,7 +406,7 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
 
     if (compacted) {
       this.logger.info(
-        { documentId, seq: snapshotSeq },
+        { documentId, generation, seq: snapshotSeq },
         'Compacted Yjs updates into snapshot',
       );
     }
