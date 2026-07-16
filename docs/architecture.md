@@ -509,6 +509,7 @@ a folder updates descendant paths in a transaction.
 |---|---|
 | Saved content per file | 1 MiB of UTF-8 bytes on create, update, and bulk import |
 | Bulk import | At most 1,000 files, 2,000 total documents, and 25 MiB of decoded text |
+| Workspace export | At most 1,000 files, 2,000 documents, 25 MiB of source content, and a 25 MiB final archive |
 | Bulk transaction | 60-second Prisma transaction timeout |
 | Document path | 4,096 UTF-8 bytes, 255 bytes per segment, 64 segments |
 | Client ZIP input | 100 MiB compressed; 25 MiB decoded text; same file/document/path limits before JSON upload |
@@ -523,14 +524,16 @@ filters are not security controls; server semantic limits are independent.
 Workspace export builds a ZIP in server memory from
 `Document.content`. It skips unsafe paths and the reserved
 `.meridian-build` and `.terminal-sandboxes` prefixes.
-There is no aggregate workspace-size quota, server-side export size cap, or
-streaming ZIP construction. Repeated creates and updates can grow a workspace
-beyond the bulk import ceiling, so export memory use can exceed 25 MiB.
+Before loading content, a PostgreSQL aggregate query rejects workspaces above
+the document, file, or source-byte limits. The fetched rows are checked again
+to catch ordinary concurrent growth, and the generated archive has a final
+25 MiB cap. Construction is still in memory rather than streamed, but its
+application-level inputs and output are bounded.
 
 A meaningful content PATCH creates the next plain-text version in the same
 transaction as the content change. Version numbers are selected as
-`max + 1`; the unique constraint detects concurrent duplication,
-but the service has no conflict retry.
+`max + 1` while holding a transaction-scoped PostgreSQL advisory lock derived
+from the document ID. The unique constraint remains a database backstop.
 
 ## 9. Realtime protocol
 
@@ -681,10 +684,11 @@ The threshold remains per process and compaction remains asynchronous; neither
 is a client durability acknowledgement. Redis still matters for live fan-out,
 but it is no longer required for sequence uniqueness or compaction ordering.
 
-Persistence bookkeeping maps and settled promise-chain entries are not evicted
-when a server-side `Y.Doc` is torn down. A long-lived process that
-touches many distinct documents accumulates per-document counters and chain
-entries until restart.
+When a server-side `Y.Doc` reaches deferred teardown, the persistence service
+waits for its captured write-chain tail and evicts the local chain, Redis seed
+flag, compaction counter, and last-sequence entry. If a newer write is appended
+while that tail drains, eviction is skipped so shutdown flushing retains the
+newer chain.
 
 ### 10.3 Version restore
 
@@ -987,21 +991,18 @@ guarantees:
    not delete temporary projection directories on teardown.
 6. HTTP request parsing precedes Nest authentication/throttling; HTTP
    throttling is process-local and proxy trust is not configured.
-7. Client CRDT objects and server persistence bookkeeping grow per touched
-   document until browser reload or server restart, respectively.
-9. ZIP export is built in memory without a server-side output cap.
-10. Version number allocation has a concurrent unique-conflict failure mode
-    without retry.
-11. Invite tokens are plaintext, reusable bearer links; optional invite email
+7. ZIP export is built in memory rather than streamed, although document,
+   file, source-content, and final-archive limits bound the operation.
+8. Invite tokens are plaintext, reusable bearer links; optional invite email
     does not bind acceptance identity.
-12. Awareness display identity is client-asserted, email is not verified, and
+9. Awareness display identity is client-asserted, email is not verified, and
     an authenticated user lookup can disclose another user's email by ID.
-13. Expired/revoked authentication and invite records have no scheduled
+10. Expired/revoked authentication and invite records have no scheduled
     retention cleanup.
-14. Reset-token email copy remains fixed at 30 minutes even when its configured
+11. Reset-token email copy remains fixed at 30 minutes even when its configured
     lifetime changes.
-15. Bearer invite tokens can be retained in request logs because they are URL
+12. Bearer invite tokens can be retained in request logs because they are URL
     path parameters and URL redaction is not configured.
-16. Production infrastructure, security headers, ingress controls, isolation,
+13. Production infrastructure, security headers, ingress controls, isolation,
     observability backend, backup policy, and disaster-recovery behavior are
     not defined in this repository.

@@ -128,6 +128,12 @@ update `Document.content`. The Save command sends the editor's current value
 through `PATCH /documents/:documentId`, which updates `Document.content` and
 creates a version only when that saved value changes.
 
+Client Yjs documents are reference-counted by active editor bindings. Closing
+the final binding destroys its awareness object and `Y.Doc`; late Socket.IO
+events for an inactive document are ignored. Reopening the document allocates a
+fresh object and performs a new server synchronization, so browsing many files
+does not retain CRDT state for the lifetime of the page.
+
 This boundary has several operational consequences:
 
 - A collaborative edit can be present in the persisted Yjs history while still

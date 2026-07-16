@@ -362,10 +362,10 @@ per user or distributed, so multiple sockets receive multiple budgets.
 
 Each replica retains one in-memory `Y.Doc` and awareness object for every open
 document routed to it. The object remains for `DOC_TEARDOWN_GRACE_MS` after its
-last local reference is released. The persistence service's per-document Redis
-seed flag, write-chain, compaction-count, and last-sequence maps are not
-evicted, so a long-lived process accumulates bookkeeping for every document it
-has persisted until restart.
+last local reference is released. Teardown destroys that state and asks the
+persistence service to evict its per-document Redis seed flag, settled
+write-chain, compaction count, and last-sequence entry. Eviction waits for the
+captured chain and is abandoned if a newer write appears concurrently.
 
 Capacity planning must include duplicated hot-document memory, Redis fan-out to
 every subscriber, base64/JSON message expansion, PostgreSQL connections from

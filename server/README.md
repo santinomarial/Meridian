@@ -208,6 +208,7 @@ Independent semantic limits are:
 - 1 MiB of UTF-8 content per document
 - 1,000 files and 2,000 total file/folder nodes per bulk import
 - 25 MiB of aggregate UTF-8 content per bulk import
+- 1,000 files, 2,000 documents, 25 MiB of source content, and a 25 MiB final archive per workspace export
 - 4,096 UTF-8 bytes per path, 255 bytes per path segment, and 64 path segments
 
 Callers must satisfy both the wire and semantic limits. Malformed JSON returns
@@ -261,9 +262,9 @@ Yjs collaboration does not update `Document.content`. Conversely, ordinary HTTP 
 - A normal client save is consistent when it sends the current Yjs text through HTTP PATCH. An out-of-band PATCH or import over a document with existing Yjs history can create divergence; a later collaborative cold load follows the Yjs history, not the newly imported content.
 - Version restore is the only HTTP path that explicitly attempts to reconcile the saved and CRDT representations.
 
-Version numbers are calculated as the current maximum plus one. The database uniqueness constraint detects concurrent allocation of the same number, but the application has no retry path; concurrent meaningful saves may therefore fail one request.
+Version numbers are calculated as the current maximum plus one while the transaction holds a PostgreSQL advisory lock derived from the document ID. This serializes allocation across API replicas; the database uniqueness constraint remains the final invariant.
 
-The ZIP exporter assembles the complete archive in process memory. Bulk import has an aggregate 25 MiB limit, but a workspace can grow beyond that through repeated creates or updates because there is no aggregate workspace-size quota. Large exports can therefore consume substantially more memory than the per-document limit suggests.
+The ZIP exporter still assembles the archive in process memory, but the operation is bounded. A PostgreSQL preflight rejects more than 2,000 documents, 1,000 files, or 25 MiB of source content before rows are loaded. The fetched rows are checked again for concurrent growth, and the final archive may not exceed 25 MiB.
 
 ### Compaction and sequence allocation
 
@@ -281,11 +282,11 @@ compacted through a higher sequence. It does not make live collaboration fully
 safe across replicas: accepted updates still have no durability acknowledgement,
 Redis Pub/Sub has no replay, and version restore remains local-only.
 
-The persistence service also retains per-document write chains, Redis seed
-flags, compaction counters, and last-sequence entries for the lifetime of the
-process after a document is touched. The live `Y.Doc` itself is torn down after
-its configured grace period, but those persistence bookkeeping maps are not
-evicted.
+The live `Y.Doc` is torn down after its configured grace period. Teardown also
+waits for the captured persistence-chain tail and evicts the document's local
+write chain, Redis seed flag, compaction counter, and last-sequence entry. If a
+new write appears while the captured chain drains, eviction is skipped so the
+newer write remains visible to shutdown flushing.
 
 ### Version restore
 
