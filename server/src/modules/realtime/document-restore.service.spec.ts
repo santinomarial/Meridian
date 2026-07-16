@@ -161,53 +161,67 @@ describe('DocumentRestoreService.auditGenerations', () => {
 });
 
 describe('DocumentRestoreService Redis restore-control handler', () => {
+  afterEach(async () => {
+    // Suites below call onModuleInit (audit timer + Redis subscribe).
+  });
+
   it('ignores messages that carry this replica\'s own originId', async () => {
     const { service, documentManager, persistence, redis } = setup();
     documentManager.hasDocument.mockReturnValue(false);
     redis.publish.mockResolvedValue(undefined as never);
+    redis.unsubscribe.mockResolvedValue(undefined as never);
 
     const handler = await captureRedisHandler(service, redis);
 
-    await service.applyRestore('doc-1', 5);
-    const published = redis.publish.mock.calls[0]![1] as string;
+    try {
+      await service.applyRestore('doc-1', 5);
+      const published = redis.publish.mock.calls[0]![1] as string;
 
-    persistence.handleGenerationChange.mockClear();
-    documentManager.reload.mockClear();
+      persistence.handleGenerationChange.mockClear();
+      documentManager.reload.mockClear();
 
-    // Echo our own published message back through the subscriber.
-    handler('document:doc-1:restore', published);
+      // Echo our own published message back through the subscriber.
+      handler('document:doc-1:restore', published);
 
-    // Allow any fire-and-forget work to settle.
-    await Promise.resolve();
+      // Allow any fire-and-forget work to settle.
+      await Promise.resolve();
 
-    expect(persistence.handleGenerationChange).not.toHaveBeenCalled();
-    expect(documentManager.reload).not.toHaveBeenCalled();
+      expect(persistence.handleGenerationChange).not.toHaveBeenCalled();
+      expect(documentManager.reload).not.toHaveBeenCalled();
+    } finally {
+      await service.onModuleDestroy();
+    }
   });
 
   it('applies remote restore-control messages from other replicas', async () => {
     const { service, documentManager, persistence, redis, emit } = setup();
     documentManager.hasDocument.mockReturnValue(true);
     documentManager.reload.mockResolvedValue(undefined);
+    redis.unsubscribe.mockResolvedValue(undefined as never);
 
     const handler = await captureRedisHandler(service, redis);
 
-    handler(
-      'document:doc-1:restore',
-      JSON.stringify({
-        originId: 'other-replica',
+    try {
+      handler(
+        'document:doc-1:restore',
+        JSON.stringify({
+          originId: 'other-replica',
+          documentId: 'doc-1',
+          generation: 7,
+        }),
+      );
+
+      // Remote handler is fire-and-forget; drain microtasks until reload settles.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(persistence.handleGenerationChange).toHaveBeenCalledWith('doc-1', 7);
+      expect(documentManager.reload).toHaveBeenCalledWith('doc-1');
+      expect(emit).toHaveBeenCalledWith('document:restored', {
         documentId: 'doc-1',
         generation: 7,
-      }),
-    );
-
-    // Remote handler is fire-and-forget; drain microtasks until reload settles.
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(persistence.handleGenerationChange).toHaveBeenCalledWith('doc-1', 7);
-    expect(documentManager.reload).toHaveBeenCalledWith('doc-1');
-    expect(emit).toHaveBeenCalledWith('document:restored', {
-      documentId: 'doc-1',
-      generation: 7,
-    });
+      });
+    } finally {
+      await service.onModuleDestroy();
+    }
   });
 });
