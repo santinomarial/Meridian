@@ -23,7 +23,7 @@ FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends tini \
+  && apt-get install -y --no-install-recommends tini openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 10001 meridian \
   && useradd --system --uid 10001 --gid meridian --home-dir /app --shell /usr/sbin/nologin meridian
