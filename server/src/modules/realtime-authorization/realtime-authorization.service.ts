@@ -1,9 +1,9 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { randomUUID } from 'crypto';
 import type { Socket } from 'socket.io';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
-import { ORIGIN_ID } from '../realtime/origin';
 import type { AuthUser } from '../auth/types/auth-user.type';
 
 export const SOCKET_SESSION_JTI = 'sessionJti';
@@ -40,6 +40,9 @@ export class RealtimeAuthorizationService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly listeners = new Set<InvalidationListener>();
+  // Per-instance so sibling replicas booted in the same process still treat
+  // each other's invalidation messages as remote.
+  private readonly originId = randomUUID();
   private readonly sessionCache = new Map<
     string,
     { active: boolean; validUntil: number; userId: string }
