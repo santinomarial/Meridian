@@ -65,6 +65,7 @@ function VersionHistoryDialogBody() {
   const theme = useWorkspaceStore((s) => s.theme);
   const addNotification = useWorkspaceStore((s) => s.addNotification);
   const markDocumentRestored = useWorkspaceStore((s) => s.markDocumentRestored);
+  const requestDocumentResync = useWorkspaceStore((s) => s.requestDocumentResync);
   const applyRemoteFileContent = useWorkspaceStore(
     (s) => s.applyRemoteFileContent,
   );
@@ -157,7 +158,13 @@ function VersionHistoryDialogBody() {
       // temporarily disconnected socket. The Yjs broadcast will converge to
       // the same content for connected collaborators.
       applyRemoteFileContent(activeFileId, result.document.content ?? "");
-      markDocumentRestored(activeFileId);
+      const generation = result.document.crdtGeneration;
+      if (typeof generation === "number") {
+        // Discard the dead CRDT lineage and re-join the new generation.
+        requestDocumentResync(activeFileId, generation);
+      } else {
+        markDocumentRestored(activeFileId);
+      }
       addNotification({
         icon: "history",
         text: `Restored version ${result.restoredFromVersion}`,
@@ -178,6 +185,7 @@ function VersionHistoryDialogBody() {
     selectedDetail,
     applyRemoteFileContent,
     markDocumentRestored,
+    requestDocumentResync,
     addNotification,
     loadVersions,
   ]);
