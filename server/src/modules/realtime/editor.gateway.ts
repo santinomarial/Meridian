@@ -102,6 +102,12 @@ export class EditorGateway
   // Maps socketId → documentId → Set of Yjs awareness clientIds.
   private readonly socketAwarenessIds = new Map<string, Map<string, Set<number>>>();
 
+  // Per-instance (not per-module) so sibling replicas booted in the same
+  // process — as in the multi-replica integration harness — still treat each
+  // other's Redis messages as remote. Stamped on every outbound message so
+  // this instance can discard its own echoes.
+  private readonly originId = randomUUID();
+
   // Cached at construction time to avoid per-message config lookups.
   private readonly wsMessageLimit: number;
   private readonly wsMaxUpdateBytes: number;
