@@ -161,6 +161,30 @@ export class DocumentRestoreService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Resynchronizes one document against the generation currently committed in
+   * PostgreSQL. Used when a fenced persistence write reveals that this
+   * replica missed a restore, without waiting for the periodic audit.
+   */
+  async resyncFromDatabase(documentId: string): Promise<void> {
+    try {
+      const document = await this.prisma.document.findUnique({
+        where: { id: documentId },
+        select: { crdtGeneration: true },
+      });
+      if (document === null) return;
+      if (this.documentManager.getGeneration(documentId) === document.crdtGeneration) {
+        return;
+      }
+      await this.evictAndResync(documentId, document.crdtGeneration);
+    } catch (err) {
+      this.logger.error(
+        { err, documentId },
+        'Failed to resync document after fenced persistence write',
+      );
+    }
+  }
+
+  /**
    * Evicts the stale local Y.Doc (rebuilding it from the new lineage when it
    * is loaded) and tells connected local clients to resynchronize.
    */

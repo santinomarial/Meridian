@@ -1100,6 +1100,10 @@ export class EditorGateway
       | undefined;
     if (roles !== undefined) delete roles[documentId];
     if (workspaces !== undefined) delete workspaces[documentId];
+    const generations = client.data['documentGenerations'] as
+      | Record<string, number>
+      | undefined;
+    if (generations !== undefined) delete generations[documentId];
     const checkedAt = client.data['documentAuthorizationCheckedAt'] as
       | Record<string, number>
       | undefined;
