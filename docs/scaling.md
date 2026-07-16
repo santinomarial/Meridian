@@ -230,10 +230,12 @@ history so a later cold open seeds from saved content.
 The restore update and notification are not published to Redis. Other replicas
 can retain stale in-memory documents and can continue writing through their own
 queues while the origin replica deletes history and the shared sequence key.
-There is no cross-replica document lock, generation number, or fencing token.
-The saved-content transaction and CRDT reset are also not one atomic database
-operation. Do not execute version restores while more than one API replica can
-hold or write the document.
+The document advisory lock serializes the physical reset against a concurrent
+write, but there is no generation number or fencing token to reject a write
+derived from stale in-memory state after that reset. The saved-content
+transaction and CRDT reset are also not one atomic database operation. Do not
+execute version restores while more than one API replica can hold or write the
+document.
 
 ## Redis failure behavior
 
@@ -357,10 +359,10 @@ events are outside that limiter.
 
 Each replica retains one in-memory `Y.Doc` and awareness object for every open
 document routed to it. The object remains for `DOC_TEARDOWN_GRACE_MS` after its
-last local reference is released. The persistence service's per-document
-sequence, write-chain, compaction-count, and last-sequence maps are not evicted,
-so a long-lived process accumulates bookkeeping for every document it has
-persisted until restart.
+last local reference is released. The persistence service's per-document Redis
+seed flag, write-chain, compaction-count, and last-sequence maps are not
+evicted, so a long-lived process accumulates bookkeeping for every document it
+has persisted until restart.
 
 Capacity planning must include duplicated hot-document memory, Redis fan-out to
 every subscriber, base64/JSON message expansion, PostgreSQL connections from
@@ -370,8 +372,9 @@ metrics endpoint or distributed backpressure mechanism.
 
 ## Deployment and shutdown checklist
 
-1. Use one API replica for durable collaboration and version restore until the
-   persistence and restore limitations in this document are fixed.
+1. Use one API replica for version restore and for collaboration that requires
+   replayable cross-replica state until the remaining realtime limitations are
+   fixed.
 2. Apply committed Prisma migrations once before admitting a new application
    version. Do not let every replica run `prisma migrate dev`.
 3. Start and verify PostgreSQL and Redis before the API fleet. The repository's
@@ -380,8 +383,8 @@ metrics endpoint or distributed backpressure mechanism.
    no protocol-version negotiation, so avoid incompatible mixed-version fleets.
 5. Configure `/socket.io/` affinity for handshake, polling, upgrade, and the
    entire session. Forward WebSocket upgrades and preserve credentials.
-6. Protect Redis as an internal message bus and counter store. Do not expose it
-   publicly or share its Pub/Sub namespace with another environment.
+6. Protect Redis as an internal message bus and sequence accelerator. Do not
+   expose it publicly or share its Pub/Sub namespace with another environment.
 7. Add deployment-wide HTTP and terminal abuse controls. Do not multiply the
    configured per-process limits and assume they are global.
 8. Monitor PostgreSQL readiness, Redis ping status, persistence failures,
@@ -397,8 +400,8 @@ metrics endpoint or distributed backpressure mechanism.
 
 Repository tests cover individual services and gateways, HTTP integration, and
 browser collaboration through a single API process. They do not start multiple
-API processes or exercise Redis ordering, compaction races, restore fencing,
-Redis outage and recovery, or concurrent sandbox operation ordering. The
-multi-replica classifications and limitations in this document are therefore
-derived from the current source paths; these scenarios are not proven safe by
-the current CI suite.
+API processes or verify PostgreSQL advisory locking with a real concurrent
+replica pair, restore fencing, Redis outage and recovery, or concurrent sandbox
+operation ordering. The multi-replica classifications and limitations in this
+document are therefore derived from the current source paths; these scenarios
+are not proven safe by the current CI suite.

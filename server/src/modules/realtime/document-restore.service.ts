@@ -33,9 +33,10 @@ import { DocumentPersistenceService } from './document-persistence.service';
 // notification and mark the tab clean.  The editor content itself updates via
 // the Yjs update above — `document:restored` carries no text.
 //
-// This relies on the same single-server assumption already documented in
-// DocumentPersistenceService (the in-memory seq counter).  Multi-instance
-// restore would additionally need to publish the update/event over Redis.
+// PostgreSQL serializes durable persistence lifecycle operations across
+// processes, but that does not make restore multi-instance safe. A complete
+// design still needs to publish the restore update/event and fence stale Y.Doc
+// writers on every other replica.
 // ---------------------------------------------------------------------------
 
 @Injectable()

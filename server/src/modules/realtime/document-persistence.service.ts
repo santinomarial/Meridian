@@ -50,10 +50,9 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   // each document.  Resets to 0 after each successful compaction.
   private readonly updateCountSinceSnapshot = new Map<string, number>();
 
-  // Last sequence that this process successfully wrote for each document.
-  // Unlike seqMap, this is populated for both Redis and in-memory allocation.
-  // It gives compaction a conservative durable cutoff without assuming that a
-  // Redis-allocated update from another instance is already in local memory.
+  // Last sequence that this process successfully wrote for each document. It
+  // gives local compaction a conservative durable cutoff without assuming that
+  // another instance's update is already in local memory.
   private readonly lastPersistedSeq = new Map<string, number>();
 
   private readonly snapshotEveryN: number;
