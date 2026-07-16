@@ -4,7 +4,6 @@ import type { PinoLogger } from 'nestjs-pino';
 import * as Y from 'yjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
-import { DocumentManagerService } from './document-manager.service';
 import { DocumentPersistenceService } from './document-persistence.service';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 
@@ -12,10 +11,10 @@ import { APP_CONFIG_KEY } from '../../config/app.config';
 // Helpers
 // ---------------------------------------------------------------------------
 
-const NOOP_AGGREGATE = { _max: { seq: null } } as never;
 const NOOP_CREATE = {} as never;
 const NO_SNAPSHOT = null;
 const DEFAULT_THRESHOLD = 100;
+const DEFAULT_GENERATION = 0;
 
 function makeConfigService(snapshotEveryN = DEFAULT_THRESHOLD): ConfigService {
   return {
@@ -41,7 +40,6 @@ function makeRedis(available = false): DeepMockProxy<RedisService> {
 function makeService(
   prisma: DeepMockProxy<PrismaService>,
   logger: DeepMockProxy<PinoLogger>,
-  documentManager: DeepMockProxy<DocumentManagerService>,
   snapshotEveryN = DEFAULT_THRESHOLD,
   redis: DeepMockProxy<RedisService> = makeRedis(false),
 ): DocumentPersistenceService {
@@ -70,15 +68,19 @@ function makeIncrementalUpdates(count: number): Uint8Array[] {
 describe('DocumentPersistenceService', () => {
   let prisma: DeepMockProxy<PrismaService>;
   let logger: DeepMockProxy<PinoLogger>;
-  let documentManager: DeepMockProxy<DocumentManagerService>;
   let service: DocumentPersistenceService;
 
   beforeEach(() => {
     prisma = mockDeep<PrismaService>();
     logger = mockDeep<PinoLogger>();
-    documentManager = mockDeep<DocumentManagerService>();
-    service = makeService(prisma, logger, documentManager);
+    service = makeService(prisma, logger);
     const persistedSeqByDocument = new Map<string, number>();
+
+    // Restore fencing: every write re-reads Document.crdtGeneration under the
+    // advisory lock. Default to generation 0 so normal writes succeed.
+    prisma.document.findUnique.mockResolvedValue({
+      crdtGeneration: DEFAULT_GENERATION,
+    } as never);
 
     // Sensible defaults — emulate the durable high-water mark updated by each
     // insert. This is important now that Redis-less allocation reads PostgreSQL
@@ -113,18 +115,20 @@ describe('DocumentPersistenceService', () => {
 
   describe('seq counter', () => {
     it('assigns seq 0 to the first update when no DB records exist', async () => {
-      service.persistUpdate('doc-1', new Uint8Array([1]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ seq: 0 }) }),
+        expect.objectContaining({
+          data: expect.objectContaining({ seq: 0, generation: DEFAULT_GENERATION }),
+        }),
       );
     });
 
     it('increments seq for each subsequent update within the same document', async () => {
-      service.persistUpdate('doc-1', new Uint8Array([1]));
-      service.persistUpdate('doc-1', new Uint8Array([2]));
-      service.persistUpdate('doc-1', new Uint8Array([3]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
+      service.persistUpdate('doc-1', new Uint8Array([2]), DEFAULT_GENERATION);
+      service.persistUpdate('doc-1', new Uint8Array([3]), DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.create).toHaveBeenCalledTimes(3);
@@ -139,7 +143,7 @@ describe('DocumentPersistenceService', () => {
         { _max: { seq: 7 } } as never,
       );
 
-      service.persistUpdate('doc-1', new Uint8Array([1]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.create).toHaveBeenCalledWith(
@@ -153,7 +157,7 @@ describe('DocumentPersistenceService', () => {
       // restart from 0, which would make them invisible during reconstruction.
       prisma.snapshot.findFirst.mockResolvedValue({ seq: 42 } as never);
 
-      service.persistUpdate('doc-1', new Uint8Array([1]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.create).toHaveBeenCalledWith(
@@ -162,9 +166,9 @@ describe('DocumentPersistenceService', () => {
     });
 
     it('uses independent counters for different documents', async () => {
-      service.persistUpdate('doc-a', new Uint8Array([1]));
-      service.persistUpdate('doc-b', new Uint8Array([2]));
-      service.persistUpdate('doc-a', new Uint8Array([3]));
+      service.persistUpdate('doc-a', new Uint8Array([1]), DEFAULT_GENERATION);
+      service.persistUpdate('doc-b', new Uint8Array([2]), DEFAULT_GENERATION);
+      service.persistUpdate('doc-a', new Uint8Array([3]), DEFAULT_GENERATION);
       await service.flushAll();
 
       const calls = prisma.documentUpdate.create.mock.calls;
@@ -180,8 +184,8 @@ describe('DocumentPersistenceService', () => {
     });
 
     it('reads the DB high-water mark for every Redis-less write', async () => {
-      service.persistUpdate('doc-1', new Uint8Array([1]));
-      service.persistUpdate('doc-1', new Uint8Array([2]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
+      service.persistUpdate('doc-1', new Uint8Array([2]), DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.aggregate).toHaveBeenCalledTimes(2);
@@ -199,13 +203,13 @@ describe('DocumentPersistenceService', () => {
           return Promise.resolve(NOOP_CREATE);
         }) as never,
       );
-      const otherService = makeService(prisma, logger, documentManager);
+      const otherService = makeService(prisma, logger);
 
-      service.persistUpdate('doc-1', new Uint8Array([1]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
-      otherService.persistUpdate('doc-1', new Uint8Array([2]));
+      otherService.persistUpdate('doc-1', new Uint8Array([2]), DEFAULT_GENERATION);
       await otherService.flushDocument('doc-1');
-      service.persistUpdate('doc-1', new Uint8Array([3]));
+      service.persistUpdate('doc-1', new Uint8Array([3]), DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.create.mock.calls.map(
@@ -214,10 +218,48 @@ describe('DocumentPersistenceService', () => {
     });
 
     it('takes the PostgreSQL document lock before allocating and writing', async () => {
-      service.persistUpdate('doc-1', new Uint8Array([1]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
 
       expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── Restore fencing ─────────────────────────────────────────────────────
+
+  describe('restore fencing', () => {
+    it('rejects a write when crdtGeneration mismatches and calls onFenced', async () => {
+      prisma.document.findUnique.mockResolvedValue({
+        crdtGeneration: 2,
+      } as never);
+      const onFenced = jest.fn();
+
+      service.persistUpdate(
+        'doc-1',
+        new Uint8Array([1]),
+        DEFAULT_GENERATION,
+        onFenced,
+      );
+      await service.flushDocument('doc-1');
+
+      expect(prisma.documentUpdate.create).not.toHaveBeenCalled();
+      expect(onFenced).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalled();
+    });
+
+    it('persists when the write generation matches Document.crdtGeneration', async () => {
+      prisma.document.findUnique.mockResolvedValue({
+        crdtGeneration: 3,
+      } as never);
+
+      service.persistUpdate('doc-1', new Uint8Array([1]), 3);
+      await service.flushDocument('doc-1');
+
+      expect(prisma.documentUpdate.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ generation: 3 }),
+        }),
+      );
     });
   });
 
@@ -226,7 +268,7 @@ describe('DocumentPersistenceService', () => {
   describe('update bytes', () => {
     it('persists the exact bytes passed to persistUpdate', async () => {
       const update = new Uint8Array([10, 20, 30, 40]);
-      service.persistUpdate('doc-1', update);
+      service.persistUpdate('doc-1', update, DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.create).toHaveBeenCalledWith(
@@ -243,7 +285,7 @@ describe('DocumentPersistenceService', () => {
     it('does not throw when the DB write fails', async () => {
       prisma.documentUpdate.create.mockRejectedValue(new Error('DB down'));
 
-      service.persistUpdate('doc-1', new Uint8Array([1]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
 
       await expect(service.flushDocument('doc-1')).resolves.toBeUndefined();
     });
@@ -251,7 +293,7 @@ describe('DocumentPersistenceService', () => {
     it('logs the error when a write fails', async () => {
       prisma.documentUpdate.create.mockRejectedValue(new Error('timeout'));
 
-      service.persistUpdate('doc-1', new Uint8Array([1]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
 
       expect(logger.error).toHaveBeenCalled();
@@ -262,8 +304,8 @@ describe('DocumentPersistenceService', () => {
         .mockRejectedValueOnce(new Error('transient'))
         .mockResolvedValue(NOOP_CREATE);
 
-      service.persistUpdate('doc-1', new Uint8Array([1]));
-      service.persistUpdate('doc-1', new Uint8Array([2]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
+      service.persistUpdate('doc-1', new Uint8Array([2]), DEFAULT_GENERATION);
       await service.flushDocument('doc-1');
 
       // Second write must still have been attempted.
@@ -290,7 +332,7 @@ describe('DocumentPersistenceService', () => {
           }) as never,
       );
 
-      service.persistUpdate('doc-1', new Uint8Array([1]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       let flushed = false;
       const flushPromise = service
         .flushDocument('doc-1')
@@ -314,10 +356,10 @@ describe('DocumentPersistenceService', () => {
 
   describe('flushAll', () => {
     it('drains pending writes across all documents', async () => {
-      service.persistUpdate('doc-1', new Uint8Array([1]));
-      service.persistUpdate('doc-2', new Uint8Array([2]));
-      service.persistUpdate('doc-3', new Uint8Array([3]));
-      service.persistUpdate('doc-1', new Uint8Array([4]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
+      service.persistUpdate('doc-2', new Uint8Array([2]), DEFAULT_GENERATION);
+      service.persistUpdate('doc-3', new Uint8Array([3]), DEFAULT_GENERATION);
+      service.persistUpdate('doc-1', new Uint8Array([4]), DEFAULT_GENERATION);
 
       await service.flushAll();
 
@@ -331,7 +373,7 @@ describe('DocumentPersistenceService', () => {
 
   describe('releaseDocument', () => {
     it('evicts all local bookkeeping after the final write settles', async () => {
-      service.persistUpdate('doc-1', new Uint8Array([1]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       expect(service.trackedDocumentCount()).toBe(1);
 
       await expect(service.releaseDocument('doc-1')).resolves.toBe(true);
@@ -347,15 +389,38 @@ describe('DocumentPersistenceService', () => {
         })) as never,
       );
 
-      service.persistUpdate('doc-1', new Uint8Array([1]));
+      service.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       while (releaseFirstWrite === undefined) await Promise.resolve();
       const release = service.releaseDocument('doc-1');
-      service.persistUpdate('doc-1', new Uint8Array([2]));
+      service.persistUpdate('doc-1', new Uint8Array([2]), DEFAULT_GENERATION);
       releaseFirstWrite();
 
       await expect(release).resolves.toBe(false);
       await service.flushDocument('doc-1');
       expect(service.trackedDocumentCount()).toBe(1);
+    });
+  });
+
+  describe('handleGenerationChange', () => {
+    it('clears local bookkeeping and deletes the previous lineage Redis seq key', () => {
+      const redis = makeRedis(true);
+      const svc = makeService(prisma, logger, DEFAULT_THRESHOLD, redis);
+
+      // Seed some local state via a write first.
+      svc.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
+
+      svc.handleGenerationChange('doc-1', 1);
+
+      expect(redis.del).toHaveBeenCalledWith('meridian:doc:doc-1:gen:0:seq');
+    });
+
+    it('does not delete a Redis key when newGeneration is 0', () => {
+      const redis = makeRedis(true);
+      const svc = makeService(prisma, logger, DEFAULT_THRESHOLD, redis);
+
+      svc.handleGenerationChange('doc-1', 0);
+
+      expect(redis.del).not.toHaveBeenCalled();
     });
   });
 
@@ -374,7 +439,7 @@ describe('DocumentPersistenceService', () => {
     }>;
 
     beforeEach(() => {
-      cs = makeService(prisma, logger, documentManager, THRESHOLD);
+      cs = makeService(prisma, logger, THRESHOLD);
       updates = makeIncrementalUpdates(THRESHOLD * 2 + 1);
       durableRows = [];
 
@@ -415,7 +480,7 @@ describe('DocumentPersistenceService', () => {
 
     it('does not compact before the threshold is reached', async () => {
       for (let i = 0; i < THRESHOLD - 1; i++) {
-        cs.persistUpdate('doc-1', updates[i]!);
+        cs.persistUpdate('doc-1', updates[i]!, DEFAULT_GENERATION);
       }
       await cs.flushDocument('doc-1');
 
@@ -426,7 +491,7 @@ describe('DocumentPersistenceService', () => {
 
     it('runs a transaction exactly once when the threshold is hit', async () => {
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', updates[i]!);
+        cs.persistUpdate('doc-1', updates[i]!, DEFAULT_GENERATION);
       }
       await cs.flushDocument('doc-1');
 
@@ -437,7 +502,7 @@ describe('DocumentPersistenceService', () => {
       // With no pre-existing records, writes get seq 0, 1, 2.
       // The snapshot should be stamped with seq 2 (= THRESHOLD - 1).
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', updates[i]!);
+        cs.persistUpdate('doc-1', updates[i]!, DEFAULT_GENERATION);
       }
       await cs.flushDocument('doc-1');
 
@@ -445,6 +510,7 @@ describe('DocumentPersistenceService', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             documentId: 'doc-1',
+            generation: DEFAULT_GENERATION,
             seq: THRESHOLD - 1,
           }),
         }),
@@ -453,25 +519,29 @@ describe('DocumentPersistenceService', () => {
 
     it('deletes all updates up to and including the snapshot seq', async () => {
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', updates[i]!);
+        cs.persistUpdate('doc-1', updates[i]!, DEFAULT_GENERATION);
       }
       await cs.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.deleteMany).toHaveBeenCalledWith({
-        where: { documentId: 'doc-1', seq: { lte: THRESHOLD - 1 } },
+        where: {
+          documentId: 'doc-1',
+          generation: DEFAULT_GENERATION,
+          seq: { lte: THRESHOLD - 1 },
+        },
       });
     });
 
     it('resets the counter so each subsequent N updates triggers another compaction', async () => {
       // First batch → first compaction.
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', updates[i]!);
+        cs.persistUpdate('doc-1', updates[i]!, DEFAULT_GENERATION);
       }
       await cs.flushDocument('doc-1');
 
       // Second batch → second compaction.
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', updates[THRESHOLD + i]!);
+        cs.persistUpdate('doc-1', updates[THRESHOLD + i]!, DEFAULT_GENERATION);
       }
       await cs.flushDocument('doc-1');
 
@@ -482,7 +552,7 @@ describe('DocumentPersistenceService', () => {
       prisma.documentUpdate.findMany.mockResolvedValue([] as never);
 
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', updates[i]!);
+        cs.persistUpdate('doc-1', updates[i]!, DEFAULT_GENERATION);
       }
       await cs.flushDocument('doc-1');
 
@@ -506,10 +576,10 @@ describe('DocumentPersistenceService', () => {
 
       // First batch triggers failed compaction.
       for (let i = 0; i < THRESHOLD; i++) {
-        cs.persistUpdate('doc-1', updates[i]!);
+        cs.persistUpdate('doc-1', updates[i]!, DEFAULT_GENERATION);
       }
       // Second batch — these must still persist despite the earlier failure.
-      cs.persistUpdate('doc-1', updates[THRESHOLD]!);
+      cs.persistUpdate('doc-1', updates[THRESHOLD]!, DEFAULT_GENERATION);
       await cs.flushDocument('doc-1');
 
       expect(prisma.documentUpdate.create).toHaveBeenCalledTimes(THRESHOLD + 1);
@@ -519,15 +589,15 @@ describe('DocumentPersistenceService', () => {
   // ── Shared (Redis) seq counter ──────────────────────────────────────────────
 
   describe('shared seq counter (Redis available)', () => {
-    const KEY = 'meridian:doc:doc-1:seq';
+    const KEY = 'meridian:doc:doc-1:gen:0:seq';
 
     it('allocates seq from Redis, seeded by the DB high-water mark', async () => {
       const redis = makeRedis(true);
       redis.allocateSeq.mockResolvedValue(43);
       prisma.documentUpdate.aggregate.mockResolvedValue({ _max: { seq: 42 } } as never);
-      const svc = makeService(prisma, logger, documentManager, DEFAULT_THRESHOLD, redis);
+      const svc = makeService(prisma, logger, DEFAULT_THRESHOLD, redis);
 
-      svc.persistUpdate('doc-1', new Uint8Array([1]));
+      svc.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       await svc.flushDocument('doc-1');
 
       expect(redis.allocateSeq).toHaveBeenCalledWith(KEY, 42);
@@ -540,10 +610,10 @@ describe('DocumentPersistenceService', () => {
       const redis = makeRedis(true);
       redis.allocateSeq.mockResolvedValue(0); // first (seeded) allocation
       redis.incr.mockResolvedValue(1); // subsequent allocations
-      const svc = makeService(prisma, logger, documentManager, DEFAULT_THRESHOLD, redis);
+      const svc = makeService(prisma, logger, DEFAULT_THRESHOLD, redis);
 
-      svc.persistUpdate('doc-1', new Uint8Array([1]));
-      svc.persistUpdate('doc-1', new Uint8Array([2]));
+      svc.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
+      svc.persistUpdate('doc-1', new Uint8Array([2]), DEFAULT_GENERATION);
       await svc.flushDocument('doc-1');
 
       expect(redis.allocateSeq).toHaveBeenCalledTimes(1);
@@ -555,9 +625,9 @@ describe('DocumentPersistenceService', () => {
       const redis = makeRedis(true);
       redis.allocateSeq.mockResolvedValue(null); // Redis error/miss
       prisma.documentUpdate.aggregate.mockResolvedValue({ _max: { seq: null } } as never);
-      const svc = makeService(prisma, logger, documentManager, DEFAULT_THRESHOLD, redis);
+      const svc = makeService(prisma, logger, DEFAULT_THRESHOLD, redis);
 
-      svc.persistUpdate('doc-1', new Uint8Array([1]));
+      svc.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION);
       await svc.flushDocument('doc-1');
 
       expect(redis.allocateSeq).toHaveBeenCalled();
@@ -567,12 +637,11 @@ describe('DocumentPersistenceService', () => {
       );
     });
 
-    it('clears the Redis counter on resetDocument', async () => {
+    it('clears the previous lineage Redis counter on handleGenerationChange', () => {
       const redis = makeRedis(true);
-      const svc = makeService(prisma, logger, documentManager, DEFAULT_THRESHOLD, redis);
-      prisma.$transaction.mockResolvedValue(undefined as never);
+      const svc = makeService(prisma, logger, DEFAULT_THRESHOLD, redis);
 
-      await svc.resetDocument('doc-1', null);
+      svc.handleGenerationChange('doc-1', 1);
 
       expect(redis.del).toHaveBeenCalledWith(KEY);
     });
@@ -605,14 +674,20 @@ describe('DocumentPersistenceService', () => {
       prisma.snapshot.create.mockResolvedValue({ id: 'snapshot-12' } as never);
       prisma.snapshot.deleteMany.mockResolvedValue({ count: 0 } as never);
       prisma.documentUpdate.deleteMany.mockResolvedValue({ count: 3 } as never);
-      const svc = makeService(prisma, logger, documentManager, 3, redis);
+      const svc = makeService(prisma, logger, 3, redis);
 
-      for (const update of updates) svc.persistUpdate('doc-1', update);
+      for (const update of updates) {
+        svc.persistUpdate('doc-1', update, DEFAULT_GENERATION);
+      }
       await svc.flushDocument('doc-1');
 
       expect(prisma.snapshot.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ documentId: 'doc-1', seq: 12 }),
+          data: expect.objectContaining({
+            documentId: 'doc-1',
+            generation: DEFAULT_GENERATION,
+            seq: 12,
+          }),
         }),
       );
     });
