@@ -13,7 +13,7 @@ export function PasswordStrength({ password }: { password: string }) {
             key={seg}
             className={[
               "h-1 flex-grow rounded-full transition-all",
-              seg <= score ? "bg-primary" : "bg-outline-variant",
+              seg <= score ? "bg-secondary" : "bg-outline-variant",
             ].join(" ")}
           />
         ))}
@@ -24,7 +24,7 @@ export function PasswordStrength({ password }: { password: string }) {
             key={req.label}
             className={[
               "flex items-center gap-1.5 text-[11px]",
-              req.met ? "text-primary" : "text-on-surface-variant",
+              req.met ? "text-secondary" : "text-on-surface-variant",
             ].join(" ")}
           >
             <MaterialIcon

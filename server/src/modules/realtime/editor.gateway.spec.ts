@@ -95,6 +95,13 @@ function makeGateway(opts?: { wsLimit?: number; maxBytes?: number }) {
     role: WorkspaceRole.EDITOR,
   });
   workspaces.getMemberRole.mockResolvedValue(WorkspaceRole.EDITOR);
+  documentManager.getGeneration.mockReturnValue(0);
+  persistence.persistUpdate.mockResolvedValue({
+    status: 'committed',
+    seq: 1,
+    updateId: 'upd-default',
+    generation: 0,
+  });
 
   configService.getOrThrow.mockReturnValue({
     wsMessageLimitPerSecond: opts?.wsLimit ?? DEFAULT_WS_LIMIT,
@@ -126,6 +133,8 @@ function makeGateway(opts?: { wsLimit?: number; maxBytes?: number }) {
     jwtService,
     workspaces,
     documentManager,
+    persistence,
+    documentRestore,
     server,
     rateLimiter,
     realtimeAuthorization,
@@ -469,7 +478,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     socket.to.mockReturnValue({ emit: jest.fn() } as never);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', update: new Uint8Array(10) },
+      { documentId: 'doc-1', updateId: 'upd-test-1', update: new Uint8Array(10) },
       socket,
     );
 
@@ -485,6 +494,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
       data: {
         user: AUTH_USER,
         documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+        documentGenerations: { 'doc-1': 0 },
       },
       rooms: ['document:doc-1'],
     });
@@ -494,7 +504,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', update: new Uint8Array(10) },
+      { documentId: 'doc-1', updateId: 'upd-test-2', update: new Uint8Array(10) },
       socket,
     );
 
@@ -511,6 +521,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
       data: {
         user: AUTH_USER,
         documentRoles: { 'doc-1': WorkspaceRole.OWNER },
+        documentGenerations: { 'doc-1': 0 },
       },
       rooms: ['document:doc-1'],
     });
@@ -520,11 +531,39 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', update: new Uint8Array(10) },
+      { documentId: 'doc-1', updateId: 'upd-test-3', update: new Uint8Array(10) },
       socket,
     );
 
     expect(documentManager.applyUpdate).toHaveBeenCalled();
+  });
+
+  it('drops a yjs:update from a stale CRDT generation and tells the client to resync', async () => {
+    const { gateway, documentManager, persistence } = makeGateway();
+    documentManager.hasDocument.mockReturnValue(true);
+    documentManager.getGeneration.mockReturnValue(2);
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+        // Socket still thinks it is on generation 1 after a restore bumped to 2.
+        documentGenerations: { 'doc-1': 1 },
+      },
+      rooms: ['document:doc-1'],
+    });
+    socket.to.mockReturnValue({ emit: jest.fn() } as never);
+
+    await gateway.handleYjsUpdate(
+      { documentId: 'doc-1', updateId: 'upd-test-4', update: new Uint8Array(10) },
+      socket,
+    );
+
+    expect(documentManager.applyUpdate).not.toHaveBeenCalled();
+    expect(persistence.persistUpdate).not.toHaveBeenCalled();
+    expect(socket.emit).toHaveBeenCalledWith('document:restored', {
+      documentId: 'doc-1',
+      generation: 2,
+    });
   });
 
   it('rejects an authenticated socket that never joined the target document', async () => {
@@ -533,7 +572,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     documentManager.hasDocument.mockReturnValue(true);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'another-users-loaded-doc', update: new Uint8Array(10) },
+      { documentId: 'another-users-loaded-doc', updateId: 'upd-test-5', update: new Uint8Array(10) },
       socket,
     );
 
@@ -555,7 +594,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     documentManager.hasDocument.mockReturnValue(true);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', update: new Uint8Array(10) },
+      { documentId: 'doc-1', updateId: 'upd-test-6', update: new Uint8Array(10) },
       socket,
     );
 
@@ -672,6 +711,7 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
       data: {
         user: AUTH_USER,
         documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+        documentGenerations: { 'doc-1': 0 },
       },
       rooms: ['document:doc-1'],
     });
@@ -685,7 +725,7 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
     const socket = makeAuthenticatedSocket();
 
     const oversized = new Uint8Array(maxBytes + 1);
-    await gateway.handleYjsUpdate({ documentId: 'doc-1', update: oversized }, socket);
+    await gateway.handleYjsUpdate({ documentId: 'doc-1', updateId: 'upd-test-7', update: oversized }, socket);
 
     expect(socket.emit).toHaveBeenCalledWith(
       'error',
@@ -700,7 +740,7 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
     const socket = makeAuthenticatedSocket();
 
     const oversized = new Uint8Array(maxBytes + 1);
-    await gateway.handleYjsUpdate({ documentId: 'doc-1', update: oversized }, socket);
+    await gateway.handleYjsUpdate({ documentId: 'doc-1', updateId: 'upd-test-8', update: oversized }, socket);
 
     expect(documentManager.applyUpdate).not.toHaveBeenCalled();
   });
@@ -714,7 +754,7 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
     const exactly = new Uint8Array(maxBytes);
-    await gateway.handleYjsUpdate({ documentId: 'doc-1', update: exactly }, socket);
+    await gateway.handleYjsUpdate({ documentId: 'doc-1', updateId: 'upd-test-9', update: exactly }, socket);
 
     expect(documentManager.applyUpdate).toHaveBeenCalledWith('doc-1', exactly);
   });
@@ -732,6 +772,7 @@ describe('EditorGateway — WebSocket rate limiting', () => {
       data: {
         user: AUTH_USER,
         documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+        documentGenerations: { 'doc-1': 0 },
       },
       rooms: ['document:doc-1'],
     });
@@ -744,14 +785,14 @@ describe('EditorGateway — WebSocket rate limiting', () => {
     // First 3 calls should pass
     for (let i = 0; i < wsLimit; i++) {
       await gateway.handleYjsUpdate(
-        { documentId: 'doc-1', update: smallUpdate },
+        { documentId: 'doc-1', updateId: 'upd-test-10', update: smallUpdate },
         socket,
       );
     }
 
     // The 4th call exceeds the limit
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', update: smallUpdate },
+      { documentId: 'doc-1', updateId: 'upd-test-11', update: smallUpdate },
       socket,
     );
 
@@ -782,7 +823,7 @@ describe('EditorGateway — live authorization revocation', () => {
     });
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', update: new Uint8Array(10) },
+      { documentId: 'doc-1', updateId: 'upd-test-12', update: new Uint8Array(10) },
       socket,
     );
 
@@ -806,7 +847,7 @@ describe('EditorGateway — live authorization revocation', () => {
     });
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', update: new Uint8Array(10) },
+      { documentId: 'doc-1', updateId: 'upd-test-13', update: new Uint8Array(10) },
       socket,
     );
 
@@ -864,5 +905,122 @@ describe('EditorGateway — live authorization revocation', () => {
 describe('WorkspacesService.createWorkspace (owner membership)', () => {
   it('tests delegated to workspaces.service.spec.ts', () => {
     expect(true).toBe(true);
+  });
+});
+
+
+describe('EditorGateway.handleYjsUpdate — durable ack', () => {
+  it('emits yjs:ack only after a committed persist', async () => {
+    const { gateway, documentManager, persistence } = makeGateway();
+    persistence.persistUpdate.mockResolvedValue({
+      status: 'committed',
+      seq: 42,
+      updateId: 'client-upd-1',
+      generation: 0,
+    });
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+        documentGenerations: { 'doc-1': 0 },
+      },
+      rooms: ['document:doc-1'],
+    });
+    socket.to.mockReturnValue({ emit: jest.fn() } as never);
+    documentManager.hasDocument.mockReturnValue(true);
+
+    await gateway.handleYjsUpdate(
+      {
+        documentId: 'doc-1',
+        updateId: 'client-upd-1',
+        update: new Uint8Array(10),
+      },
+      socket,
+    );
+
+    expect(persistence.persistUpdate).toHaveBeenCalledWith(
+      'doc-1',
+      expect.any(Uint8Array),
+      0,
+      'client-upd-1',
+    );
+    expect(socket.emit).toHaveBeenCalledWith('yjs:ack', {
+      documentId: 'doc-1',
+      updateId: 'client-upd-1',
+      generation: 0,
+      seq: 42,
+    });
+  });
+
+  it('does not emit yjs:ack when persist is fenced', async () => {
+    const { gateway, documentManager, persistence, documentRestore } = makeGateway();
+    persistence.persistUpdate.mockResolvedValue({ status: 'fenced' });
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+        documentGenerations: { 'doc-1': 0 },
+      },
+      rooms: ['document:doc-1'],
+    });
+    socket.to.mockReturnValue({ emit: jest.fn() } as never);
+    documentManager.hasDocument.mockReturnValue(true);
+    // First read: inbound generation check (must match joined). Later read:
+    // generation reported on document:restored after the durable fence.
+    documentManager.getGeneration
+      .mockReturnValueOnce(0)
+      .mockReturnValue(1);
+
+    await gateway.handleYjsUpdate(
+      {
+        documentId: 'doc-1',
+        updateId: 'client-upd-2',
+        update: new Uint8Array(10),
+      },
+      socket,
+    );
+
+    expect(socket.emit).not.toHaveBeenCalledWith(
+      'yjs:ack',
+      expect.anything(),
+    );
+    expect(documentRestore.resyncFromDatabase).toHaveBeenCalledWith('doc-1');
+  });
+
+  it('emits yjs:nack when persist fails', async () => {
+    const { gateway, documentManager, persistence } = makeGateway();
+    persistence.persistUpdate.mockResolvedValue({
+      status: 'failed',
+      error: new Error('db'),
+    });
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+        documentGenerations: { 'doc-1': 0 },
+      },
+      rooms: ['document:doc-1'],
+    });
+    socket.to.mockReturnValue({ emit: jest.fn() } as never);
+    documentManager.hasDocument.mockReturnValue(true);
+
+    await gateway.handleYjsUpdate(
+      {
+        documentId: 'doc-1',
+        updateId: 'client-upd-3',
+        update: new Uint8Array(10),
+      },
+      socket,
+    );
+
+    expect(socket.emit).toHaveBeenCalledWith('yjs:nack', {
+      documentId: 'doc-1',
+      updateId: 'client-upd-3',
+      reason: 'persist_failed',
+    });
+    expect(socket.emit).not.toHaveBeenCalledWith(
+      'yjs:ack',
+      expect.anything(),
+    );
   });
 });

@@ -72,7 +72,9 @@ model WorkspaceMember {
 
 model Invite {
   id          String        @id @default(cuid())
-  token       String        @unique
+  // SHA-256 hex of the bearer token. The raw token is shown once at creation
+  // and never stored; accepts hash the path parameter for lookup.
+  tokenHash   String        @unique
   workspaceId String
   invitedById String
   email       String?
@@ -148,11 +150,16 @@ model DocumentUpdate {
   // and cold loads are always scoped to the current lineage.
   generation Int      @default(0)
   seq        Int
+  // Client-generated idempotency key for durable collaboration acks.
+  // Null only on rows written before durable acks existed; new writes always
+  // set this. Unique per lineage so a resent update cannot double-persist.
+  updateId   String?
   createdAt  DateTime @default(now())
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([documentId, generation, seq])
+  @@unique([documentId, generation, updateId])
   @@index([documentId, generation, seq])
 }
 

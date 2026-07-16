@@ -155,7 +155,11 @@ export class DocumentsController {
   }
 
   @Patch('documents/:documentId')
-  @ApiOperation({ summary: 'Update document content or metadata' })
+  @ApiOperation({
+    summary: 'Update document metadata (name, path, language, parent)',
+    description:
+      'Does not accept content. POST /documents/:documentId/checkpoint to project durable collaborative text into Document.content.',
+  })
   @ApiParam({ name: 'documentId', description: 'Document cuid' })
   @ApiOkResponse({ description: 'The updated document' })
   @ApiNotFoundResponse({ description: 'Document not found' })
@@ -167,15 +171,39 @@ export class DocumentsController {
     const before = await this.requireDocumentWriteAccess(user, documentId);
     const updated = await this.documentsService.patchDocument(documentId, dto, user.id);
 
-    // Mirror the change into any active terminal sandbox (best-effort). Order
-    // matters: rename the file/folder first, then write fresh content.
+    // Mirror the change into any active terminal sandbox (best-effort).
     if (updated.path !== before.path) {
       await this.sandbox.syncRename(updated.workspaceId, before.path, updated.path);
     }
-    if (updated.type === DocumentType.FILE && dto.content !== undefined && dto.content !== null) {
-      await this.sandbox.syncWriteFile(updated.workspaceId, updated.path, dto.content);
-    }
     return updated;
+  }
+
+  @Post('documents/:documentId/checkpoint')
+  @ApiOperation({
+    summary:
+      'Checkpoint durable collaborative text into Document.content and create a version when it changed',
+  })
+  @ApiParam({ name: 'documentId', description: 'Document cuid' })
+  @ApiOkResponse({ description: 'The checkpointed document and whether a version was created' })
+  @ApiNotFoundResponse({ description: 'Document not found' })
+  async checkpointDocument(
+    @CurrentUser() user: AuthUser,
+    @Param('documentId') documentId: string,
+  ) {
+    const before = await this.requireDocumentWriteAccess(user, documentId);
+    const result = await this.documentsService.checkpointDocument(
+      documentId,
+      user.id,
+    );
+
+    if (before.type === DocumentType.FILE) {
+      await this.sandbox.syncWriteFile(
+        result.document.workspaceId,
+        result.document.path,
+        result.content,
+      );
+    }
+    return result;
   }
 
   @Delete('documents/:documentId')

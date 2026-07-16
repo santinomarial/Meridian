@@ -20,7 +20,7 @@ const AUTH_USER: AuthUser = {
 
 const INVITE: Invite = {
   id: 'invite-1',
-  token: 'bearer-invite-token',
+  tokenHash: 'abc123hash',
   workspaceId: 'ws-1',
   invitedById: 'owner-1',
   email: 'guest@example.com',
@@ -68,7 +68,7 @@ describe('InvitesController.listInvites', () => {
   });
 
   it.each([WorkspaceRole.VIEWER, WorkspaceRole.EDITOR])(
-    'does not expose bearer invite tokens to a %s',
+    'does not expose invite metadata to a %s',
     async (role) => {
       const { controller, invitesService, workspacesService } = makeController();
       workspacesService.getMemberRole.mockResolvedValue(role);
@@ -80,16 +80,21 @@ describe('InvitesController.listInvites', () => {
     },
   );
 
-  it('lets an owner list invites and their shareable URLs', async () => {
+  it('lets an owner list invite metadata without raw tokens', async () => {
     const { controller, invitesService, workspacesService } = makeController();
     workspacesService.getMemberRole.mockResolvedValue(WorkspaceRole.OWNER);
     invitesService.listForWorkspace.mockResolvedValue([INVITE]);
 
     await expect(controller.listInvites(AUTH_USER, 'ws-1')).resolves.toEqual([
-      expect.objectContaining({
-        token: INVITE.token,
-        inviteUrl: `http://localhost:5173/invite/${INVITE.token}`,
-      }),
+      {
+        id: INVITE.id,
+        workspaceId: INVITE.workspaceId,
+        role: INVITE.role,
+        email: INVITE.email,
+        expiresAt: INVITE.expiresAt,
+        acceptedAt: INVITE.acceptedAt,
+        createdAt: INVITE.createdAt,
+      },
     ]);
   });
 });

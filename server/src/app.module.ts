@@ -18,9 +18,11 @@ import { DocumentsModule } from './documents/documents.module';
 import { InvitesModule } from './invites/invites.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { TerminalModule } from './modules/terminal/terminal.module';
+import { MetricsModule } from './common/metrics/metrics.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { E2eController } from './e2e/e2e.controller';
+import { RetentionService } from './common/retention/retention.service';
 
 @Module({
   imports: [
@@ -65,6 +67,7 @@ import { E2eController } from './e2e/e2e.controller';
     }),
     PrismaModule,
     RedisModule,
+    MetricsModule,
     AuthModule,
     UsersModule,
     WorkspacesModule,
@@ -76,6 +79,7 @@ import { E2eController } from './e2e/e2e.controller';
   controllers: [AppController, E2eController],
   providers: [
     AppService,
+    RetentionService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     {
       provide: APP_FILTER,

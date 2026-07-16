@@ -114,15 +114,22 @@ export interface ApiInvite {
   email: string | null;
   expiresAt: string;
   inviteUrl: string;
+  /** Present when an email was requested. */
+  emailDelivered?: boolean;
+  /** Set when the mail provider did not deliver — share this (or `inviteUrl`) manually. */
+  previewInviteUrl?: string;
+  /** Why delivery failed, when `emailDelivered` is false. */
+  emailError?: string;
 }
 
 export interface ApiInviteDetails {
-  token: string;
   workspaceName: string;
   role: ApiWorkspaceRole;
   invitedByName: string;
+  email: string | null;
   expiresAt: string;
   expired: boolean;
+  used: boolean;
 }
 
 export interface AcceptInviteResponse {

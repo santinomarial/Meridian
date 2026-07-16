@@ -69,6 +69,10 @@ export class TerminalService implements OnModuleDestroy {
     return this.sessions.has(socketId);
   }
 
+  sessionCount(): number {
+    return this.sessions.size;
+  }
+
   getSession(socketId: string): TerminalSession | undefined {
     return this.sessions.get(socketId);
   }
@@ -154,12 +158,8 @@ export class TerminalService implements OnModuleDestroy {
     this.sessions.set(socketId, session);
     resetIdle(); // start the real idle timer
 
-    // Register the sandbox so subsequent editor edits sync into it, and tell
-    // the client a welcome banner + that the projection is in sync.
+    // Register the sandbox so subsequent editor edits sync into it.
     this.sandbox.registerActive(socketId, workspaceId, userId, sandboxDir, socket);
-    socket.emit('terminal:output', {
-      data: `\x1b[2m[Meridian] terminal started in workspace sandbox: ${sandboxDir}\x1b[0m\r\n`,
-    });
     socket.emit('terminal:sync', { status: 'synced' });
 
     this.logger.info({ socketId, userId, workspaceId, sandboxDir }, 'Terminal session started');

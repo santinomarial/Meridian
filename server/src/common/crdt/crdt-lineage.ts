@@ -68,3 +68,48 @@ export function encodeSeededState(
     doc.destroy();
   }
 }
+
+/**
+ * Projects the plain-text content of one CRDT generation from durable
+ * Snapshot + DocumentUpdate rows. Returns `null` when that generation has no
+ * history yet (bootstrap — callers use Document.content until the first seed).
+ *
+ * Does not read or write Document.content; the CRDT rows are the authority.
+ */
+export async function projectCrdtText(
+  tx: Prisma.TransactionClient,
+  documentId: string,
+  generation: number,
+): Promise<string | null> {
+  const snapshot = await tx.snapshot.findFirst({
+    where: { documentId, generation },
+    orderBy: { seq: 'desc' },
+    select: { seq: true, state: true },
+  });
+  const updates = await tx.documentUpdate.findMany({
+    where: {
+      documentId,
+      generation,
+      seq: { gt: snapshot?.seq ?? -1 },
+    },
+    orderBy: { seq: 'asc' },
+    select: { update: true },
+  });
+
+  if (snapshot === null && updates.length === 0) {
+    return null;
+  }
+
+  const doc = new Y.Doc();
+  try {
+    if (snapshot !== null) {
+      Y.applyUpdate(doc, new Uint8Array(snapshot.state));
+    }
+    for (const row of updates) {
+      Y.applyUpdate(doc, new Uint8Array(row.update));
+    }
+    return doc.getText('content').toString();
+  } finally {
+    doc.destroy();
+  }
+}

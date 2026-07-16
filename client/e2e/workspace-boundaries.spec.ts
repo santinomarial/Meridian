@@ -92,12 +92,13 @@ test("invite acceptance opens the workspace returned by the backend", async ({ p
 
     if (request.method() === "GET" && path === `/invites/${inviteId}`) {
       await fulfillJson(route, {
-        token: inviteId,
         workspaceName: "Invited Workspace",
         role: "EDITOR",
         invitedByName: "Workspace Owner",
+        email: null,
         expiresAt: "2027-01-01T00:00:00.000Z",
         expired: false,
+        used: false,
       });
       return;
     }

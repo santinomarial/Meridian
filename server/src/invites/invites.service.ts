@@ -1,5 +1,6 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
+  ForbiddenException,
   GoneException,
   Injectable,
   NotFoundException,
@@ -22,6 +23,12 @@ export type InviteWithContext = Invite & {
   invitedBy: { id: string; displayName: string };
 };
 
+export interface CreatedInvite {
+  invite: Invite;
+  /** Raw bearer token — returned once; only the hash is stored. */
+  token: string;
+}
+
 export interface AcceptInviteResult {
   workspaceId: string;
   workspaceName: string;
@@ -30,27 +37,33 @@ export interface AcceptInviteResult {
   alreadyMember: boolean;
 }
 
+function hashInviteToken(rawToken: string): string {
+  return createHash('sha256').update(rawToken).digest('hex');
+}
+
 @Injectable()
 export class InvitesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async createInvite(data: CreateInviteData): Promise<Invite> {
+  async createInvite(data: CreateInviteData): Promise<CreatedInvite> {
+    const token = randomBytes(24).toString('base64url');
     const expiresAt = new Date(Date.now() + INVITE_TTL_DAYS * 86_400_000);
-    return this.prisma.invite.create({
+    const invite = await this.prisma.invite.create({
       data: {
-        token: randomBytes(24).toString('base64url'),
+        tokenHash: hashInviteToken(token),
         workspaceId: data.workspaceId,
         invitedById: data.invitedById,
         role: data.role,
-        email: data.email,
+        email: data.email?.trim().toLowerCase() || undefined,
         expiresAt,
       },
     });
+    return { invite, token };
   }
 
   async findByToken(token: string): Promise<InviteWithContext | null> {
     return this.prisma.invite.findUnique({
-      where: { token },
+      where: { tokenHash: hashInviteToken(token) },
       include: {
         workspace: { select: { id: true, name: true } },
         invitedBy: { select: { id: true, displayName: true } },
@@ -59,18 +72,32 @@ export class InvitesService {
   }
 
   /**
-   * Accepts an invite for the given user: validates the token, then adds the
-   * user as a workspace member with the invite's role. Accepting twice (or
-   * accepting an invite to a workspace the user already belongs to) is a
-   * no-op that still succeeds, so shared invite links work for whole teams.
+   * Accepts an invite for the given user. Invites are single-use: once
+   * `acceptedAt` is set the token cannot be redeemed again. When the invite
+   * carries an email, only that account may accept.
    */
-  async acceptInvite(token: string, userId: string): Promise<AcceptInviteResult> {
+  async acceptInvite(
+    token: string,
+    userId: string,
+    userEmail: string,
+  ): Promise<AcceptInviteResult> {
     const invite = await this.findByToken(token);
     if (invite === null) {
       throw new NotFoundException('Invite not found');
     }
     if (invite.expiresAt < new Date()) {
       throw new GoneException('This invite has expired');
+    }
+    if (invite.acceptedAt !== null) {
+      throw new GoneException('This invite has already been used');
+    }
+    if (
+      invite.email !== null &&
+      invite.email.toLowerCase() !== userEmail.trim().toLowerCase()
+    ) {
+      throw new ForbiddenException(
+        'This invite was sent to a different email address',
+      );
     }
 
     const existing = await this.prisma.workspaceMember.findUnique({
@@ -89,12 +116,10 @@ export class InvitesService {
         },
       }));
 
-    if (invite.acceptedAt === null) {
-      await this.prisma.invite.update({
-        where: { id: invite.id },
-        data: { acceptedAt: new Date() },
-      });
-    }
+    await this.prisma.invite.update({
+      where: { id: invite.id },
+      data: { acceptedAt: new Date() },
+    });
 
     return {
       workspaceId: invite.workspaceId,

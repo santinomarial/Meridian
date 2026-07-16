@@ -50,6 +50,7 @@ import {
   SOCKET_SESSION_JTI,
   type RealtimeAuthorizationInvalidation,
 } from '../realtime-authorization/realtime-authorization.service';
+import { colorForUser } from '../../common/collab/collab-colors';
 
 const AUTHORIZATION_SWEEP_MS = 10_000;
 const AUTHORIZATION_EVENT_CACHE_MS = 1_000;
@@ -64,6 +65,11 @@ interface CrossInstanceUpdate {
   // CRDT generation the update belongs to — receivers drop updates for a
   // lineage they are not (or no longer) serving.
   generation: number;
+  // Durable sequence number assigned at PostgreSQL commit. Receivers use this
+  // to detect gaps and catch up from the database when a Redis message was
+  // missed.
+  seq: number;
+  updateId: string;
   update: string; // base64-encoded Yjs update bytes
 }
 
@@ -112,6 +118,15 @@ export class EditorGateway
   private readonly wsMessageLimit: number;
   private readonly wsMaxUpdateBytes: number;
   private readonly connectedClients = new Map<string, Socket>();
+  /**
+   * Highest committed DocumentUpdate.seq applied on this replica for each
+   * document lineage. Generation-tagged so a restore cannot treat a new
+   * lineage's early seq as a duplicate of the previous lineage's high-water mark.
+   */
+  private readonly lastCommittedSeq = new Map<
+    string,
+    { generation: number; seq: number }
+  >();
   private readonly unsubscribeAuthorization: () => void;
   private authorizationSweep: NodeJS.Timeout | undefined;
   private authorizationSweepRunning = false;
@@ -658,26 +673,78 @@ export class EditorGateway
 
     this.documentManager.applyUpdate(dto.documentId, update);
 
+    // Local sticky-session peers get the update immediately for low latency.
+    // Cross-replica peers and the durable ack wait for PostgreSQL commit below.
     client.to(`document:${dto.documentId}`).emit('yjs:update', {
       documentId: dto.documentId,
       update,
     });
 
-    this.persistence.persistUpdate(
+    const result = await this.persistence.persistUpdate(
       dto.documentId,
       update,
       currentGeneration,
-      // A fenced write means a restore raced this update between the gateway
-      // check above and the durable transaction. Resync this replica now
-      // rather than waiting for the control event or the periodic audit.
-      () => void this.documentRestore.resyncFromDatabase(dto.documentId),
+      dto.updateId,
     );
 
-    void this.publishYjsUpdate(dto.documentId, update, currentGeneration);
+    if (result.status === 'fenced') {
+      this.logger.warn(
+        { documentId: dto.documentId, updateId: dto.updateId },
+        'Yjs update fenced by restore — resyncing replica and client',
+      );
+      void this.documentRestore.resyncFromDatabase(dto.documentId);
+      client.emit('document:restored', {
+        documentId: dto.documentId,
+        generation:
+          this.documentManager.getGeneration(dto.documentId) ?? currentGeneration,
+      });
+      return;
+    }
+
+    if (result.status === 'failed') {
+      this.logger.error(
+        { documentId: dto.documentId, updateId: dto.updateId },
+        'Yjs update persistence failed — client keeps update queued for resend',
+      );
+      client.emit('yjs:nack', {
+        documentId: dto.documentId,
+        updateId: dto.updateId,
+        reason: 'persist_failed',
+      });
+      return;
+    }
+
+    this.lastCommittedSeq.set(dto.documentId, {
+      generation: currentGeneration,
+      seq: result.seq,
+    });
+
+    // Ack only after PostgreSQL commit — client may drop its outbound queue entry.
+    client.emit('yjs:ack', {
+      documentId: dto.documentId,
+      updateId: dto.updateId,
+      generation: currentGeneration,
+      seq: result.seq,
+    });
+
+    // Publish to other replicas only after commit so Redis is never ahead of PG.
+    void this.publishYjsUpdate(
+      dto.documentId,
+      update,
+      currentGeneration,
+      result.seq,
+      dto.updateId,
+    );
 
     this.logger.debug(
-      { socketId: client.id, documentId: dto.documentId, bytes: update.byteLength },
-      'Yjs update relayed',
+      {
+        socketId: client.id,
+        documentId: dto.documentId,
+        updateId: dto.updateId,
+        seq: result.seq,
+        bytes: update.byteLength,
+      },
+      'Yjs update committed and relayed',
     );
   }
 
@@ -739,12 +806,30 @@ export class EditorGateway
 
     awarenessProtocol.applyAwarenessUpdate(awareness, update, client.id);
 
+    // Overwrite client-asserted display identity with the authenticated user
+    // before relaying. Peers must never see a spoofed name/id/color.
+    const authUser = client.data['user'] as AuthUser;
+    const ownedIds = [...tracked];
+    for (const clientId of ownedIds) {
+      const state = awareness.getStates().get(clientId);
+      if (state === undefined) continue;
+      state['user'] = {
+        id: authUser.id,
+        name: authUser.displayName,
+        color: colorForUser(authUser.id),
+      };
+    }
+    const relayUpdate =
+      ownedIds.length > 0
+        ? awarenessProtocol.encodeAwarenessUpdate(awareness, ownedIds)
+        : update;
+
     client.to(`document:${dto.documentId}`).emit('awareness:update', {
       documentId: dto.documentId,
-      update,
+      update: relayUpdate,
     });
 
-    void this.publishAwareness(dto.documentId, update);
+    void this.publishAwareness(dto.documentId, relayUpdate);
   }
 
   // ---------------------------------------------------------------------------
@@ -777,20 +862,100 @@ export class EditorGateway
       return;
     }
 
-    try {
-      const update = Buffer.from(payload.update, 'base64');
-      this.documentManager.applyUpdate(payload.documentId, update);
+    void this.applyCommittedRemoteUpdate(payload);
+  }
 
-      this.server.to(`document:${payload.documentId}`).emit('yjs:update', {
-        documentId: payload.documentId,
+  /**
+   * Apply a post-commit Redis update, catching up from PostgreSQL if this
+   * replica missed intermediate sequence numbers.
+   */
+  private async applyCommittedRemoteUpdate(
+    payload: CrossInstanceUpdate,
+  ): Promise<void> {
+    const documentId = payload.documentId;
+    const tracked = this.lastCommittedSeq.get(documentId);
+    const lastSeq =
+      tracked !== undefined && tracked.generation === payload.generation
+        ? tracked.seq
+        : -1;
+
+    if (payload.seq <= lastSeq) {
+      // Already applied (duplicate Redis delivery or catch-up already covered it).
+      return;
+    }
+
+    try {
+      if (payload.seq > lastSeq + 1) {
+        this.logger.warn(
+          { documentId, lastSeq, incomingSeq: payload.seq },
+          'Redis sequence gap detected — catching up from PostgreSQL',
+        );
+        const missing = await this.persistence.fetchUpdatesAfter(
+          documentId,
+          payload.generation,
+          lastSeq,
+        );
+        for (const row of missing) {
+          if (row.seq > payload.seq) break;
+          this.documentManager.applyUpdate(documentId, new Uint8Array(row.update));
+          this.server.to(`document:${documentId}`).emit('yjs:update', {
+            documentId,
+            update: row.update,
+          });
+          this.lastCommittedSeq.set(documentId, {
+            generation: payload.generation,
+            seq: row.seq,
+          });
+        }
+      }
+
+      // If catch-up already applied this seq (it was in the DB batch), skip.
+      const after = this.lastCommittedSeq.get(documentId);
+      const afterCatchUp =
+        after !== undefined && after.generation === payload.generation
+          ? after.seq
+          : -1;
+      if (payload.seq <= afterCatchUp) {
+        return;
+      }
+
+      const update = Buffer.from(payload.update, 'base64');
+      this.documentManager.applyUpdate(documentId, update);
+      this.server.to(`document:${documentId}`).emit('yjs:update', {
+        documentId,
         update,
+      });
+      this.lastCommittedSeq.set(documentId, {
+        generation: payload.generation,
+        seq: payload.seq,
       });
     } catch (err) {
       this.logger.error(
-        { err, documentId: payload.documentId },
+        { err, documentId },
         'Failed to apply cross-instance Yjs update',
       );
     }
+  }
+
+  private async publishYjsUpdate(
+    documentId: string,
+    update: Uint8Array,
+    generation: number,
+    seq: number,
+    updateId: string,
+  ): Promise<void> {
+    const payload: CrossInstanceUpdate = {
+      originId: this.originId,
+      documentId,
+      generation,
+      seq,
+      updateId,
+      update: Buffer.from(update).toString('base64'),
+    };
+    await this.redis.publish(
+      `document:${documentId}:updates`,
+      JSON.stringify(payload),
+    );
   }
 
   private onRedisAwareness(channel: string, message: string): void {
@@ -843,23 +1008,6 @@ export class EditorGateway
   // ---------------------------------------------------------------------------
   // Redis — outbound helpers
   // ---------------------------------------------------------------------------
-
-  private async publishYjsUpdate(
-    documentId: string,
-    update: Uint8Array,
-    generation: number,
-  ): Promise<void> {
-    const payload: CrossInstanceUpdate = {
-      originId: this.originId,
-      documentId,
-      generation,
-      update: Buffer.from(update).toString('base64'),
-    };
-    await this.redis.publish(
-      `document:${documentId}:updates`,
-      JSON.stringify(payload),
-    );
-  }
 
   private async publishAwareness(
     documentId: string,

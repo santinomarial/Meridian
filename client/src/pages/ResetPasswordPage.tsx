@@ -18,11 +18,17 @@ export function ResetPasswordPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  // Apply the dark theme the same way LandingPage does.
+  // Match landing: respect the user's saved light/dark preference.
   useEffect(() => {
     const html = document.documentElement;
-    html.classList.add("dark");
-    html.style.colorScheme = "dark";
+    let theme: "light" | "dark" = "dark";
+    try {
+      if (localStorage.getItem("meridian-theme") === "light") theme = "light";
+    } catch {
+      // localStorage unavailable; retain the dark default.
+    }
+    html.classList.toggle("dark", theme === "dark");
+    html.style.colorScheme = theme;
   }, []);
 
   const handleSubmit = async (event: FormEvent): Promise<void> => {
@@ -73,7 +79,7 @@ export function ResetPasswordPage() {
         ) : (
           <>
             <div className="space-y-2 text-center">
-              <div className="mb-2 inline-flex items-center justify-center rounded border border-outline-variant/30 bg-surface-container-high px-2 py-0.5 uppercase text-primary-fixed-dim label-caps">
+              <div className="mb-2 inline-flex items-center justify-center rounded border border-outline-variant/50 bg-surface-container px-2 py-0.5 uppercase text-on-surface-variant label-caps">
                 Reset Password
               </div>
               <h1 className="text-headline-md font-semibold tracking-tight text-on-surface">
@@ -118,7 +124,7 @@ export function ResetPasswordPage() {
                   {isTokenError(error) ? (
                     <Link
                       to="/forgot-password"
-                      className="mt-1 block text-primary hover:underline"
+                      className="mt-1 block text-accent hover:underline"
                       data-testid="back-to-forgot"
                     >
                       Request a new reset link
@@ -131,7 +137,7 @@ export function ResetPasswordPage() {
                 type="submit"
                 disabled={loading}
                 data-testid="reset-submit"
-                className="group mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-inverse-primary py-3 text-body-md font-semibold text-on-primary-fixed shadow-lg shadow-primary/10 transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-60"
+                className="group mt-4 flex w-full items-center justify-center gap-2 rounded-lg btn-primary py-3 text-body-md font-semibold shadow-lg shadow-primary/15 transition-all active:scale-[0.98] disabled:opacity-60"
               >
                 {loading ? "Resetting…" : "Reset password"}
                 {!loading ? (
@@ -174,7 +180,7 @@ function SuccessView() {
       <Link
         to="/"
         data-testid="back-to-login"
-        className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-body-md font-semibold text-on-primary transition-all hover:opacity-90 active:scale-[0.98]"
+        className="inline-flex items-center gap-2 rounded-lg btn-primary px-6 py-3 text-body-md font-semibold transition-all active:scale-[0.98]"
       >
         <MaterialIcon name="login" className="text-lg" aria-hidden />
         Log in
@@ -204,7 +210,7 @@ function PasswordField({
       <div className="group relative">
         <MaterialIcon
           name="lock"
-          className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-outline transition-colors group-focus-within:text-primary"
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-on-surface-variant transition-colors group-focus-within:text-primary"
           aria-hidden
         />
         <input
@@ -214,7 +220,7 @@ function PasswordField({
           onChange={(e) => onChange(e.target.value)}
           placeholder="••••••••"
           autoComplete={autoComplete}
-          className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-outline-variant focus:border-primary focus:ring-1 focus:ring-primary"
+          className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
         />
       </div>
     </div>

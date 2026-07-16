@@ -1,12 +1,23 @@
-import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
+import { mockDeep } from 'jest-mock-extended';
+import type { ConfigService } from '@nestjs/config';
 import { AppService } from './app.service';
 import { PrismaService } from './prisma/prisma.service';
 import { RedisService } from './redis/redis.service';
+import { APP_CONFIG_KEY } from './config/app.config';
 
-function makeService() {
+function makeConfig(redisRequired = false): ConfigService {
+  return {
+    getOrThrow: (key: string) => {
+      if (key === APP_CONFIG_KEY) return { redisRequired };
+      throw new Error(`unexpected config key: ${key}`);
+    },
+  } as unknown as ConfigService;
+}
+
+function makeService(redisRequired = false) {
   const prisma = mockDeep<PrismaService>();
   const redis = mockDeep<RedisService>();
-  const service = new AppService(prisma, redis);
+  const service = new AppService(prisma, redis, makeConfig(redisRequired));
   return { service, prisma, redis };
 }
 
@@ -91,6 +102,31 @@ describe('AppService', () => {
       const result = await service.getReadiness();
 
       expect(result.status).toBe('ready');
+      expect(result.dependencies.redis).toBe('error');
+    });
+
+    it('returns not_ready when REDIS_REQUIRED and redis is disabled', async () => {
+      const { service, prisma, redis } = makeService(true);
+
+      prisma.$queryRaw.mockResolvedValue([{ '?column?': 1 }] as never);
+      Object.defineProperty(redis, 'isAvailable', { get: () => false, configurable: true });
+
+      const result = await service.getReadiness();
+
+      expect(result.status).toBe('not_ready');
+      expect(result.dependencies.redis).toBe('disabled');
+    });
+
+    it('returns not_ready when REDIS_REQUIRED and redis ping fails', async () => {
+      const { service, prisma, redis } = makeService(true);
+
+      prisma.$queryRaw.mockResolvedValue([{ '?column?': 1 }] as never);
+      Object.defineProperty(redis, 'isAvailable', { get: () => true, configurable: true });
+      redis.ping.mockResolvedValue(false);
+
+      const result = await service.getReadiness();
+
+      expect(result.status).toBe('not_ready');
       expect(result.dependencies.redis).toBe('error');
     });
 

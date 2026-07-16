@@ -50,6 +50,7 @@ export function useSessionSocket(): void {
     };
     const onDisconnect = (): void => setConnectionStatus("disconnected");
     const onConnectError = (): void => setConnectionStatus("disconnected");
+    const onReconnectAttempt = (): void => setConnectionStatus("connecting");
 
     const onChatMessage = (payload: ChatPayload): void => {
       useWorkspaceStore.getState().addChatMessage({
@@ -143,6 +144,7 @@ export function useSessionSocket(): void {
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("connect_error", onConnectError);
+    socket.io.on("reconnect_attempt", onReconnectAttempt);
     socket.on("yjs:sync", onYjsSync);
     socket.on("yjs:update", onYjsUpdate);
     socket.on("awareness:update", onAwarenessUpdate);
@@ -162,6 +164,7 @@ export function useSessionSocket(): void {
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("connect_error", onConnectError);
+      socket.io.off("reconnect_attempt", onReconnectAttempt);
       socket.off("yjs:sync", onYjsSync);
       socket.off("yjs:update", onYjsUpdate);
       socket.off("awareness:update", onAwarenessUpdate);

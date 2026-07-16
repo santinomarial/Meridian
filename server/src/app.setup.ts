@@ -5,8 +5,12 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { json, urlencoded } from 'express';
 import type { ErrorRequestHandler } from 'express';
+import helmet from 'helmet';
+import type { AppConfig } from './config/configuration.type';
+import { APP_CONFIG_KEY } from './config/app.config';
 
 const DEFAULT_JSON_LIMIT = '100kb';
 const DOCUMENT_WRITE_JSON_LIMIT = '7mb';
@@ -22,6 +26,24 @@ const BULK_IMPORT_JSON_LIMIT = '26mb';
  * from AppModule providers, so they apply automatically.)
  */
 export function configureApp(app: INestApplication): void {
+  const config = app.get(ConfigService).getOrThrow<AppConfig>(APP_CONFIG_KEY);
+  const expressApp = app.getHttpAdapter().getInstance() as {
+    set: (setting: string, value: unknown) => void;
+  };
+
+  // Trust X-Forwarded-* only when explicitly configured (behind a known proxy).
+  expressApp.set('trust proxy', config.trustProxy);
+
+  // Baseline API security headers. HSTS is left to the TLS terminator; CSP for
+  // the SPA belongs on the static host, not this JSON API.
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+      hsts: false,
+    }),
+  );
+
   app.use(
     '/workspaces/:workspaceId/documents/bulk',
     json({ limit: BULK_IMPORT_JSON_LIMIT }),

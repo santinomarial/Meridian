@@ -1,5 +1,6 @@
 import type { Params } from 'nestjs-pino';
 import type { AppConfig } from './configuration.type';
+import { redactSensitivePath } from '../common/security/redact-sensitive-path';
 
 const REDACTED_PATHS = [
   'req.headers.authorization',
@@ -28,7 +29,11 @@ export function buildLoggerParams(config: AppConfig): Params {
       },
       serializers: {
         req(req: { method: string; url: string; id: string }) {
-          return { method: req.method, url: req.url, requestId: req.id };
+          return {
+            method: req.method,
+            url: redactSensitivePath(req.url),
+            requestId: req.id,
+          };
         },
       },
       transport: isDev

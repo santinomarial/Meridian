@@ -125,8 +125,14 @@ export const updateProfile = (
   payload: UpdateProfilePayload,
 ): Promise<ApiUser> => request<ApiUser>('PATCH', `/users/${userId}`, payload);
 
-export const forgotPassword = (payload: ForgotPasswordPayload): Promise<{ message: string }> =>
-  request<{ message: string }>('POST', '/auth/forgot-password', payload);
+export const forgotPassword = (
+  payload: ForgotPasswordPayload,
+): Promise<{ message: string; previewResetUrl?: string }> =>
+  request<{ message: string; previewResetUrl?: string }>(
+    'POST',
+    '/auth/forgot-password',
+    payload,
+  );
 
 export const resetPassword = (payload: ResetPasswordPayload): Promise<{ message: string }> =>
   request<{ message: string }>('POST', '/auth/reset-password', payload);
@@ -212,6 +218,16 @@ export const updateDocument = (
   payload: UpdateDocumentPayload,
 ): Promise<ApiDocument> =>
   request<ApiDocument>('PATCH', `/documents/${documentId}`, payload);
+
+/** Projects durable CRDT text into Document.content (Save). */
+export const checkpointDocument = (
+  documentId: string,
+): Promise<{
+  document: ApiDocument;
+  versionCreated: boolean;
+  content: string;
+  generation: number;
+}> => request('POST', `/documents/${documentId}/checkpoint`);
 
 export const deleteDocument = (documentId: string): Promise<void> =>
   request<void>('DELETE', `/documents/${documentId}`);

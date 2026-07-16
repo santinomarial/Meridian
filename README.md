@@ -38,23 +38,21 @@ There is no root package manifest; run package commands from `client/` or
 | Primary datastore | PostgreSQL 16, Prisma | Users, sessions, memberships, documents, invitations, versions, Yjs updates, and snapshots |
 | Coordination | Redis 7, ioredis | Cross-process realtime fan-out, authorization invalidation, accelerated sequence allocation, chat, and terminal projection events |
 
-PostgreSQL stores all durable application data, but file content has two
-distinct representations. `Document.content` is the explicitly saved value
-used by the REST API, versions, exports, and terminal materialization. Each open
-collaborative document also has an in-memory `Y.Doc`; its incremental updates
-are queued for asynchronous PostgreSQL persistence and periodically compacted
-into snapshots. Live Yjs edits do not update `Document.content` until the
-client performs an explicit Save. A database write failure is logged, and an
-accepted update can be lost once no client or server memory retains it.
+PostgreSQL stores all durable application data. Collaborative text is
+authoritative in the Yjs CRDT log (`DocumentUpdate` / `Snapshot`);
+`Document.content` is an explicit checkpoint of that text used by the REST API,
+versions, exports, and terminal materialization. Live Yjs edits do not update
+the checkpoint until Save (`POST /documents/:id/checkpoint`). Clients keep an
+IndexedDB outbound queue and receive `yjs:ack` only after PostgreSQL commit.
 
 One API process is the recommended deployment topology for collaborative state.
 Redis is optional in that topology and enables cross-process event fan-out when
 present. PostgreSQL transaction-scoped advisory locks serialize durable document
-updates, compaction, and version restore across API processes; Redis accelerates
-sequence allocation but is not the durability boundary. Version restore is
-generation-fenced and convergent across replicas. Remaining multi-replica gaps
-are asynchronous edit durability (no client ack) and Redis Pub/Sub with no
-replay for live fan-out. See [Horizontal scaling](docs/scaling.md).
+updates, compaction, checkpoint, and version restore across API processes; Redis
+accelerates sequence allocation but is not the durability boundary. Version
+restore is generation-fenced and convergent across replicas. Remaining
+multi-replica gap: Redis Pub/Sub has no native replay for awareness/chat
+fan-out. See [Horizontal scaling](docs/scaling.md).
 
 Detailed diagrams and runtime sequences are available in
 [Architecture](docs/architecture.md). Multi-instance requirements and failure
@@ -193,13 +191,17 @@ npm test
 ```
 
 HTTP integration tests exercise the real NestJS request pipeline and require a
-migrated PostgreSQL database:
+migrated PostgreSQL database (and Redis for realtime). The suite includes a
+dual-AppModule multi-replica harness (`multi-replica.e2e-spec.ts`,
+`restore-fencing.e2e-spec.ts`):
 
 ```bash
 cd server
 npm run infra:up
 npm run db:migrate
 npm run test:integration
+# Or only the multi-replica specs:
+npm run test:integration -- --testPathPattern='multi-replica|restore-fencing'
 ```
 
 ### Client
@@ -242,46 +244,47 @@ Backend-dependent tests skip when the API cannot be reached. `E2E_TEST=true`
 must never be used for normal operation; startup rejects it when
 `NODE_ENV=production`. Run it only in an isolated local or CI process against a
 disposable test database: its tightly scoped cleanup and password-reset helpers
-are intentionally unauthenticated. Cross-replica restore fencing is covered by
-the server integration test `restore-fencing.e2e-spec.ts` (two AppModules,
-shared PostgreSQL/Redis). The committed suites do not yet exercise Redis outage
-behavior under load or cross-replica terminal projection ordering.
+are intentionally unauthenticated. Cross-replica collaboration paths are covered
+by the dual-AppModule integration harness (`multi-replica.e2e-spec.ts` and
+`restore-fencing.e2e-spec.ts`). The committed suites do not yet exercise a
+sticky load balancer, Redis outage under load, or cross-replica terminal
+projection ordering.
 
 ## Production considerations
 
-- This repository does not include a production deployment manifest or
-  infrastructure definition. The component builds and operating constraints
-  are documented, but the deployment topology must be supplied separately.
-- Apply committed migrations with `npx prisma migrate deploy`; do not use
-  `prisma migrate dev` in a production release.
+- Production containers and a Compose sketch live at
+  [`docker-compose.prod.yml`](docker-compose.prod.yml) with non-root
+  [`server/Dockerfile`](server/Dockerfile) and
+  [`client/Dockerfile`](client/Dockerfile). Full procedures are in
+  [`docs/operations.md`](docs/operations.md).
+- Apply committed migrations with `npx prisma migrate deploy` (or the Compose
+  `migrate` one-shot); do not use `prisma migrate dev` in a production release.
 - Build the server with `npm run build` and run `npm run start:prod`. Build the
   client with `npm run build` and serve `client/dist/` from a static host or
   reverse proxy. The NestJS server does not serve the client bundle. Configure
   an SPA history fallback, evaluate API proxy rules before that fallback, and
   forward WebSocket upgrades for `/socket.io/`. There is no `/api` prefix;
   proxy `/auth`, `/users`, `/workspaces`, `/documents`, `/invites`, `/health`,
-  `/ready`, `/docs`, and `/docs-json` before applying the SPA fallback.
+  `/ready`, `/metrics`, `/docs`, and `/docs-json` before applying the SPA fallback.
 - Use TLS. Authentication cookies are `HttpOnly`, `SameSite=Lax`, and `Secure`
-  when `NODE_ENV=production`. The application does not install Helmet or a
-  Content Security Policy; define the required response headers at the API
-  ingress and static host.
+  when `NODE_ENV=production`. The API installs Helmet defaults; set
+  `TRUST_PROXY` behind a reverse proxy. The client nginx image ships a baseline
+  SPA CSP; tune `connect-src` for your API origin.
 - Prefer a single API replica for the simplest operations model. Multi-replica
-  evaluation requires shared PostgreSQL and Redis and sticky Socket.IO routing
-  (including polling and transport upgrade). Durable update persistence,
-  compaction, and version restore are generation-fenced via PostgreSQL.
-  Live Yjs updates are acknowledged after PostgreSQL commit (`yjs:ack`) with
-  client IndexedDB retry and post-commit Redis `seq` catch-up. Remaining gap:
-  Redis Pub/Sub still has no native replay for awareness/chat fan-out. An
-  initial Redis connection failure is not retried; restore Redis and restart
-  the API.
+  evaluation requires shared PostgreSQL and Redis, sticky Socket.IO routing
+  (including polling and transport upgrade), `REDIS_REQUIRED=true`, and a
+  unique `REDIS_KEY_PREFIX`. Durable update persistence, compaction, and
+  version restore are generation-fenced via PostgreSQL. Live Yjs updates are
+  acknowledged after PostgreSQL commit (`yjs:ack`) with client IndexedDB retry
+  and post-commit Redis `seq` catch-up. Redis clients reconnect and
+  resubscribe; Pub/Sub still has no durable replay for awareness/chat.
 - HTTP throttling is process-local. The editor and terminal gateways apply
   independent per-socket event limits to their protected high-volume handlers.
   `leaveDocument` and `terminal:stop` are deliberately unmetered, while
   `terminal:input` is capped at 16,384 UTF-16 code units. Body parsing also
   occurs before authorization. Enforce request size, connection, and abuse
-  limits at the ingress; Express `trust proxy` is not configured, so
-  application IP-based throttling must not be treated as the client-address
-  control behind a reverse proxy.
+  limits at the ingress; set `TRUST_PROXY` so application IP-based throttling
+  uses the intended client address behind a reverse proxy.
 - The terminal is disabled by default. When enabled, it launches a host OS
   shell as the server user. Its temporary workspace directory, reduced
   environment, path validation, and authorization checks are not container or
@@ -295,14 +298,12 @@ behavior under load or cross-replica terminal projection ordering.
   whether an account exists.
 - Registration does not verify ownership of the supplied email address. Add an
   email-verification flow before treating email identity as verified.
-- Invitation links are reusable bearer credentials until expiry. The recorded
-  invite email is delivery metadata, not an acceptance constraint, and
-  acceptance does not consume or revoke the token. Share links accordingly.
-- Expired or revoked sessions, used password-reset tokens, and expired invites
-  are rejected during use, but the application does not schedule row purging;
-  define retention and cleanup outside the process.
-- The Swagger UI is mounted at `/docs` in every environment. Restrict it at the
-  ingress layer if the API schema should not be public.
+- Invitation links are single-use bearer credentials (hashed at rest). When an
+  invite email is set, only that account may accept. Share links accordingly.
+- Expired or revoked sessions, used password-reset tokens, and expired/used
+  invites are purged hourly by the API retention job.
+- The Swagger UI is mounted at `/docs` outside production. Restrict it at the
+  ingress layer if exposing non-production APIs.
 
 Refer to the [client guide](client/README.md) and
 [server guide](server/README.md) for component-specific commands, configuration,

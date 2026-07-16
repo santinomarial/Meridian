@@ -112,21 +112,22 @@ API endpoints embedded at build time through `VITE_API_URL` and
 
 ## Document state and save semantics
 
-Meridian maintains two representations of file content:
+Meridian has one collaborative text authority and one REST checkpoint:
 
-- `Document.content` is the explicitly saved plain-text value returned by the
-  workspace REST API. It is also used for version creation, workspace export,
-  and terminal materialization.
-- A Yjs document is the live collaborative value after a file joins a realtime
-  editing session. Its incremental updates are persisted asynchronously in the
-  server's CRDT update log and snapshots.
+- A Yjs document (plus server `DocumentUpdate` / `Snapshot` rows) is the
+  authoritative collaborative value after a file joins a realtime editing
+  session. Updates are acknowledged after PostgreSQL commit (`yjs:ack`).
+- `Document.content` is an explicit checkpoint of that durable text, used by
+  the workspace REST API, version creation, workspace export, and terminal
+  materialization.
 
 Loading a workspace initially populates the client from `Document.content`.
 Joining a document then synchronizes its Yjs state and binds Monaco to that
 state. Editing updates Yjs immediately and marks the tab dirty; it does not
-update `Document.content`. The Save command sends the editor's current value
-through `PATCH /documents/:documentId`, which updates `Document.content` and
-creates a version only when that saved value changes.
+update `Document.content`. Save waits briefly for pending outbound acks, then
+calls `POST /documents/:documentId/checkpoint`, which projects durable CRDT
+text into `Document.content` and creates a version only when that checkpoint
+changes. `PATCH /documents/:documentId` is metadata-only.
 
 Client Yjs documents are reference-counted by active editor bindings. Closing
 the final binding destroys its awareness object and `Y.Doc`; late Socket.IO
@@ -140,11 +141,8 @@ This boundary has several operational consequences:
   being absent from exports, versions, and newly materialized terminal files.
 - Export or version operations that must include the latest editor value should
   be preceded by a successful Save.
-- The generic REST content update and bulk-import paths do not reset an
-  already-open Yjs document. The normal client Save flow is coherent because
-  the same value is already present in the active Yjs document; out-of-band
-  content writes or replacement imports must not target an actively edited
-  document.
+- Bulk import that overwrites an existing file replaces the CRDT lineage
+  (generation bump) so cold load follows the imported text.
 
 Version restore has a dedicated reconciliation path, with the deployment limits
 described in [Architecture](../docs/architecture.md) and

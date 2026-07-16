@@ -34,10 +34,10 @@ import {
 } from '../modules/auth/auth-cookie';
 
 /** Public projection of a user — never exposes passwordHash. */
-function toPublicUser(user: User) {
+function toPublicUser(user: User, opts: { includeEmail: boolean }) {
   return {
     id: user.id,
-    email: user.email,
+    ...(opts.includeEmail ? { email: user.email } : {}),
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
     createdAt: user.createdAt,
@@ -53,14 +53,28 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Get(':userId')
-  @ApiOperation({ summary: 'Get a user by id' })
+  @ApiOperation({
+    summary:
+      'Get a user by id (self: full profile; shared-workspace peer: no email)',
+  })
   @ApiParam({ name: 'userId', description: 'User cuid' })
   @ApiOkResponse({ description: 'The user' })
   @ApiNotFoundResponse({ description: 'User not found' })
-  async getUser(@Param('userId') userId: string) {
+  async getUser(
+    @CurrentUser() currentUser: AuthUser,
+    @Param('userId') userId: string,
+  ) {
+    const allowed = await this.usersService.canViewProfile(
+      currentUser.id,
+      userId,
+    );
+    if (!allowed) {
+      // Same status as a missing user so IDs are not cross-tenant enumerable.
+      throw new NotFoundException(`User ${userId} not found`);
+    }
     const user = await this.usersService.findById(userId);
     if (user === null) throw new NotFoundException(`User ${userId} not found`);
-    return toPublicUser(user);
+    return toPublicUser(user, { includeEmail: currentUser.id === userId });
   }
 
   @Patch(':userId')
@@ -78,7 +92,9 @@ export class UsersController {
     }
     const user = await this.usersService.findById(userId);
     if (user === null) throw new NotFoundException(`User ${userId} not found`);
-    return toPublicUser(await this.usersService.updateUser(userId, dto));
+    return toPublicUser(await this.usersService.updateUser(userId, dto), {
+      includeEmail: true,
+    });
   }
 
   @Delete(':userId')

@@ -18,6 +18,6 @@ import { WsRateLimiter } from '../realtime/ws-rate-limiter.service';
   ],
   // TerminalSandboxService is exported so the documents/realtime layers can
   // project DB mutations onto active terminal sandboxes (best-effort sync).
-  exports: [TerminalSandboxService],
+  exports: [TerminalSandboxService, TerminalService],
 })
 export class TerminalModule {}

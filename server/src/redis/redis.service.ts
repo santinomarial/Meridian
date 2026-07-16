@@ -6,19 +6,23 @@ import type { RedisOptions } from 'ioredis';
 import type { AppConfig } from '../config/configuration.type';
 import { APP_CONFIG_KEY } from '../config/app.config';
 
+export type RedisMessageHandler = (
+  channel: string,
+  message: string | Buffer,
+) => void;
+
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly publisher: Redis;
   private readonly subscriber: Redis;
 
-  // Pattern → handler map.  Populated by subscribe(); routed in the pmessage
-  // listener set up in the constructor.
-  private readonly patternHandlers = new Map<
-    string,
-    (channel: string, message: string | Buffer) => void
-  >();
+  /** Logical pattern → handler. Patterns are stored without the env prefix. */
+  private readonly patternHandlers = new Map<string, RedisMessageHandler>();
 
+  private readonly keyPrefix: string;
+  private readonly redisRequired: boolean;
   private _available = false;
+  private shuttingDown = false;
 
   constructor(
     configService: ConfigService,
@@ -26,22 +30,20 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     private readonly logger: PinoLogger,
   ) {
     const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
+    this.keyPrefix = config.redisKeyPrefix;
+    this.redisRequired = config.redisRequired;
 
-    // lazyConnect: true — connections are not opened until connect() is called
-    // explicitly in onModuleInit, so errors are captured there rather than
-    // crashing the process at construction time.
-    //
-    // retryStrategy: () => null — no automatic reconnection after a failure.
-    // If Redis is unavailable at startup the service logs a warning and the
-    // rest of the app continues in single-instance mode.
-    //
-    // enableOfflineQueue: false — commands issued while disconnected fail
-    // immediately instead of being queued indefinitely.
+    // Reconnect with capped exponential backoff so multi-replica fleets can
+    // recover from brief Redis blips. enableOfflineQueue stays false so
+    // publishes during an outage fail closed instead of buffering forever.
     const opts: RedisOptions = {
       lazyConnect: true,
-      maxRetriesPerRequest: 0,
+      maxRetriesPerRequest: 1,
       enableOfflineQueue: false,
-      retryStrategy: () => null,
+      retryStrategy: (times: number) => {
+        if (this.shuttingDown) return null;
+        return Math.min(times * 200, 5_000);
+      },
     };
 
     this.publisher = new Redis(config.redisUrl, opts);
@@ -50,23 +52,37 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     this.wireLifecycleEvents(this.publisher, 'publisher');
     this.wireLifecycleEvents(this.subscriber, 'subscriber');
 
-    // Route pattern-subscribed messages to the registered handler.
-    // The pmessage event fires for channels matching a psubscribe pattern.
     this.subscriber.on(
       'pmessage',
       (pattern: string, channel: string, message: string) => {
-        this.patternHandlers.get(pattern)?.(channel, message);
+        const logicalPattern = this.stripPrefix(pattern);
+        this.patternHandlers.get(logicalPattern)?.(
+          this.stripPrefix(channel),
+          message,
+        );
       },
     );
+
+    // After a reconnect, ioredis drops pattern subscriptions — re-apply them.
+    this.subscriber.on('ready', () => {
+      void this.resubscribeAll('subscriber ready');
+    });
   }
 
   get isAvailable(): boolean {
     return this._available;
   }
 
+  get isRequired(): boolean {
+    return this.redisRequired;
+  }
+
+  /** Environment prefix applied to every Redis key and pub/sub channel. */
+  get prefix(): string {
+    return this.keyPrefix;
+  }
+
   async onModuleInit(): Promise<void> {
-    // Wrap each connect() in a 3-second timeout so a slow or unreachable
-    // Redis does not block the module initialization indefinitely.
     const timedConnect = (client: Redis): Promise<void> =>
       new Promise<void>((resolve, reject) => {
         const timer = setTimeout(
@@ -74,36 +90,54 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           3_000,
         );
         client.connect().then(
-          () => { clearTimeout(timer); resolve(); },
-          (err: unknown) => { clearTimeout(timer); reject(err); },
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          (err: unknown) => {
+            clearTimeout(timer);
+            reject(err);
+          },
         );
       });
 
     try {
-      await Promise.all([timedConnect(this.publisher), timedConnect(this.subscriber)]);
+      await Promise.all([
+        timedConnect(this.publisher),
+        timedConnect(this.subscriber),
+      ]);
       this._available = true;
-      this.logger.info('Redis connected — cross-instance mode enabled');
+      this.logger.info(
+        { keyPrefix: this.keyPrefix || '(none)', redisRequired: this.redisRequired },
+        'Redis connected — cross-instance mode enabled',
+      );
     } catch (err) {
       this._available = false;
       this.logger.warn(
         { err: err instanceof Error ? err.message : String(err) },
-        'Redis unavailable — continuing in single-instance mode',
+        this.redisRequired
+          ? 'Redis unavailable at startup — /ready will stay not_ready until reconnect'
+          : 'Redis unavailable — continuing in single-instance mode',
       );
+      // Keep retrying in the background when Redis is required (or whenever
+      // ioredis reconnects after a later blip). Initial connect() failure still
+      // leaves the clients in a reconnect loop via retryStrategy.
     }
   }
 
   async onModuleDestroy(): Promise<void> {
-    // allSettled so one client failing does not prevent the other from closing.
+    this.shuttingDown = true;
+    this.patternHandlers.clear();
     await Promise.allSettled([
-      this.publisher.quit().catch(() => {}),
-      this.subscriber.quit().catch(() => {}),
+      this.publisher.quit().catch(() => {
+        this.publisher.disconnect();
+      }),
+      this.subscriber.quit().catch(() => {
+        this.subscriber.disconnect();
+      }),
     ]);
   }
 
-  /**
-   * Pings the Redis server. Returns false if unavailable or the ping fails.
-   * Used by the readiness probe to verify the connection is healthy.
-   */
   async ping(): Promise<boolean> {
     if (!this._available) return false;
     try {
@@ -114,14 +148,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * Publishes a message to a Redis channel.
-   * No-ops silently when Redis is unavailable.
-   */
   async publish(channel: string, payload: string | Buffer): Promise<void> {
     if (!this._available) return;
     try {
-      await this.publisher.publish(channel, payload as string);
+      await this.publisher.publish(this.applyPrefix(channel), payload as string);
     } catch (err) {
       this.logger.warn({ err, channel }, 'Redis publish failed');
     }
@@ -129,54 +159,44 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Subscribes to a channel pattern (PSUBSCRIBE) and registers a handler.
-   * The handler receives the exact matching channel name and the raw message.
-   * No-ops silently when Redis is unavailable.
+   * Handlers receive logical (unprefixed) channel names.
    */
   async subscribe(
     pattern: string,
-    handler: (channel: string, message: string | Buffer) => void,
+    handler: RedisMessageHandler,
   ): Promise<void> {
-    if (!this._available) return;
     this.patternHandlers.set(pattern, handler);
-    await this.subscriber.psubscribe(pattern);
-  }
-
-  /**
-   * Removes a PSUBSCRIBE subscription and its handler.
-   * No-ops silently when Redis is unavailable.
-   */
-  async unsubscribe(pattern: string): Promise<void> {
     if (!this._available) return;
-    this.patternHandlers.delete(pattern);
-    await this.subscriber.punsubscribe(pattern);
+    try {
+      await this.subscriber.psubscribe(this.applyPrefix(pattern));
+    } catch (err) {
+      this.logger.warn({ err, pattern }, 'Redis subscribe failed');
+    }
   }
 
-  // ---------------------------------------------------------------------------
-  // Atomic counters (used for the cross-instance document seq counter)
-  // ---------------------------------------------------------------------------
+  async unsubscribe(pattern: string): Promise<void> {
+    this.patternHandlers.delete(pattern);
+    if (!this._available) return;
+    try {
+      await this.subscriber.punsubscribe(this.applyPrefix(pattern));
+    } catch (err) {
+      this.logger.warn({ err, pattern }, 'Redis unsubscribe failed');
+    }
+  }
 
-  // Seeds a key to `floor` only if it doesn't exist yet, then atomically
-  // increments and returns it. The seed-if-absent and INCR happen in a single
-  // Lua call so two instances racing the first allocation can't both seed.
   private static readonly ALLOCATE_SEQ_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 0 then
   redis.call('SET', KEYS[1], ARGV[1])
 end
 return redis.call('INCR', KEYS[1])`;
 
-  /**
-   * Allocates the next sequence value for `key`, seeding the counter to `floor`
-   * the first time it is used (so the first returned value is `floor + 1`).
-   * Returns null when Redis is unavailable or the command fails, so callers can
-   * fall back to a local counter.
-   */
   async allocateSeq(key: string, floor: number): Promise<number | null> {
     if (!this._available) return null;
     try {
       const result = await this.publisher.eval(
         RedisService.ALLOCATE_SEQ_LUA,
         1,
-        key,
+        this.applyPrefix(key),
         String(floor),
       );
       return typeof result === 'number' ? result : Number(result);
@@ -186,45 +206,73 @@ return redis.call('INCR', KEYS[1])`;
     }
   }
 
-  /** Atomically increments `key`. Returns null when unavailable or on error. */
   async incr(key: string): Promise<number | null> {
     if (!this._available) return null;
     try {
-      return await this.publisher.incr(key);
+      return await this.publisher.incr(this.applyPrefix(key));
     } catch (err) {
       this.logger.warn({ err, key }, 'Redis incr failed');
       return null;
     }
   }
 
-  /** Deletes a key. No-ops when unavailable; never throws. */
   async del(key: string): Promise<void> {
     if (!this._available) return;
     try {
-      await this.publisher.del(key);
+      await this.publisher.del(this.applyPrefix(key));
     } catch (err) {
       this.logger.warn({ err, key }, 'Redis del failed');
     }
   }
 
-  // ---------------------------------------------------------------------------
+  applyPrefix(name: string): string {
+    if (!this.keyPrefix) return name;
+    if (name.startsWith(this.keyPrefix)) return name;
+    return `${this.keyPrefix}${name}`;
+  }
+
+  stripPrefix(name: string): string {
+    if (!this.keyPrefix) return name;
+    return name.startsWith(this.keyPrefix)
+      ? name.slice(this.keyPrefix.length)
+      : name;
+  }
+
+  private async resubscribeAll(reason: string): Promise<void> {
+    if (this.shuttingDown || this.patternHandlers.size === 0) return;
+    const patterns = [...this.patternHandlers.keys()].map((p) =>
+      this.applyPrefix(p),
+    );
+    try {
+      await this.subscriber.psubscribe(...patterns);
+      this.logger.info(
+        { reason, patterns: patterns.length },
+        'Redis pattern subscriptions restored',
+      );
+    } catch (err) {
+      this.logger.warn({ err, reason }, 'Redis resubscribe failed');
+    }
+  }
 
   private wireLifecycleEvents(client: Redis, name: string): void {
     client.on('connect', () =>
       this.logger.info({ client: name }, 'Redis client connecting'),
     );
-    client.on('ready', () =>
-      this.logger.info({ client: name }, 'Redis client ready'),
-    );
+    client.on('ready', () => {
+      this._available = true;
+      this.logger.info({ client: name }, 'Redis client ready');
+    });
     client.on('error', (err: Error) =>
-      // Log as error after the service is available (unexpected disconnection),
-      // as warn during startup (Redis simply not running).
       this._available
         ? this.logger.error({ client: name, err }, 'Redis client error')
-        : this.logger.warn({ client: name, err: err.message }, 'Redis client error'),
+        : this.logger.warn(
+            { client: name, err: err.message },
+            'Redis client error',
+          ),
     );
-    client.on('close', () =>
-      this.logger.info({ client: name }, 'Redis client connection closed'),
-    );
+    client.on('close', () => {
+      this._available = false;
+      this.logger.info({ client: name }, 'Redis client connection closed');
+    });
   }
 }

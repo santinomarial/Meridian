@@ -66,6 +66,7 @@ export function useBackendWorkspace(): void {
   const navigate = useNavigate();
   const { workspaceId } = useParams<{ workspaceId?: string }>();
   const requestedWorkspaceId = workspaceId ?? null;
+  const workspaceLoadEpoch = useWorkspaceStore((s) => s.workspaceLoadEpoch);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,7 +82,7 @@ export function useBackendWorkspace(): void {
           // A 401 means the backend is reachable but the session is missing or
           // expired — a normal state after time away. Treat the user as logged
           // out and send them to the login screen instead of pretending the
-          // backend is down. Network errors fall through to demo mode below.
+          // backend is down. Network errors fall through to the unavailable gate.
           if (err instanceof ApiError && err.status === 401) {
             if (!cancelled) navigate("/", { replace: true });
             return;
@@ -173,5 +174,5 @@ export function useBackendWorkspace(): void {
     return () => {
       cancelled = true;
     };
-  }, [navigate, requestedWorkspaceId]);
+  }, [navigate, requestedWorkspaceId, workspaceLoadEpoch]);
 }

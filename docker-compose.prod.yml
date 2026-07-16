@@ -1,0 +1,99 @@
+# Production-oriented Compose sketch for Meridian.
+# Not a complete cloud topology — pair with sticky WebSocket LB, TLS
+# termination, secrets management, and backups described in docs/operations.md.
+#
+# Usage (from repo root):
+#   docker compose -f docker-compose.prod.yml up --build
+#
+# Required env (create a .env next to this file or export):
+#   JWT_SECRET, CLIENT_ORIGIN, DATABASE_URL (optional override), REDIS_KEY_PREFIX
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: meridian
+      POSTGRES_USER: meridian
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meridian -d meridian"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://meridian:${POSTGRES_PASSWORD}@postgres:5432/meridian?schema=public
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:8080}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["npx", "prisma", "migrate", "deploy"]
+    restart: "no"
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://meridian:${POSTGRES_PASSWORD}@postgres:5432/meridian?schema=public
+      REDIS_URL: redis://redis:6379
+      REDIS_REQUIRED: "true"
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-prod:}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:8080}
+      TRUST_PROXY: "1"
+      METRICS_ENABLED: "true"
+      ENABLE_TERMINAL: "false"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+        VITE_SOCKET_URL: ${VITE_SOCKET_URL:-http://localhost:3000}
+    ports:
+      - "8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

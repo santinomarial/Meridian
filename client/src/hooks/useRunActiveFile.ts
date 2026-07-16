@@ -4,7 +4,7 @@ import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { useSaveActiveFile } from "./useSaveActiveFile";
 
 /** File extensions Meridian can execute in the terminal. */
-const RUNNABLE_EXTENSIONS = new Set(["py", "js", "ts", "sh"]);
+const RUNNABLE_EXTENSIONS = new Set(["py", "js", "ts", "sh", "go"]);
 
 function extensionOf(name: string): string {
   const dot = name.lastIndexOf(".");

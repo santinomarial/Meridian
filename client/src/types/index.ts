@@ -135,6 +135,10 @@ export type WorkspaceState = {
   backendStatus: BackendStatus;
   connectionStatus: ConnectionStatus;
   /**
+   * Bumped to re-run workspace bootstrap (e.g. Retry on the unavailable gate).
+   */
+  workspaceLoadEpoch: number;
+  /**
    * Per-document CRDT generation last observed by this client. Used to ignore
    * duplicate/stale `document:restored` events after a version restore.
    */

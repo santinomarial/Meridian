@@ -3,62 +3,74 @@
 @tailwind utilities;
 
 @layer base {
+  /*
+   * Contrast-tuned tokens for both themes.
+   * Primary is used for text accents AND solid CTAs — keep on-primary white
+   * and primary mid/deep enough that small text and button labels both read.
+   */
   :root {
-    --color-primary: #3525cd;
+    /* Muted light theme — cooler hierarchy so chrome panels separate */
+    --color-primary: #4f46e5;
     --color-on-primary: #ffffff;
-    --color-primary-container: #2d20b0;
-    --color-surface: #eceef2;
-    --color-surface-dim: #e4e7eb;
-    --color-surface-variant: #dde1e8;
-    --color-surface-container-low: #e8ebf0;
-    --color-surface-container: #dde1e8;
-    --color-surface-container-high: #d0d5de;
-    --color-surface-container-highest: #c4cad4;
-    --color-surface-container-lowest: #fafbfc;
-    --color-on-surface: #12131a;
-    --color-on-surface-variant: #3d4050;
-    --color-outline: #5c6070;
-    --color-outline-variant: #b4b9c6;
-    --color-secondary: #565e74;
+    --color-primary-container: #6366f1;
+    --color-on-primary-container: #ffffff;
+    --color-primary-fixed-dim: #818cf8;
+    --color-on-primary-fixed: #ffffff;
+    --color-inverse-primary: #4f46e5;
+    --color-surface: #d9dde6;
+    --color-surface-dim: #cfd4df;
+    --color-surface-variant: #c4cad6;
+    --color-surface-container-low: #e2e5ed;
+    --color-surface-container: #d5dae4;
+    --color-surface-container-high: #c9cfdb;
+    --color-surface-container-highest: #bcc3d0;
+    --color-surface-container-lowest: #eceef3;
+    --color-on-surface: #3a4150;
+    --color-on-surface-variant: #5f6778;
+    --color-outline: #7e8696;
+    --color-outline-variant: #aeb5c2;
+    --color-secondary: #0d9488;
     --color-on-secondary: #ffffff;
-    --color-tertiary: #d97721;
-    --color-error: #c62828;
+    --color-tertiary: #c2410c;
+    --color-error: #dc2626;
     --color-on-error: #ffffff;
     --color-background: var(--color-surface-container-lowest);
     --color-on-background: var(--color-on-surface);
-    --color-on-primary-container: #ffffff;
-    --color-primary-fixed-dim: var(--color-primary);
-    --color-on-primary-fixed: #ffffff;
-    --color-inverse-primary: var(--color-primary);
+    --glass-bg: rgba(226, 229, 237, 0.94);
+    --glass-border: rgba(58, 65, 80, 0.12);
+    --glass-shadow: 0 18px 50px rgba(58, 65, 80, 0.1);
   }
 
   .dark {
-    --color-primary: #c0c1ff;
-    --color-on-primary: #1000a9;
-    --color-primary-container: #8083ff;
-    --color-on-primary-container: #0d0096;
-    --color-primary-fixed-dim: #c0c1ff;
-    --color-on-primary-fixed: #07006c;
-    --color-inverse-primary: #494bd6;
-    --color-background: #13131b;
-    --color-on-background: #e4e1ed;
-    --color-surface: #13131b;
-    --color-surface-dim: #13131b;
-    --color-surface-variant: #34343d;
-    --color-surface-container-low: #1b1b23;
-    --color-surface-container: #1f1f27;
-    --color-surface-container-high: #292932;
-    --color-surface-container-highest: #34343d;
-    --color-surface-container-lowest: #0d0d15;
-    --color-on-surface: #e4e1ed;
-    --color-on-surface-variant: #c7c4d7;
-    --color-outline: #908fa0;
-    --color-outline-variant: #464554;
-    --color-secondary: #4edea3;
-    --color-on-secondary: #003824;
-    --color-tertiary: #ffb783;
-    --color-error: #ffb4ab;
-    --color-on-error: #690005;
+    --color-primary: #a5b4fc;
+    --color-on-primary: #111827;
+    --color-primary-container: #4f46e5;
+    --color-on-primary-container: #ffffff;
+    --color-primary-fixed-dim: #c7d2fe;
+    --color-on-primary-fixed: #ffffff;
+    --color-inverse-primary: #4f46e5;
+    --color-background: #0b0d14;
+    --color-on-background: #e8eaf2;
+    --color-surface: #0b0d14;
+    --color-surface-dim: #0b0d14;
+    --color-surface-variant: #2a2f3d;
+    --color-surface-container-low: #12151e;
+    --color-surface-container: #171b26;
+    --color-surface-container-high: #222736;
+    --color-surface-container-highest: #2e3445;
+    --color-surface-container-lowest: #07090f;
+    --color-on-surface: #e8eaf2;
+    --color-on-surface-variant: #b4bbc9;
+    --color-outline: #8b93a7;
+    --color-outline-variant: #3a4154;
+    --color-secondary: #5eead4;
+    --color-on-secondary: #042f2e;
+    --color-tertiary: #fdba74;
+    --color-error: #fca5a5;
+    --color-on-error: #450a0a;
+    --glass-bg: rgba(18, 21, 30, 0.9);
+    --glass-border: rgba(232, 234, 242, 0.12);
+    --glass-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
   }
 
   html,
@@ -96,14 +108,17 @@
   }
 
   .glass-panel {
-    background: rgba(19, 19, 27, 0.8);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(144, 143, 160, 0.2);
+    background: var(--glass-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
   }
 
   .inner-glow {
-    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+    box-shadow:
+      var(--glass-shadow),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
   }
 
   .label-caps {
@@ -112,6 +127,25 @@
     letter-spacing: 0.05em;
     font-weight: 600;
     text-transform: uppercase;
+  }
+
+  /* Readable text links / accents — denser weight, never washed pastel alone */
+  .text-accent {
+    color: var(--color-primary);
+    font-weight: 600;
+  }
+
+  .btn-primary {
+    background-color: var(--color-primary-container);
+    color: var(--color-on-primary-container);
+  }
+
+  .btn-primary:hover {
+    filter: brightness(1.06);
+  }
+
+  .dark .btn-primary:hover {
+    filter: brightness(1.1);
   }
 }
 
@@ -164,4 +198,18 @@
 
 .cursor-blink {
   animation: cursor-blink 1s step-end infinite;
+}
+
+/* xterm — tighten default chrome so the canvas sits cleanly in the panel */
+.terminal-panel .terminal-xterm .xterm {
+  height: 100%;
+  padding: 0;
+}
+
+.terminal-panel .terminal-xterm .xterm-viewport {
+  overflow-y: auto !important;
+}
+
+.terminal-panel .terminal-xterm .xterm-screen {
+  padding-bottom: 2px;
 }

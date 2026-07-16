@@ -8,11 +8,30 @@ import type { Server } from 'http';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { EditorGateway } from '../../src/modules/realtime/editor.gateway';
+import { RedisService } from '../../src/redis/redis.service';
 
 export interface TestApp {
   app: INestApplication;
   prisma: PrismaService;
   server: Server;
+}
+
+/**
+ * Nest's gateway `afterInit` is wired through a ReplaySubject that does not
+ * reliably fire under TestingModule + `app.init()` (no listen). Without it,
+ * EditorGateway never psubscribes to `document:*:updates`, so Redis fan-out
+ * and seq catch-up are dead. Call once when the subscription is missing.
+ */
+async function ensureEditorGatewaySubscriptions(
+  app: INestApplication,
+): Promise<void> {
+  const redis = app.get(RedisService);
+  const handlers = (
+    redis as unknown as { patternHandlers: Map<string, unknown> }
+  ).patternHandlers;
+  if (handlers.has('document:*:updates')) return;
+  await app.get(EditorGateway).afterInit();
 }
 
 /**
@@ -29,6 +48,7 @@ export async function createTestApp(): Promise<TestApp> {
   const app = moduleRef.createNestApplication({ bodyParser: false });
   configureApp(app);
   await app.init();
+  await ensureEditorGatewaySubscriptions(app);
 
   const prisma = app.get(PrismaService);
   return { app, prisma, server: app.getHttpServer() as Server };

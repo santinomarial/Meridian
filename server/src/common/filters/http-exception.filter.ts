@@ -8,6 +8,7 @@ import {
 import type { Response } from 'express';
 import { PinoLogger } from 'nestjs-pino';
 import type { RequestWithId } from '../types/request-with-id.type';
+import { redactSensitivePath } from '../security/redact-sensitive-path';
 
 interface ErrorResponseBody {
   statusCode: number;
@@ -95,13 +96,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
           ? String((httpError as { error: string }).error)
           : HttpStatus[statusCode] ?? 'Request Error';
 
+    const safePath = redactSensitivePath(req.url ?? '');
     const body: ErrorResponseBody = {
       statusCode,
       error: errorLabel,
       message,
       requestId: req.id ?? '',
       timestamp: new Date().toISOString(),
-      path: req.url,
+      path: safePath,
     };
 
     if (statusCode >= 500) {

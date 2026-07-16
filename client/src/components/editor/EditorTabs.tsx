@@ -1,4 +1,4 @@
-import { getFileIconClassName, getFileIconName } from "../../constants/fileDisplay";
+import { FileLanguageIcon } from "../../constants/fileDisplay";
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { focusRing, transitionBase } from "../ui/styles";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
@@ -33,11 +33,7 @@ function EditorTab({
         role="tab"
         aria-selected={isActive}
       >
-        <MaterialIcon
-          name={getFileIconName(tab.language)}
-          className={["shrink-0 text-[15px]", getFileIconClassName(tab.language, tab.name)].join(" ")}
-          aria-hidden
-        />
+        <FileLanguageIcon language={tab.language} fileName={tab.name} />
         <span className="max-w-[152px] truncate text-[13px]">{tab.name}</span>
       </button>
       <div className="relative flex w-7 shrink-0 items-center justify-center">

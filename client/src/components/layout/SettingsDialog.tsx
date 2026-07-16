@@ -31,6 +31,7 @@ function SettingsDialogBody() {
   const [displayName, setDisplayName] = useState(currentUser?.displayName ?? "");
   const [saving, setSaving] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  const [previewResetUrl, setPreviewResetUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -66,13 +67,19 @@ function SettingsDialogBody() {
   const handlePasswordReset = async (): Promise<void> => {
     if (currentUser === null) return;
     try {
-      await forgotPassword({ email: currentUser.email });
+      const result = await forgotPassword({ email: currentUser.email });
+      if (result.previewResetUrl) {
+        setPreviewResetUrl(result.previewResetUrl);
+        toast("No email provider configured — use the reset link below.", "info");
+      } else {
+        toast("Password reset email sent if the account exists.", "info");
+      }
     } catch {
       // The endpoint always returns success to avoid leaking account existence;
       // a network failure is the only real error and is non-fatal here.
+      toast("Password reset email sent if the account exists.", "info");
     }
     setResetSent(true);
-    toast("Password reset email sent if the account exists.", "info");
   };
 
   return (
@@ -132,7 +139,7 @@ function SettingsDialogBody() {
                       type="button"
                       onClick={() => void handleSaveName()}
                       disabled={!canSaveName || saving}
-                      className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-on-primary transition-colors hover:bg-primary/90 disabled:opacity-40"
+                      className="shrink-0 rounded-md btn-primary px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40"
                       data-testid="settings-save-name"
                     >
                       {saving ? "Saving…" : "Save"}
@@ -151,8 +158,7 @@ function SettingsDialogBody() {
               </div>
             ) : (
               <p className="text-xs text-on-surface-variant">
-                Sign in to manage your profile. Profile settings are unavailable in offline
-                demo mode.
+                Sign in to manage your profile. Profile settings require a connected workspace.
               </p>
             )}
           </section>
@@ -186,22 +192,33 @@ function SettingsDialogBody() {
               <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">
                 Security
               </h3>
-              <div className="flex items-center justify-between rounded-md border meridian-crisp-border bg-surface-container-lowest px-2.5 py-2">
-                <div className="min-w-0">
-                  <div className="text-sm text-on-surface">Password</div>
-                  <div className="text-[11px] text-on-surface-variant">
-                    We'll email you a secure reset link.
+              <div className="space-y-2 rounded-md border meridian-crisp-border bg-surface-container-lowest px-2.5 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm text-on-surface">Password</div>
+                    <div className="text-[11px] text-on-surface-variant">
+                      We'll email you a secure reset link.
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => void handlePasswordReset()}
+                    disabled={resetSent}
+                    className="shrink-0 rounded-md bg-surface-container-high px-2.5 py-1 text-xs font-medium text-on-surface transition-colors hover:bg-surface-container-highest disabled:opacity-50"
+                    data-testid="settings-reset-password"
+                  >
+                    {resetSent ? "Email sent" : "Reset password"}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void handlePasswordReset()}
-                  disabled={resetSent}
-                  className="shrink-0 rounded-md bg-surface-container-high px-2.5 py-1 text-xs font-medium text-on-surface transition-colors hover:bg-surface-container-highest disabled:opacity-50"
-                  data-testid="settings-reset-password"
-                >
-                  {resetSent ? "Email sent" : "Reset password"}
-                </button>
+                {previewResetUrl ? (
+                  <a
+                    href={previewResetUrl}
+                    className="block break-all text-[11px] text-accent underline"
+                    data-testid="settings-preview-reset-link"
+                  >
+                    Open local reset link
+                  </a>
+                ) : null}
               </div>
             </section>
           ) : null}

@@ -69,7 +69,7 @@ After startup:
 | `http://localhost:3000/docs` | Swagger UI |
 | `http://localhost:3000/docs-json` | Generated OpenAPI document |
 
-`GET /health` returns 200 while the process can serve the route; it does not test dependencies. `GET /ready` waits up to two seconds for each dependency check. PostgreSQL alone determines the HTTP status: PostgreSQL success returns 200 even when Redis is `error` or `disabled`, and PostgreSQL failure returns 503. A successful response includes both dependency states. The global exception filter sanitizes the failed 503 response to the standard internal-error envelope, so the detailed dependency object is not preserved in that response.
+`GET /health` returns 200 while the process can serve the route; it does not test dependencies. `GET /ready` waits up to two seconds for each dependency check. By default PostgreSQL alone determines the HTTP status: PostgreSQL success returns 200 even when Redis is `error` or `disabled`, and PostgreSQL failure returns 503. When `REDIS_REQUIRED=true`, Redis must also be `ok` or `/ready` returns 503 (multi-replica gate). A successful response includes both dependency states. The global exception filter sanitizes the failed 503 response to the standard internal-error envelope, so the detailed dependency object is not preserved in that response.
 
 ### Optional demo data
 
@@ -113,6 +113,10 @@ The seed is intended for disposable environments. It updates the demo users' pas
 | `WS_MESSAGE_LIMIT_PER_SECOND` | `50` | Per-socket limit for rate-checked editor and terminal gateway events |
 | `WS_MAX_YJS_UPDATE_BYTES` | `1048576` | Maximum binary payload accepted by Yjs sync, update, and awareness handlers |
 | `ENABLE_TERMINAL` | `false` | Enables host-backed PTY events and terminal projection subscriptions |
+| `REDIS_REQUIRED` | `false` | When `true`, `/ready` requires Redis `ok` (multi-replica gate) |
+| `REDIS_KEY_PREFIX` | empty | Prefix for Redis keys and pub/sub channels (`prod` → `prod:`) |
+| `METRICS_ENABLED` | `true` | Expose Prometheus `GET /metrics` |
+| `TRUST_PROXY` | `false` | Express trust proxy (`true`, `false`, or hop count) |
 | `RESEND_API_KEY` | Unset | Resend API key for password-reset and invite email delivery |
 | `MAIL_FROM` | `Meridian <no-reply@meridian.local>` | Sender passed to Resend |
 | `FORGOT_PASSWORD_TTL_MINUTES` | `30` | Password-reset token lifetime |
@@ -180,10 +184,10 @@ Each JWT contains a session JTI. Guarded requests verify the JWT and load the co
 
 An invalid cookie is cleared on a guarded 401 response. Login and registration create a new session and replace the existing cookie value; they do not revoke prior sessions.
 
-The application does not terminate TLS or install Helmet, a Content Security
-Policy, or separate CSRF middleware. Production requires HTTPS and an explicit
-security-header policy at a trusted reverse proxy, load balancer, and static
-host. The default cookie supports the intended same-site browser topology. A
+The application does not terminate TLS. It installs Helmet with API-safe
+defaults (CSP/HSTS deferred to the static host / TLS terminator). Production
+requires HTTPS and `TRUST_PROXY` when behind a reverse proxy. The default
+cookie supports the intended same-site browser topology. A
 cross-site frontend requires a coordinated review of cookie attributes, CORS,
 credential transport, and CSRF protection before deployment.
 
@@ -191,7 +195,10 @@ credential transport, and CSRF protection before deployment.
 
 Invite tokens are bearer credentials. The optional `email` field is delivery metadata only: acceptance does not verify that the authenticated user's email matches it. `acceptedAt` records the first acceptance but does not consume the token. Any number of authenticated users holding the same token may accept it until expiration, subject to existing membership behavior.
 
-Invites can grant only `EDITOR` or `VIEWER`. There is no invite-revocation endpoint. Treat invite URLs as reusable secrets and avoid placing them in analytics or broadly accessible logs.
+Invites can grant only `EDITOR` or `VIEWER`. Tokens are hashed at rest and
+single-use; when an invite email is set, only that account may accept. There is
+no invite-revocation endpoint beyond consumption/expiry. Treat invite URLs as
+secrets and avoid placing them in analytics.
 
 ### Validation, body limits, and throttling
 
@@ -239,7 +246,11 @@ Protected events require the exact Socket.IO room relationship and revalidate bo
 
 The configured one-second rate limiter applies to `joinWorkspace`, `chat:message`, `joinDocument`, `yjs:sync`, `yjs:update`, and `awareness:update` in `EditorGateway`. `leaveDocument` is not checked. `TerminalGateway` uses the same configured budget under a separate per-socket namespace for `terminal:start`, `terminal:run-file`, `terminal:input`, and `terminal:resize`; `terminal:stop` is unmetered. Yjs sync, update, and awareness payloads use `WS_MAX_YJS_UPDATE_BYTES`.
 
-Awareness is ephemeral and is never written to PostgreSQL. The server authorizes the socket and bounds the binary payload, but the user metadata inside an awareness update is client-asserted and is not rebound to the authenticated account. Do not use awareness fields as an authorization or audit identity. Chat sender identity, by contrast, is constructed by the server from the authenticated user.
+Awareness is ephemeral and is never written to PostgreSQL. The server
+authorizes the socket, bounds the binary payload, and overwrites each owned
+client's awareness `user` field with the authenticated account before relay.
+Do not use awareness fields as an authorization boundary. Chat sender identity
+is also constructed by the server from the authenticated user.
 
 ### Document state and persistence
 
@@ -254,13 +265,23 @@ An open document has one reference-counted `Y.Doc` and `Awareness` instance per 
 
 The accepted edit is visible before the database write completes. Graceful application shutdown waits for queued writes, but an abrupt process or host failure can lose accepted updates that have not reached PostgreSQL. Persistence failures are logged and swallowed so later collaboration continues.
 
-Yjs collaboration does not update `Document.content`. Conversely, ordinary HTTP document updates and bulk import do not reset existing Yjs history or mutate an already loaded `Y.Doc`. The practical boundaries are:
+Yjs collaboration does not update `Document.content` until an explicit
+checkpoint. Conversely, `PATCH /documents/:id` is metadata-only and rejects
+`content`. The practical boundaries are:
 
-- HTTP `PATCH /documents/:documentId` writes saved content. If content differs, it creates a plain-text `DocumentVersion` in the same transaction.
-- ZIP export and terminal materialization read saved `Document.content`, not the live `Y.Doc`.
-- Unsaved collaborative text can be durable in `DocumentUpdate` rows while remaining absent from exports, versions, and new terminal projections.
-- A normal client save is consistent when it sends the current Yjs text through HTTP PATCH. An out-of-band PATCH or import over a document with existing Yjs history can create divergence; a later collaborative cold load follows the Yjs history, not the newly imported content.
-- Version restore is the only HTTP path that explicitly attempts to reconcile the saved and CRDT representations.
+- `POST /documents/:documentId/checkpoint` projects durable CRDT text into
+  `Document.content` under the document advisory lock and creates a plain-text
+  `DocumentVersion` when the checkpoint changed.
+- ZIP export and terminal materialization read the checkpoint, not the live
+  `Y.Doc`.
+- Unsaved collaborative text can be durable in `DocumentUpdate` rows while
+  remaining absent from exports, versions, and new terminal projections until
+  checkpoint.
+- Bulk import that overwrites an existing file's content bumps
+  `crdtGeneration` and replaces the CRDT lineage so cold load cannot resurrect
+  pre-import collaborative state.
+- Version restore rewrites both the checkpoint and the CRDT lineage under the
+  same advisory lock.
 
 Version numbers are calculated as the current maximum plus one while the transaction holds a PostgreSQL advisory lock derived from the document ID. This serializes allocation across API replicas; the database uniqueness constraint remains the final invariant.
 
@@ -279,8 +300,9 @@ reading, deleting, or replacing history.
 
 This prevents a lower sequence from being inserted after another replica has
 compacted through a higher sequence. It does not make live collaboration fully
-safe across replicas: accepted updates still have no durability acknowledgement,
-Redis Pub/Sub has no replay, and version restore remains local-only.
+safe across replicas for awareness and chat: Redis Pub/Sub has no replay.
+Version restore is generation-fenced and convergent across replicas (see below).
+Live Yjs updates carry post-commit acknowledgements and sequence catch-up.
 
 The live `Y.Doc` is torn down after its configured grace period. Teardown also
 waits for the captured persistence-chain tail and evicts the document's local
@@ -290,26 +312,37 @@ newer write remains visible to shutdown flushing.
 
 ### Version restore
 
-Restore is a multi-step operation:
+Restore is one PostgreSQL transaction under the document advisory lock:
 
-1. A PostgreSQL transaction updates `Document.content` and creates a new version.
-2. After that transaction commits, `DocumentRestoreService` mutates a live process-local `Y.Doc` when present, emits local Socket.IO events, and replaces or deletes persisted CRDT history.
-3. The controller then applies a best-effort terminal file projection update.
+1. Increment `Document.crdtGeneration`, rewrite `Document.content`, create a
+   restored version, and replace CRDT history with a seq-0 snapshot of the
+   restored text under the new generation.
+2. After commit, `DocumentRestoreService` reloads the local `Y.Doc`, emits
+   `document:restored` to connected clients, and publishes a restore-control
+   event on Redis so every other replica evicts its stale lineage.
+3. Persistence writes tagged with the old generation are rejected (restore
+   fencing). A periodic generation audit covers missed Redis messages.
+4. Terminal file projection is updated best-effort outside the CRDT
+   transaction.
 
-These steps are not one atomic transaction. A failure after step 1 can leave saved content committed while CRDT history, connected editors, or terminal files remain unreconciled. Restore broadcasts only through the local Socket.IO server; it does not publish the restored update or notification through Redis. Other replicas can retain stale in-memory documents and pending writes, and clearing the shared sequence key does not invalidate those states. Do not run version restore against a document served by multiple replicas.
+Pre-restore state cannot reappear after a successful restore, even when more
+than one API replica holds the document. Covered by
+`server/test/restore-fencing.e2e-spec.ts`.
 
 ## Deployment topology and Redis
 
 ### Supported consistency topology
 
-Use one Meridian server process for document correctness. PostgreSQL is required. Redis is optional in that topology and adds no durability; when enabled, it supports coordination features and makes local development closer to CI.
+Use one Meridian server process for the simplest deployment. PostgreSQL is
+required. Redis is optional in that topology and adds no durability; when
+enabled, it supports coordination features and makes local development closer
+to CI.
 
-Multiple replicas are not currently recommended for production, even with
-shared PostgreSQL and Redis. PostgreSQL now orders durable update persistence
-and compaction, but restore's local-only reconciliation remains a blocker.
-Redis Pub/Sub also provides no replay, acknowledgement, or total ordering for
-collaboration, authorization invalidation, chat, awareness, or sandbox
-operations.
+Multiple replicas may be evaluated with shared PostgreSQL and Redis. Durable
+update persistence, compaction, and version restore are generation-fenced and
+ordered by PostgreSQL advisory locks. Remaining multi-replica gaps are
+asynchronous edit durability (no client ack), Redis Pub/Sub with no replay for
+live fan-out / awareness / chat, and terminal sandbox projection.
 
 If multiple replicas are used for evaluation, they require:
 
@@ -321,7 +354,12 @@ Redis messages are treated as trusted internal input. Keep Redis network access 
 
 ### Redis failure behavior
 
-Both Redis clients use lazy connection, a three-second startup timeout, no offline queue, and no retry strategy. If either startup connection fails, the application logs a warning, marks Redis unavailable, and continues in single-process mode. It does not reconnect automatically; restart the process after Redis is restored.
+Both Redis clients use lazy connection, a three-second startup timeout, no
+offline command queue, and capped exponential reconnect. Pattern subscriptions
+are re-issued after reconnect. Keys and pub/sub channels are optionally prefixed
+with `REDIS_KEY_PREFIX`. If the initial connection fails and
+`REDIS_REQUIRED=false`, the application logs a warning and continues in
+single-process mode while reconnect attempts continue in the background.
 
 After a connection was established, a later client error or close does not
 change the service's `isAvailable` flag. Publish operations log and drop failed

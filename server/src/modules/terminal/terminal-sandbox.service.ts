@@ -92,6 +92,10 @@ export class TerminalSandboxService implements OnModuleInit {
     return path.join(os.tmpdir(), 'meridian-terminal-sandboxes');
   }
 
+  activeCount(): number {
+    return this.active.size;
+  }
+
   getSandboxDir(workspaceId: string, userId: string): string {
     if (!SAFE_ID_RE.test(workspaceId) || !SAFE_ID_RE.test(userId)) {
       throw new Error('Invalid workspaceId or userId for sandbox path');

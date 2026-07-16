@@ -76,10 +76,16 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async forgotPassword(
     @Body() dto: ForgotPasswordDto,
-  ): Promise<{ message: string }> {
-    await this.authService.forgotPassword(dto);
-    // Always return the same generic message — never reveal whether the email exists.
-    return { message: FORGOT_SUCCESS };
+  ): Promise<{ message: string; previewResetUrl?: string }> {
+    const result = await this.authService.forgotPassword(dto);
+    // Always return the same generic message — never reveal whether the email
+    // exists. previewResetUrl is only present in development without Resend.
+    return {
+      message: FORGOT_SUCCESS,
+      ...(result.previewResetUrl !== undefined
+        ? { previewResetUrl: result.previewResetUrl }
+        : {}),
+    };
   }
 
   @ApiOperation({ summary: 'Complete a password reset using the token from the email link' })

@@ -33,7 +33,7 @@ import type { AuthUser } from '../modules/auth/types/auth-user.type';
 import type { AppConfig } from '../config/configuration.type';
 import { APP_CONFIG_KEY } from '../config/app.config';
 
-interface InviteResponse {
+interface InviteCreateResponse {
   id: string;
   token: string;
   workspaceId: string;
@@ -41,6 +41,23 @@ interface InviteResponse {
   email: string | null;
   expiresAt: Date;
   inviteUrl: string;
+  /** Present when an email was requested. False means share the invite link manually. */
+  emailDelivered?: boolean;
+  /** Dev/fallback URL when the mail provider did not deliver. */
+  previewInviteUrl?: string;
+  /** Human-readable reason when emailDelivered is false. */
+  emailError?: string;
+}
+
+/** List rows never include the raw token — it is only returned at creation. */
+interface InviteListItem {
+  id: string;
+  workspaceId: string;
+  role: string;
+  email: string | null;
+  expiresAt: Date;
+  acceptedAt: Date | null;
+  createdAt: Date;
 }
 
 @SkipThrottle({ auth: true })
@@ -73,7 +90,7 @@ export class InvitesController {
     @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: CreateInviteDto,
-  ): Promise<InviteResponse> {
+  ): Promise<InviteCreateResponse> {
     const ws = await this.workspacesService.findById(workspaceId);
     if (ws === null) throw new NotFoundException(`Workspace ${workspaceId} not found`);
     const role = await this.workspacesService.getMemberRole(user.id, workspaceId);
@@ -81,45 +98,75 @@ export class InvitesController {
     if (role !== WorkspaceRole.OWNER)
       throw new ForbiddenException('Only workspace owners can create invites');
 
-    const invite = await this.invitesService.createInvite({
+    const { invite, token } = await this.invitesService.createInvite({
       workspaceId,
       invitedById: user.id,
       role: dto.role,
       email: dto.email,
     });
-    const inviteUrl = this.buildInviteUrl(invite);
+    const inviteUrl = this.buildInviteUrl(token);
 
-    if (dto.email !== undefined) {
-      // Email delivery is best-effort — the invite link still works if the
-      // mail provider is down, so the inviter can share it manually.
+    let emailDelivered: boolean | undefined;
+    let previewInviteUrl: string | undefined;
+    let emailError: string | undefined;
+
+    if (dto.email !== undefined && dto.email.trim() !== '') {
+      // Email delivery is best-effort — the invite link still works if Resend
+      // rejects the send (e.g. MAIL_FROM still on @resend.dev). Always return
+      // the link so the inviter can share it manually.
       try {
-        await this.mailService.sendWorkspaceInviteEmail(
+        const mail = await this.mailService.sendWorkspaceInviteEmail(
           dto.email,
           user.displayName,
           ws.name,
           inviteUrl,
         );
+        emailDelivered = mail.delivered;
+        if (!mail.delivered) {
+          previewInviteUrl = mail.previewUrl;
+          emailError =
+            mail.reason === 'testing_domain'
+              ? 'Resend can only email your own address until you verify a domain. Set MAIL_FROM to an address on that domain (resend.com/domains).'
+              : mail.reason === 'no_provider'
+                ? 'No email provider configured. Set RESEND_API_KEY and a verified MAIL_FROM.'
+                : 'The email provider rejected the send. Check server logs and your Resend domain settings.';
+        }
       } catch (err) {
         this.logger.error(
           { err, inviteId: invite.id },
           'Failed to send invite email',
         );
+        emailDelivered = false;
+        previewInviteUrl = inviteUrl;
+        emailError =
+          'The email provider failed. Check RESEND_API_KEY / MAIL_FROM and server logs.';
       }
     }
 
-    return this.toResponse(invite);
+    return {
+      id: invite.id,
+      token,
+      workspaceId: invite.workspaceId,
+      role: invite.role,
+      email: invite.email,
+      expiresAt: invite.expiresAt,
+      inviteUrl,
+      ...(emailDelivered !== undefined ? { emailDelivered } : {}),
+      ...(previewInviteUrl !== undefined ? { previewInviteUrl } : {}),
+      ...(emailError !== undefined ? { emailError } : {}),
+    };
   }
 
   @Get('workspaces/:workspaceId/invites')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'List invites for a workspace' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace cuid' })
-  @ApiOkResponse({ description: 'Array of invites' })
+  @ApiOkResponse({ description: 'Array of invites (without raw tokens)' })
   @ApiNotFoundResponse({ description: 'Workspace not found' })
   async listInvites(
     @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
-  ): Promise<InviteResponse[]> {
+  ): Promise<InviteListItem[]> {
     const role = await this.workspacesService.getMemberRole(
       user.id,
       workspaceId,
@@ -134,7 +181,7 @@ export class InvitesController {
       throw new ForbiddenException('Only workspace owners can list invites');
     }
     const invites = await this.invitesService.listForWorkspace(workspaceId);
-    return invites.map((invite) => this.toResponse(invite));
+    return invites.map((invite) => this.toListItem(invite));
   }
 
   @Get('invites/:token')
@@ -150,12 +197,13 @@ export class InvitesController {
       throw new NotFoundException('Invite not found');
     }
     return {
-      token: invite.token,
       workspaceName: invite.workspace.name,
       role: invite.role,
       invitedByName: invite.invitedBy.displayName,
+      email: invite.email,
       expiresAt: invite.expiresAt,
       expired: invite.expiresAt < new Date(),
+      used: invite.acceptedAt !== null,
     };
   }
 
@@ -170,7 +218,11 @@ export class InvitesController {
     @CurrentUser() user: AuthUser,
     @Param('token') token: string,
   ) {
-    const result = await this.invitesService.acceptInvite(token, user.id);
+    const result = await this.invitesService.acceptInvite(
+      token,
+      user.id,
+      user.email,
+    );
     this.logger.info(
       { userId: user.id, workspaceId: result.workspaceId },
       'Invite accepted',
@@ -183,19 +235,19 @@ export class InvitesController {
     };
   }
 
-  private buildInviteUrl(invite: Invite): string {
-    return `${this.clientOrigin}/invite/${invite.token}`;
+  private buildInviteUrl(token: string): string {
+    return `${this.clientOrigin}/invite/${token}`;
   }
 
-  private toResponse(invite: Invite): InviteResponse {
+  private toListItem(invite: Invite): InviteListItem {
     return {
       id: invite.id,
-      token: invite.token,
       workspaceId: invite.workspaceId,
       role: invite.role,
       email: invite.email,
       expiresAt: invite.expiresAt,
-      inviteUrl: this.buildInviteUrl(invite),
+      acceptedAt: invite.acceptedAt,
+      createdAt: invite.createdAt,
     };
   }
 }

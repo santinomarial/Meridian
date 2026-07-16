@@ -85,7 +85,7 @@ export function ActivityBar() {
 
   return (
     <nav
-      className="meridian-panel flex w-12 shrink-0 flex-col meridian-crisp-border border-r py-2.5"
+      className="flex w-12 shrink-0 flex-col border-r meridian-crisp-border bg-surface-dim py-2.5"
       aria-label="Activity bar"
     >
       <div className="flex w-full flex-col gap-0.5">

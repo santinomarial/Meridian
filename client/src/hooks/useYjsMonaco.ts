@@ -12,6 +12,12 @@ import {
   releaseDocumentState,
   runWithRemoteDocumentUpdate,
 } from "../lib/yjsDocs";
+import {
+  ackYjsUpdate,
+  decodeUpdateBase64,
+  enqueueYjsUpdate,
+  listPendingYjsUpdates,
+} from "../lib/yjsOutboundQueue";
 import { colorForUser } from "../lib/collabColors";
 import {
   collaboratorsFromAwareness,
@@ -21,6 +27,7 @@ import { useWorkspaceStore } from "../store/useWorkspaceStore";
 
 type SyncPayload = { documentId: string; message: unknown };
 type JoinedPayload = { documentId: string };
+type AckPayload = { documentId: string; updateId: string };
 
 function toUint8Array(value: unknown): Uint8Array | null {
   if (value instanceof Uint8Array) return value;
@@ -43,6 +50,10 @@ function isSyncStep2(message: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function newUpdateId(): string {
+  return crypto.randomUUID();
 }
 
 export function useYjsMonaco(
@@ -71,6 +82,7 @@ export function useYjsMonaco(
     let setupTimer: number | null = null;
     let teardownBinding: (() => void) | null = null;
     let flushQueuedChanges: (() => void) | null = null;
+    let resendPending: (() => void) | null = null;
 
     const setupBinding = (): void => {
       setupTimer = null;
@@ -84,6 +96,10 @@ export function useYjsMonaco(
       let pendingUpdates: Uint8Array[] = [];
       let updateFlushTimer: number | null = null;
 
+      const emitDurableUpdate = (update: Uint8Array, updateId: string): void => {
+        socket.emit("yjs:update", { documentId, updateId, update });
+      };
+
       const flushUpdates = (): void => {
         updateFlushTimer = null;
         if (!socket.connected || pendingUpdates.length === 0) return;
@@ -92,7 +108,21 @@ export function useYjsMonaco(
             ? pendingUpdates[0]!
             : Y.mergeUpdates(pendingUpdates);
         pendingUpdates = [];
-        socket.emit("yjs:update", { documentId, update: merged });
+        const updateId = newUpdateId();
+        // Enqueue before emit so a crash between the two still resends on
+        // reconnect. Duplicate resends are idempotent on the server.
+        void enqueueYjsUpdate(documentId, updateId, merged)
+          .then(() => {
+            if (disposed || !socket.connected) return;
+            emitDurableUpdate(merged, updateId);
+          })
+          .catch(() => {
+            // IndexedDB unavailable — still try the live path; durability is
+            // best-effort in private/incognito contexts that block storage.
+            if (!disposed && socket.connected) {
+              emitDurableUpdate(merged, updateId);
+            }
+          });
       };
 
       const handleUpdate = (update: Uint8Array, origin: unknown): void => {
@@ -176,6 +206,15 @@ export function useYjsMonaco(
         flushAwareness();
       };
 
+      resendPending = (): void => {
+        void listPendingYjsUpdates(documentId).then((pending) => {
+          if (disposed || !socket.connected) return;
+          for (const entry of pending) {
+            emitDurableUpdate(decodeUpdateBase64(entry.updateBase64), entry.updateId);
+          }
+        });
+      };
+
       teardownBinding = (): void => {
         doc.off("update", handleUpdate);
         awareness.off("change", syncPresence);
@@ -192,6 +231,7 @@ export function useYjsMonaco(
         // y-monaco also destroys itself from Monaco's onWillDispose callback.
         if (!model.isDisposed()) binding.destroy();
         flushQueuedChanges = null;
+        resendPending = null;
         useWorkspaceStore.getState().setCollaborators([]);
       };
     };
@@ -208,12 +248,20 @@ export function useYjsMonaco(
     };
 
     const onJoinedDocument = (payload: JoinedPayload): void => {
-      if (payload.documentId === documentId) flushQueuedChanges?.();
+      if (payload.documentId !== documentId) return;
+      flushQueuedChanges?.();
+      resendPending?.();
+    };
+
+    const onAck = (payload: AckPayload): void => {
+      if (payload.documentId !== documentId) return;
+      void ackYjsUpdate(payload.documentId, payload.updateId);
     };
 
     socket.on("connect", join);
     socket.on("joinedDocument", onJoinedDocument);
     socket.on("yjs:sync", onYjsSync);
+    socket.on("yjs:ack", onAck);
     if (socket.connected) join();
 
     return (): void => {
@@ -221,6 +269,7 @@ export function useYjsMonaco(
       socket.off("connect", join);
       socket.off("joinedDocument", onJoinedDocument);
       socket.off("yjs:sync", onYjsSync);
+      socket.off("yjs:ack", onAck);
       if (setupTimer !== null) window.clearTimeout(setupTimer);
       teardownBinding?.();
       if (socket.connected) socket.emit("leaveDocument", { documentId });

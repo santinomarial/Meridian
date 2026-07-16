@@ -243,7 +243,7 @@ describe('AuthService', () => {
 
       await expect(
         service.forgotPassword({ email: 'ghost@example.com' }),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({});
 
       expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
       expect(mailService.sendPasswordResetEmail).not.toHaveBeenCalled();
@@ -255,9 +255,11 @@ describe('AuthService', () => {
       prisma.user.findUnique.mockResolvedValue(BASE_USER);
       prisma.passwordResetToken.updateMany.mockResolvedValue({ count: 0 } as never);
       prisma.passwordResetToken.create.mockResolvedValue({} as never);
-      mailService.sendPasswordResetEmail.mockResolvedValue(undefined);
+      mailService.sendPasswordResetEmail.mockResolvedValue({ delivered: true });
 
-      await service.forgotPassword({ email: 'alice@example.com' });
+      await expect(
+        service.forgotPassword({ email: 'alice@example.com' }),
+      ).resolves.toEqual({});
 
       expect(prisma.passwordResetToken.create).toHaveBeenCalledTimes(1);
       expect(mailService.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
@@ -276,13 +278,32 @@ describe('AuthService', () => {
       expect(createArgs.data.tokenHash).toBe(expectedHash);
     });
 
+    it('returns previewResetUrl when mail is in dev-preview mode', async () => {
+      const { service, prisma, mailService } = makeService();
+
+      prisma.user.findUnique.mockResolvedValue(BASE_USER);
+      prisma.passwordResetToken.updateMany.mockResolvedValue({ count: 0 } as never);
+      prisma.passwordResetToken.create.mockResolvedValue({} as never);
+      mailService.sendPasswordResetEmail.mockResolvedValue({
+        delivered: false,
+        previewUrl: 'http://localhost:5173/reset-password/abc',
+        reason: 'no_provider',
+      });
+
+      await expect(
+        service.forgotPassword({ email: 'alice@example.com' }),
+      ).resolves.toEqual({
+        previewResetUrl: 'http://localhost:5173/reset-password/abc',
+      });
+    });
+
     it('invalidates existing unused tokens before creating a new one', async () => {
       const { service, prisma, mailService } = makeService();
 
       prisma.user.findUnique.mockResolvedValue(BASE_USER);
       prisma.passwordResetToken.updateMany.mockResolvedValue({ count: 1 } as never);
       prisma.passwordResetToken.create.mockResolvedValue({} as never);
-      mailService.sendPasswordResetEmail.mockResolvedValue(undefined);
+      mailService.sendPasswordResetEmail.mockResolvedValue({ delivered: true });
 
       await service.forgotPassword({ email: 'alice@example.com' });
 
@@ -301,7 +322,7 @@ describe('AuthService', () => {
 
       await expect(
         service.forgotPassword({ email: 'alice@example.com' }),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({});
     });
   });
 

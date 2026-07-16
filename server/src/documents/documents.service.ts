@@ -13,7 +13,9 @@ import { assertSafeRelPath } from '../modules/terminal/path-safety';
 import {
   acquireDocumentLock,
   encodeSeededState,
+  projectCrdtText,
 } from '../common/crdt/crdt-lineage';
+import { DocumentPersistenceService } from '../modules/realtime/document-persistence.service';
 
 export type { DocumentType };
 
@@ -120,9 +122,20 @@ interface PathChange {
   path: string;
 }
 
+export interface CheckpointResult {
+  document: Document;
+  /** True when Document.content changed and a DocumentVersion was recorded. */
+  versionCreated: boolean;
+  content: string;
+  generation: number;
+}
+
 @Injectable()
 export class DocumentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly persistence: DocumentPersistenceService,
+  ) {}
 
   async createDocument(data: CreateDocumentData): Promise<Document> {
     const name = this.validateDocumentName(data.name);
@@ -216,19 +229,53 @@ export class DocumentsService {
                 `Cannot import ${input.type.toLowerCase()} "${input.path}" over an existing ${existing.type.toLowerCase()}`,
               );
             }
-            doc = await tx.document.update({
-              where: { id: existing.id },
-              data: {
-                parentId: parent?.id ?? null,
-                name: input.name,
-                ...(input.type === DocumentType.FILE
-                  ? {
-                      content: input.content ?? existing.content,
-                      language: input.language ?? existing.language,
-                    }
-                  : {}),
-              },
-            });
+            if (
+              input.type === DocumentType.FILE &&
+              input.content !== undefined &&
+              input.content !== existing.content
+            ) {
+              // Import replaces the saved checkpoint. When CRDT history exists,
+              // bump the generation and replace the lineage so cold load never
+              // resurrect the pre-import collaborative state.
+              await acquireDocumentLock(tx, existing.id);
+              const nextGeneration = existing.crdtGeneration + 1;
+              await tx.documentUpdate.deleteMany({ where: { documentId: existing.id } });
+              await tx.snapshot.deleteMany({ where: { documentId: existing.id } });
+              await tx.snapshot.create({
+                data: {
+                  documentId: existing.id,
+                  generation: nextGeneration,
+                  seq: 0,
+                  state: Buffer.from(
+                    encodeSeededState(existing.id, nextGeneration, input.content),
+                  ),
+                },
+              });
+              doc = await tx.document.update({
+                where: { id: existing.id },
+                data: {
+                  parentId: parent?.id ?? null,
+                  name: input.name,
+                  content: input.content,
+                  language: input.language ?? existing.language,
+                  crdtGeneration: nextGeneration,
+                },
+              });
+            } else {
+              doc = await tx.document.update({
+                where: { id: existing.id },
+                data: {
+                  parentId: parent?.id ?? null,
+                  name: input.name,
+                  ...(input.type === DocumentType.FILE
+                    ? {
+                        content: input.content ?? existing.content,
+                        language: input.language ?? existing.language,
+                      }
+                    : {}),
+                },
+              });
+            }
           } else {
             doc = await tx.document.create({
               data: {
@@ -387,12 +434,15 @@ export class DocumentsService {
     return roots;
   }
 
-  async updateContent(documentId: string, content: string): Promise<Document> {
-    this.assertDocumentContentLimit(content);
-    return this.prisma.document.update({
-      where: { id: documentId },
-      data: { content },
-    });
+  /**
+   * @deprecated Independent content writes are not allowed. Use
+   * {@link checkpointDocument} to project durable CRDT text into
+   * Document.content.
+   */
+  async updateContent(_documentId: string, _content: string): Promise<Document> {
+    throw new BadRequestException(
+      'Direct content updates are not supported; POST /documents/:id/checkpoint to save from the collaborative document',
+    );
   }
 
   async updateMetadata(
@@ -403,22 +453,95 @@ export class DocumentsService {
   }
 
   /**
-   * Updates a document and, when the content meaningfully changes, records a
-   * new DocumentVersion in the same transaction so the update and the version
-   * either both commit or both roll back.
+   * Projects the durable CRDT text for the document's current generation into
+   * `Document.content` under the document advisory lock, and records a
+   * DocumentVersion when the checkpoint differs from the previous column.
    *
-   * A version is created only when `content` is provided AND differs from the
-   * currently-persisted content — identical saves (e.g. a Cmd+S with no edits,
-   * or a metadata-only rename) never produce duplicate versions.  The first
-   * meaningful save naturally becomes versionNumber 1, so no separate "initial
-   * version" bookkeeping is needed.
+   * This is the only writer of `Document.content` for collaborated files
+   * (aside from create, import lineage reset, and version restore). Live
+   * Yjs updates never write the column; Save / export / terminal read the
+   * checkpoint.
+   */
+  async checkpointDocument(
+    documentId: string,
+    userId?: string,
+  ): Promise<CheckpointResult> {
+    // Drain in-flight persists so the locked projection sees every update
+    // that already entered the write chain.
+    await this.persistence.flushDocument(documentId);
+
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await acquireDocumentLock(tx, documentId);
+
+      const current = await tx.document.findUnique({
+        where: { id: documentId },
+      });
+      if (current === null) {
+        throw new NotFoundException(`Document ${documentId} not found`);
+      }
+      if (current.type !== DocumentType.FILE) {
+        throw new BadRequestException('Only file documents can be checkpointed');
+      }
+
+      const projected = await projectCrdtText(
+        tx,
+        documentId,
+        current.crdtGeneration,
+      );
+      // Empty lineage: Document.content is still the bootstrap text until the
+      // first collaborative seed. Checkpointing it is a no-op unless the
+      // column already differs from itself (never) — still returns success so
+      // Save on a never-opened file is well-defined.
+      const content = projected ?? current.content ?? '';
+      this.assertDocumentContentLimit(content);
+
+      if (content === (current.content ?? '')) {
+        return {
+          document: current,
+          versionCreated: false,
+          content,
+          generation: current.crdtGeneration,
+        };
+      }
+
+      const document = await tx.document.update({
+        where: { id: documentId },
+        data: { content },
+      });
+
+      await this.createVersionTx(tx, {
+        documentId,
+        workspaceId: current.workspaceId,
+        content,
+        createdById: userId ?? null,
+      });
+
+      return {
+        document,
+        versionCreated: true,
+        content,
+        generation: current.crdtGeneration,
+      };
+    });
+  }
+
+  /**
+   * Updates document metadata. Content changes are rejected — use
+   * {@link checkpointDocument} so Save always projects from the durable CRDT.
    */
   async patchDocument(
     documentId: string,
     data: PatchDocumentData,
     userId?: string,
   ): Promise<Document> {
-    this.assertDocumentContentLimit(data.content);
+    if (data.content !== undefined) {
+      throw new BadRequestException(
+        'PATCH cannot set content; POST /documents/:id/checkpoint to save from the collaborative document',
+      );
+    }
+    // userId retained for API compatibility; metadata-only patches never
+    // create versions.
+    void userId;
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const current = await tx.document.findUnique({
         where: { id: documentId },
@@ -527,20 +650,6 @@ export class DocumentsService {
         await tx.document.update({
           where: { id: change.document.id },
           data: { path: change.path },
-        });
-      }
-
-      const contentChanged =
-        data.content !== undefined &&
-        data.content !== null &&
-        data.content !== current.content;
-
-      if (contentChanged) {
-        await this.createVersionTx(tx, {
-          documentId,
-          workspaceId: current.workspaceId,
-          content: data.content as string,
-          createdById: userId ?? null,
         });
       }
 

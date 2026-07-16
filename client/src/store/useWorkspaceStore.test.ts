@@ -95,9 +95,10 @@ describe("workspace session boundaries", () => {
       connectionStatus: "disconnected",
       theme: "light",
     });
-    expect(state.activeFileId).toBe("file-auth");
-    expect(state.editorContentByFileId).not.toHaveProperty("secret-file");
-    expect(state.openTabs).not.toContainEqual(expect.objectContaining({ fileId: "secret-file" }));
+    expect(state.activeFileId).toBeNull();
+    expect(state.files).toEqual([]);
+    expect(state.editorContentByFileId).toEqual({});
+    expect(state.openTabs).toEqual([]);
   });
 
   it("treats an empty backend workspace as authoritative", () => {

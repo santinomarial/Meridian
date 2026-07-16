@@ -192,7 +192,7 @@ test.describe("terminal (backend required)", () => {
 
       // No viewer restriction for an editor.
       await expect(
-        editor.getByTestId("terminal-panel").getByText(/terminal requires editor access/i),
+        editor.getByTestId("terminal-panel").getByText(/^View-only$/i),
       ).not.toBeVisible();
 
       await expect(editor.locator(".xterm")).toBeVisible({ timeout: 10_000 });
@@ -221,9 +221,9 @@ test.describe("terminal (backend required)", () => {
 
       await openTerminalPanel(viewer);
 
-      // The viewer sees the editor-access message and has no Start/Stop controls.
+      // The viewer sees the restriction and has no Start/Stop controls.
       await expect(
-        viewer.getByTestId("terminal-panel").getByText(/terminal requires editor access/i),
+        viewer.getByTestId("terminal-panel").getByText(/^View-only$/i),
       ).toBeVisible({ timeout: 5_000 });
       await expect(viewer.getByRole("button", { name: "Start terminal" })).not.toBeVisible();
       await expect(viewer.getByRole("button", { name: "Stop terminal" })).not.toBeVisible();
@@ -308,12 +308,12 @@ test.describe("terminal (backend required)", () => {
     await openTerminalPanel(page);
     await expect(page.locator(".xterm")).toBeVisible({ timeout: 10_000 });
 
-    // Default dark theme → dark terminal background.
-    await expect(page.getByTestId("terminal-panel")).toHaveCSS("background-color", "rgb(30, 30, 30)");
+    // Default dark theme → Meridian dark terminal background.
+    await expect(page.getByTestId("terminal-panel")).toHaveCSS("background-color", "rgb(15, 18, 25)");
 
     // Toggle to light → light terminal background, live.
     await page.getByTestId("theme-toggle").click();
-    await expect(page.getByTestId("terminal-panel")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+    await expect(page.getByTestId("terminal-panel")).toHaveCSS("background-color", "rgb(248, 249, 251)");
 
     // Still interactive after the theme change (session not destroyed).
     await runInTerminal(page, "echo theme_$((2+2))");

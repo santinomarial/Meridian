@@ -136,7 +136,7 @@ export const mockCollaborators: Collaborator[] = [
   {
     id: "user-santino",
     name: "Santino",
-    color: "#3525cd",
+    color: "#4f46e5",
     status: "active",
     activity: "Editing auth.ts",
     isOwner: true,

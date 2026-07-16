@@ -127,20 +127,22 @@ database latency and the time required to scan connected clients can extend it.
 
 Document-writing HTTP routes have additional boundaries:
 
-- a meaningful content save selects `max(versionNumber) + 1`; concurrent saves
-  can choose the same number, and the unique constraint rejects one request
-  without an application retry;
-- ordinary document PATCH, create, and bulk import write `Document.content` but
-  do not mutate or reset an already loaded `Y.Doc` or existing CRDT history;
+- a meaningful content checkpoint selects `max(versionNumber) + 1` under the
+  document advisory lock; concurrent checkpoints of the same durable text
+  create at most one version;
+- `POST /documents/:id/checkpoint` projects durable CRDT text into
+  `Document.content`; `PATCH` is metadata-only and rejects `content`;
+- create and bulk import write `Document.content` for new files; overwriting an
+  existing file's content bumps `crdtGeneration` and replaces the CRDT lineage;
   and
-- ZIP export and a newly materialized terminal read `Document.content`, not the
-  live `Y.Doc`.
+- ZIP export and a newly materialized terminal read the checkpoint
+  (`Document.content`), not the live `Y.Doc`.
 
-An out-of-band HTTP content write can therefore diverge from an open document,
-and a later cold load follows persisted Yjs history when it exists. Load
-balancing the HTTP request to another replica does not provide reconciliation.
-The specialized version-restore path attempts reconciliation but is itself
-single-replica only, as described below.
+Unsaved collaborative edits therefore remain absent from export/terminal until
+checkpoint. Load balancing the HTTP request to another replica does not change
+that boundary: every replica projects from the same durable CRDT rows under the
+shared advisory lock. Version restore remains the specialized path that rewrites
+both the checkpoint and the lineage.
 
 ## Realtime fan-out
 
@@ -151,24 +153,29 @@ For an accepted `yjs:update`, the origin replica:
 1. verifies exact document-room membership, the database session, and the
    current workspace role;
 2. applies the update to its local in-memory `Y.Doc`;
-3. relays it to other sockets in the local document room;
-4. appends a PostgreSQL write to that process's per-document promise chain; and
-5. publishes a base64-encoded copy to `document:<documentId>:updates`.
+3. relays it to other sockets in the local document room (low-latency sticky
+   path — peers may see the edit before durable commit);
+4. awaits a PostgreSQL write under `(documentId, generation, updateId)`
+   idempotency, then emits `yjs:ack` `{ documentId, updateId, generation, seq }`
+   to the sender; and
+5. publishes a base64-encoded copy (with `seq` + `updateId`) to
+   `document:<documentId>:updates` only after commit.
 
-The local relay does not wait for PostgreSQL or Redis. The sender receives no
-durability acknowledgement. Persistence and Redis publication failures are
-logged, but the accepted update is not retried by the gateway and the sender is
-not told that durable storage or cross-replica delivery failed.
+The sender's durability acknowledgement is the post-commit `yjs:ack`. Clients
+enqueue the update in IndexedDB before emit and dequeue on ack; reconnect
+resends pending entries with the same `updateId`. Persist failure emits
+`yjs:nack` without dequeuing. Redis publication failures after commit are
+logged; receivers that miss a message detect a `seq` gap and catch up from
+PostgreSQL via `fetchUpdatesAfter`.
 
 A receiving replica ignores its own `originId`, applies the update only when it
 already has that document loaded, and relays it to its local room. It does not
 write a second copy to PostgreSQL. A replica that does not have the document
 loaded can reconstruct later from PostgreSQL.
 
-Redis Pub/Sub has no replay or acknowledgement. If a loaded replica misses an
-update, its in-memory `Y.Doc` and connected clients can diverge until that
-process evicts the document and reloads durable state. Redis recovery alone
-does not repair a missed live update.
+Redis Pub/Sub itself has no replay. Sequence numbers on post-commit messages
+plus PostgreSQL catch-up close the gap for loaded replicas that miss a live
+update. Redis recovery alone still does not repair awareness or chat.
 
 ### Awareness and chat
 
@@ -222,22 +229,23 @@ so later queued updates can continue; there is no durable retry queue.
 
 ### Version restore
 
-Version restore first commits the saved `Document.content` and a new
-`DocumentVersion`, then separately reconciles CRDT state on the replica that
-handled the request. If that replica has the document loaded, it mutates the
-local `Y.Doc`, emits `yjs:update` and `document:restored` to its local room, and
-resets CRDT history. If it does not have the document loaded, it deletes CRDT
-history so a later cold open seeds from saved content.
+Version restore is one PostgreSQL transaction under the document advisory
+lock. It increments `Document.crdtGeneration`, rewrites `Document.content`,
+records a restored `DocumentVersion`, and replaces CRDT history with a single
+seq-0 snapshot of the restored text under the new generation.
 
-The restore update and notification are not published to Redis. Other replicas
-can retain stale in-memory documents and can continue writing through their own
-queues while the origin replica deletes history and the shared sequence key.
-The document advisory lock serializes the physical reset against a concurrent
-write, but there is no generation number or fencing token to reject a write
-derived from stale in-memory state after that reset. The saved-content
-transaction and CRDT reset are also not one atomic database operation. Do not
-execute version restores while more than one API replica can hold or write the
-document.
+After commit, the handling replica reloads its local `Y.Doc`, emits
+`document:restored` to connected clients (who discard their local lineage and
+re-run the join/sync handshake), and publishes a restore-control event on
+Redis so every other replica does the same. Persistence writes tagged with the
+old generation are rejected inside their locked transaction, so a replica that
+missed the control event still cannot commit pre-restore state. A periodic
+generation audit evicts any remaining stale in-memory documents.
+
+Terminal file projection after restore remains best-effort and outside the
+CRDT transaction. Durable collaboration acknowledgements (`yjs:ack` after
+PostgreSQL commit, client IndexedDB queue, post-commit Redis `seq` catch-up)
+are implemented for live Yjs updates.
 
 ## Redis failure behavior
 
@@ -247,11 +255,13 @@ operational dependency for cross-replica realtime fan-out, not for durable
 sequence allocation or compaction ordering.
 
 The publisher and subscriber each have a three-second startup connection
-timeout, no offline command queue, and no automatic reconnect strategy. An
-initial connection failure is caught and the API continues to start. Publish
-failures are logged and discarded. Sequence allocation failures fall back to the
-PostgreSQL high-water mark while holding the document advisory lock. The
-application does not automatically remove other replicas or fail closed.
+timeout, no offline command queue, and capped exponential reconnect with
+automatic `PSUBSCRIBE` restoration. An initial connection failure is caught and
+the API continues to start (`REDIS_REQUIRED` then keeps `/ready` at 503 until
+Redis recovers). Publish failures are logged and discarded. Sequence allocation
+failures fall back to the PostgreSQL high-water mark while holding the document
+advisory lock. Channels and counter keys honor `REDIS_KEY_PREFIX` so multiple
+environments can share one Redis deployment.
 
 | Failure | Observable behavior | Required response for a multi-replica deployment |
 |---|---|---|
@@ -261,10 +271,10 @@ application does not automatically remove other replicas or fail closed.
 | Redis data is replaced or restored | Fresh processes can reseed acceleration keys from PostgreSQL, but running processes can retain stale client state and Redis seed flags | Quiesce writes and perform a coordinated restart before resuming cross-replica collaboration |
 
 `GET /health` only confirms that the process is running. `GET /ready` returns
-503 only when PostgreSQL is unavailable. Redis appears as `ok`, `error`, or
-`disabled` in the response but never changes the HTTP readiness decision. A
-multi-replica deployment therefore needs an external Redis health gate and
-alerting; the built-in readiness endpoint alone is insufficient.
+503 when PostgreSQL is unavailable, and also when `REDIS_REQUIRED=true` and
+Redis is not `ok`. Redis appears as `ok`, `error`, or `disabled` in the response.
+Multi-replica deployments should set `REDIS_REQUIRED=true`, scrape `/metrics`,
+and still alert on Redis independently.
 
 A recommended containment and recovery sequence is:
 
@@ -402,9 +412,16 @@ metrics endpoint or distributed backpressure mechanism.
 ## Verification boundary
 
 Repository tests cover individual services and gateways, HTTP integration, and
-browser collaboration through a single API process. They do not start multiple
-API processes or verify PostgreSQL advisory locking with a real concurrent
-replica pair, restore fencing, Redis outage and recovery, or concurrent sandbox
-operation ordering. The multi-replica classifications and limitations in this
-document are therefore derived from the current source paths; these scenarios
-are not proven safe by the current CI suite.
+browser collaboration through a single API process. The dual-AppModule harness
+(`multi-replica.e2e-spec.ts`, `restore-fencing.e2e-spec.ts`) boots two Nest
+processes against shared PostgreSQL and Redis and covers concurrent durable
+seq allocation, Redis Yjs fan-out, PostgreSQL catch-up on seq gaps, restore
+fencing during peer writes, checkpoint under concurrent peer persist, and
+pinned Socket.IO clients receiving cross-replica `yjs:ack` / `yjs:update`.
+
+They do not start a sticky load-balanced multi-replica deployment in a cloud
+provider, run Redis chaos under sustained load, or prove SIGKILL drain
+behavior. Those remain staging/platform concerns. In-repo production ops
+(Dockerfiles, migrate job, Redis-required readiness, reconnect/resubscribe,
+key prefixing, Prometheus metrics, backup smoke test, runbooks, and container
+scanning) are documented in [operations.md](operations.md).

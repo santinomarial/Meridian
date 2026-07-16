@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { mockFileContents, mockFiles } from "../data/mock";
 import { getLanguageFromFilename, toLanguageMode } from "../lib/language";
 import type {
   ActivityItem,
@@ -12,7 +11,6 @@ import type {
   CursorPosition,
   DiagnosticCounts,
   FileNode,
-  OpenTab,
   PanelKey,
   SaveStatus,
   TerminalStatus,
@@ -72,6 +70,8 @@ type WorkspaceActions = {
   setConnectionStatus: (status: ConnectionStatus) => void;
   setWorkspaceId: (id: string) => void;
   resetWorkspace: () => void;
+  /** Clears session state and re-triggers `useBackendWorkspace` load. */
+  retryWorkspaceLoad: () => void;
   batchLoadBackend: (data: BackendLoadData) => void;
   clearTabDirty: (fileId: string) => void;
   addFileNode: (file: Extract<FileNode, { kind: "file" }>, content: string) => void;
@@ -223,20 +223,18 @@ function persistTheme(theme: WorkspaceTheme): void {
 const _initialTheme = getInitialTheme();
 applyThemeToDocument(_initialTheme);
 
-const INITIAL_OPEN_TABS: OpenTab[] = [
-  { fileId: "file-auth", name: "auth.ts", language: "typescript", dirty: false },
-  { fileId: "file-database", name: "database.ts", language: "typescript", dirty: false },
-];
-
-function createWorkspaceSessionState(theme: WorkspaceTheme): WorkspaceData {
+function createWorkspaceSessionState(
+  theme: WorkspaceTheme,
+  workspaceLoadEpoch = 0,
+): WorkspaceData {
   return {
     workspaceId: null,
     workspaceName: null,
     currentUser: null,
-    files: mockFiles,
-    activeFileId: "file-auth",
-    openTabs: INITIAL_OPEN_TABS.map((tab) => ({ ...tab })),
-    editorContentByFileId: { ...mockFileContents },
+    files: [],
+    activeFileId: null,
+    openTabs: [],
+    editorContentByFileId: {},
     collaborators: [],
     chatMessages: [],
     notifications: [],
@@ -258,6 +256,7 @@ function createWorkspaceSessionState(theme: WorkspaceTheme): WorkspaceData {
     terminalSyncStatus: null,
     backendStatus: "pending",
     connectionStatus: "disconnected",
+    workspaceLoadEpoch,
     documentGenerations: {},
     documentResyncEpoch: {},
   };
@@ -268,10 +267,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   workspaceId: null,
   workspaceName: null,
   currentUser: null,
-  files: mockFiles,
-  activeFileId: "file-auth",
-  openTabs: INITIAL_OPEN_TABS,
-  editorContentByFileId: { ...mockFileContents },
+  files: [],
+  activeFileId: null,
+  openTabs: [],
+  editorContentByFileId: {},
   collaborators: [],
   chatMessages: [],
   notifications: [],
@@ -301,6 +300,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // ── Backend / socket state ────────────────────────────────────────────────
   backendStatus: "pending",
   connectionStatus: "disconnected",
+  workspaceLoadEpoch: 0,
   documentGenerations: {},
   documentResyncEpoch: {},
 
@@ -524,14 +524,32 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   setSaveStatus: (status) => set({ saveStatus: status }),
 
-  setBackendStatus: (status) => set({ backendStatus: status }),
+  setBackendStatus: (status) =>
+    set(() =>
+      status === "unavailable"
+        ? {
+            backendStatus: status,
+            files: [],
+            openTabs: [],
+            activeFileId: null,
+            editorContentByFileId: {},
+            collaborators: [],
+          }
+        : { backendStatus: status },
+    ),
 
   setConnectionStatus: (status) => set({ connectionStatus: status }),
 
   setWorkspaceId: (id) => set({ workspaceId: id }),
 
   resetWorkspace: () => {
-    set((state) => createWorkspaceSessionState(state.theme));
+    set((state) => createWorkspaceSessionState(state.theme, state.workspaceLoadEpoch));
+  },
+
+  retryWorkspaceLoad: () => {
+    set((state) =>
+      createWorkspaceSessionState(state.theme, state.workspaceLoadEpoch + 1),
+    );
   },
 
   addFileNode: (file, content) => {

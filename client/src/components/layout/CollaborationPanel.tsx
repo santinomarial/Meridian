@@ -10,7 +10,6 @@ import {
   transitionBase,
 } from "../ui/styles";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
-import { mockCollaborators } from "../../data/mock";
 import { getSocket } from "../../lib/socket";
 import { colorForUser } from "../../lib/collabColors";
 import type { ChatMessage, Collaborator } from "../../types";
@@ -21,14 +20,6 @@ function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
   if (parts.length === 1) return (parts[0] ?? "").slice(0, 2).toUpperCase();
   return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase();
-}
-
-function DemoBadge() {
-  return (
-    <span className="rounded bg-surface-container-highest px-1 py-px text-[8px] font-bold uppercase tracking-wider text-on-surface-variant">
-      demo
-    </span>
-  );
 }
 
 // ── Collaborator row ──────────────────────────────────────────────────────────
@@ -101,7 +92,7 @@ function ChatMessageLine({ message }: { message: ChatMessage }) {
 
 // ── Live chat section ─────────────────────────────────────────────────────────
 
-function LiveChatSection({ isDemoMode }: { isDemoMode: boolean }) {
+function LiveChatSection() {
   const [draft, setDraft] = useState("");
   const feedRef = useRef<HTMLDivElement>(null);
   const chatMessages = useWorkspaceStore((s) => s.chatMessages);
@@ -119,8 +110,7 @@ function LiveChatSection({ isDemoMode }: { isDemoMode: boolean }) {
     const text = draft.trim();
     if (!text) return;
 
-    const isLive =
-      !isDemoMode && connectionStatus === "connected" && workspaceId !== null;
+    const isLive = connectionStatus === "connected" && workspaceId !== null;
 
     // Show our own message immediately; when live, the server relays it to
     // everyone else in the workspace room.
@@ -142,8 +132,7 @@ function LiveChatSection({ isDemoMode }: { isDemoMode: boolean }) {
   return (
     <section className="flex min-h-0 flex-1 flex-col meridian-crisp-border border-t">
       <div className="flex shrink-0 items-center justify-between px-3 py-2">
-        <h2 className={panelSectionLabel}>{isDemoMode ? "Chat" : "Live Chat"}</h2>
-        {isDemoMode ? <DemoBadge /> : null}
+        <h2 className={panelSectionLabel}>Live Chat</h2>
       </div>
 
       <div ref={feedRef} className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-1">
@@ -162,9 +151,11 @@ function LiveChatSection({ isDemoMode }: { isDemoMode: boolean }) {
         )}
       </div>
 
-      {isDemoMode ? (
-        <p className="shrink-0 px-3 py-1 text-[10px] text-on-surface-variant/50">
-          Demo mode — messages are local only.
+      {connectionStatus !== "connected" ? (
+        <p className="shrink-0 px-3 py-1 text-[10px] text-on-surface-variant/70">
+          {connectionStatus === "connecting"
+            ? "Reconnecting — messages will send when you're back online."
+            : "Offline — messages stay on this device until reconnect."}
         </p>
       ) : null}
 
@@ -212,14 +203,8 @@ function CollaborationPanelContent({
   showCloseButton: boolean;
 }) {
   const collaborators = useWorkspaceStore((s) => s.collaborators);
-  const backendStatus = useWorkspaceStore((s) => s.backendStatus);
-
-  const isDemoMode = backendStatus === "unavailable";
-  const isConnected = backendStatus === "available";
-
-  // In demo mode show mock collaborators clearly labelled; in real mode show
-  // whatever has been populated via socket presence (may be empty).
-  const displayCollaborators: Collaborator[] = isDemoMode ? mockCollaborators : collaborators;
+  const connectionStatus = useWorkspaceStore((s) => s.connectionStatus);
+  const isLive = connectionStatus === "connected";
 
   return (
     <>
@@ -229,14 +214,11 @@ function CollaborationPanelContent({
           <span
             className={[
               "h-1.5 w-1.5 rounded-full",
-              isConnected ? "bg-emerald-500" : "bg-outline-variant",
+              isLive ? "bg-emerald-500" : "bg-outline-variant",
             ].join(" ")}
             aria-hidden
           />
-          <h2 className={panelSectionLabel}>
-            {isDemoMode ? "Demo Collaborators" : "Collaborators"}
-          </h2>
-          {isDemoMode ? <DemoBadge /> : null}
+          <h2 className={panelSectionLabel}>Collaborators</h2>
         </div>
         {showCloseButton && onClose !== undefined ? (
           <button
@@ -253,13 +235,13 @@ function CollaborationPanelContent({
       {/* Collaborator list */}
       {isLoading ? (
         <PanelSkeleton rows={2} className="px-2 py-1" />
-      ) : displayCollaborators.length > 0 ? (
+      ) : collaborators.length > 0 ? (
         <ul className="max-h-[8.5rem] shrink-0 space-y-px overflow-y-auto px-1 py-1.5">
-          {displayCollaborators.map((c) => (
+          {collaborators.map((c) => (
             <CollaboratorRow key={c.id} collaborator={c} />
           ))}
         </ul>
-      ) : isConnected ? (
+      ) : isLive ? (
         <div className="flex shrink-0 flex-col items-center justify-center gap-1 px-3 py-5 text-center" data-testid="collab-no-collaborators">
           <MaterialIcon
             name="group_add"
@@ -272,13 +254,14 @@ function CollaborationPanelContent({
           </p>
         </div>
       ) : (
-        // backendStatus === "pending" — isLoading covers this in practice
-        <div className="shrink-0 px-1 py-1.5">
-          <PanelSkeleton rows={2} />
+        <div className="shrink-0 px-3 py-4 text-center text-[11px] text-on-surface-variant">
+          {connectionStatus === "connecting"
+            ? "Connecting to collaboration…"
+            : "Offline — collaborator presence will return when reconnected."}
         </div>
       )}
 
-      <LiveChatSection isDemoMode={isDemoMode} />
+      <LiveChatSection />
     </>
   );
 }

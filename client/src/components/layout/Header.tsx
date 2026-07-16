@@ -14,7 +14,7 @@ import { useFileOperations } from "../../hooks/useFileOperations";
 import { useSaveActiveFile } from "../../hooks/useSaveActiveFile";
 import { useRunActiveFile } from "../../hooks/useRunActiveFile";
 import { useExportWorkspace } from "../../hooks/useExportWorkspace";
-import { createInvite, logout } from "../../lib/api";
+import { createInvite, logout, ApiError } from "../../lib/api";
 import { getActiveEditor } from "../../lib/editorRegistry";
 import type { Collaborator } from "../../types";
 
@@ -408,30 +408,47 @@ export function Header() {
     if (isBackendAvailable && workspaceId !== null) {
       try {
         const invite = await createInvite(workspaceId, { role: inviteRole, email });
-        const url = `${window.location.origin}/invite/${invite.token}`;
+        const url =
+          invite.previewInviteUrl ??
+          invite.inviteUrl ??
+          `${window.location.origin}/invite/${invite.token}`;
+        setInviteToken(invite.token);
         try {
           await navigator.clipboard.writeText(url);
         } catch {
-          // Clipboard failed — the email still went out.
+          // Clipboard failed — still show the link in the share panel.
         }
         addNotification({ icon: "person_add", text: `Invite created for ${email}` });
-        toast(`Invite sent to ${email}. Link copied to clipboard.`, "success");
+
+        if (invite.emailDelivered === false) {
+          toast(
+            invite.emailError ??
+              `Invite created for ${email}, but email could not be delivered. Link copied — share it with them directly.`,
+            "info",
+          );
+        } else {
+          toast(`Invite sent to ${email}. Link copied to clipboard.`, "success");
+        }
         setInviteEmail("");
         setInviteStatus("sent");
         window.setTimeout(() => setInviteStatus("idle"), 3000);
-      } catch {
-        toast("Could not create invite — try again.", "error");
+      } catch (err) {
+        const message =
+          err instanceof ApiError && err.message.length > 0
+            ? err.message
+            : "Could not create invite — try again.";
+        toast(message, "error");
       }
       return;
     }
 
-    // Offline demo fallback — no backend to persist or email the invite.
+    // Offline — no backend to persist or email the invite.
     try {
       await navigator.clipboard.writeText(inviteLink);
     } catch {
       // Clipboard failed — still show the message.
     }
-    toast(`Invite link for ${email} copied. (Demo mode — no email sent.)`, "info");
+    toast(`Invite link for ${email} copied. (Server offline — no email sent.)`, "info");
     setInviteEmail("");
     setInviteStatus("sent");
     window.setTimeout(() => setInviteStatus("idle"), 3000);
@@ -886,14 +903,18 @@ export function Header() {
                     className={[
                       "shrink-0 rounded-sm px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
                       inviteStatus === "sent"
-                        ? "bg-primary/20 text-primary"
-                        : "bg-primary text-on-primary hover:bg-primary/90",
+                        ? "bg-primary/15 text-primary"
+                        : "btn-primary",
                       "disabled:cursor-default",
                     ].join(" ")}
                   >
                     {inviteStatus === "sent" ? "Sent!" : "Invite"}
                   </button>
                 </div>
+                <p className="mt-1.5 text-[10px] leading-snug text-on-surface-variant/70">
+                  They must open the invite link while signed in with that email. If mail
+                  can&apos;t be delivered, use the copy-link field below.
+                </p>
               </div>
 
               {/* Copy invite link */}

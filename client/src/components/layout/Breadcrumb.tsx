@@ -1,4 +1,4 @@
-import { getFileIconClassName, getFileIconName } from "../../constants/fileDisplay";
+import { FileLanguageIcon } from "../../constants/fileDisplay";
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import type { FileNode } from "../../types";
@@ -59,10 +59,10 @@ export function Breadcrumb() {
             </li>
           ))}
           <li className="flex min-w-0 items-center gap-1 font-medium text-on-surface">
-            <MaterialIcon
-              name={getFileIconName(segments.file.language)}
-              className={["shrink-0 text-[14px]", getFileIconClassName(segments.file.language, segments.file.name)].join(" ")}
-              aria-hidden
+            <FileLanguageIcon
+              language={segments.file.language}
+              fileName={segments.file.name}
+              size={14}
             />
             <span className="truncate">{segments.file.name}</span>
           </li>

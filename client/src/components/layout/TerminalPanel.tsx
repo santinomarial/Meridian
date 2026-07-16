@@ -8,22 +8,40 @@ import type { ConnectionStatus, TerminalStatus, TerminalSyncStatus } from "../..
 // bundled when the TerminalPanel is actually rendered.
 import "@xterm/xterm/css/xterm.css";
 
-/** Human-readable connection status, VS Code style. */
-function connectionLabel(
+type StatusTone = "idle" | "ok" | "warn" | "error";
+
+function statusMeta(
   terminalStatus: TerminalStatus,
   connectionStatus: ConnectionStatus,
-): string {
-  if (terminalStatus === "disabled") return "Disabled";
-  if (terminalStatus === "error") return "Error";
-  if (connectionStatus === "disconnected") return "Disconnected";
-  if (terminalStatus === "ready" || terminalStatus === "running") return "Connected";
-  return "Starting…";
+): { label: string; tone: StatusTone } {
+  if (terminalStatus === "disabled") return { label: "Disabled", tone: "warn" };
+  if (terminalStatus === "error") return { label: "Error", tone: "error" };
+  if (connectionStatus === "disconnected") return { label: "Offline", tone: "error" };
+  if (terminalStatus === "ready" || terminalStatus === "running") {
+    return { label: "Connected", tone: "ok" };
+  }
+  if (terminalStatus === "idle") return { label: "Idle", tone: "idle" };
+  return { label: "Starting…", tone: "warn" };
 }
 
 const SYNC_LABEL: Record<TerminalSyncStatus, string> = {
   synced: "Synced",
-  syncing: "Syncing…",
+  syncing: "Syncing",
   failed: "Sync failed",
+};
+
+const TONE_DOT: Record<StatusTone, string> = {
+  idle: "bg-outline-variant",
+  ok: "bg-secondary",
+  warn: "bg-tertiary",
+  error: "bg-error",
+};
+
+const TONE_TEXT: Record<StatusTone, string> = {
+  idle: "text-on-surface-variant",
+  ok: "text-secondary",
+  warn: "text-tertiary",
+  error: "text-error",
 };
 
 export function TerminalPanel() {
@@ -44,8 +62,6 @@ export function TerminalPanel() {
 
   const { terminalRef, start, stop, fit, focus, clear } = useTerminal(workspaceId);
 
-  // Re-fit whenever the panel opens or the window/panel size changes. `fit` is
-  // a stable useCallback, so depending on it never re-registers the listener.
   useEffect(() => {
     if (!isTerminalOpen) return;
     const handler = (): void => fit();
@@ -53,11 +69,7 @@ export function TerminalPanel() {
     return () => window.removeEventListener("resize", handler);
   }, [isTerminalOpen, fit]);
 
-  // Auto-start a shell when an editor/owner opens the panel, so the terminal is
-  // immediately interactive (VS Code-style) without a manual Start click.
-  // terminal:start is idempotent server-side, so reopening reattaches rather
-  // than spawning a second shell. Viewers never auto-start (and are rejected
-  // server-side regardless).
+  // Auto-start for editors/owners when the panel opens (VS Code-style).
   const startedForOpenRef = useRef(false);
   useEffect(() => {
     if (!isTerminalOpen) {
@@ -70,58 +82,76 @@ export function TerminalPanel() {
   }, [isTerminalOpen, isViewer, workspaceId, start]);
 
   const isRunning = terminalStatus === "running" || terminalStatus === "ready";
-  const terminalBackground = theme === "light" ? "#ffffff" : "#1e1e1e";
+  const status = statusMeta(terminalStatus, connectionStatus);
+  // Keep panel chrome flush with the xterm canvas (same hex as useTerminal themes).
+  const terminalBackground = theme === "light" ? "#eceef3" : "#0f1219";
 
-  // Keep the panel mounted (hidden when closed) so xterm + scrollback persist
-  // across open/close and keystrokes are never dropped by a remount.
   return (
     <div
       className={[
-        "flex flex-col meridian-crisp-border border-t",
+        "terminal-panel flex flex-col border-t meridian-crisp-border",
         isTerminalOpen ? "" : "hidden",
       ].join(" ")}
-      style={{ height: 240, background: terminalBackground }}
+      style={{ height: 260, background: terminalBackground }}
       data-testid="terminal-panel"
     >
-      {/* Title bar — uses Meridian surface tokens so it follows the app theme. */}
-      <div className="flex h-8 shrink-0 items-center justify-between border-b meridian-crisp-border bg-surface-container px-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <MaterialIcon name="terminal" className="text-[14px] text-on-surface-variant" aria-hidden />
-          <span className="text-[11px] font-medium uppercase tracking-wider text-on-surface-variant">
-            Terminal
-          </span>
+      <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b meridian-crisp-border bg-surface-container/90 px-3 backdrop-blur-sm">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex items-center gap-1.5">
+            <MaterialIcon
+              name="terminal"
+              className="text-[15px] text-on-surface"
+              aria-hidden
+            />
+            <span className="text-[12px] font-semibold tracking-wide text-on-surface">
+              Terminal
+            </span>
+          </div>
+
           {workspaceName ? (
             <span
-              className="truncate rounded bg-surface-container-high px-1.5 py-0.5 text-[10px] text-on-surface-variant"
+              className="hidden max-w-[10rem] truncate text-[11px] text-on-surface-variant sm:inline"
               title={`Workspace: ${workspaceName}`}
               data-testid="terminal-workspace-badge"
             >
               {workspaceName}
             </span>
           ) : null}
+
           <span
-            className="text-[10px] text-on-surface-variant/70"
+            className={[
+              "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium",
+              "bg-surface-container-lowest/70",
+              TONE_TEXT[status.tone],
+            ].join(" ")}
             data-testid="terminal-status-label"
           >
-            {connectionLabel(terminalStatus, connectionStatus)}
+            <span
+              className={["h-1.5 w-1.5 rounded-full", TONE_DOT[status.tone]].join(" ")}
+              aria-hidden
+            />
+            {status.label}
           </span>
+
           {terminalSyncStatus !== null && !isViewer ? (
             <span
               className={[
-                "text-[10px]",
-                terminalSyncStatus === "failed" ? "text-error" : "text-on-surface-variant/60",
+                "hidden text-[10px] sm:inline",
+                terminalSyncStatus === "failed"
+                  ? "text-error"
+                  : "text-on-surface-variant/70",
               ].join(" ")}
               data-testid="terminal-sync-status"
             >
-              · {SYNC_LABEL[terminalSyncStatus]}
+              {SYNC_LABEL[terminalSyncStatus]}
             </span>
           ) : null}
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-0.5">
           {isViewer ? (
-            <span className="text-[10px] text-tertiary">
-              View-only — terminal requires editor access
+            <span className="mr-1 text-[10px] text-on-surface-variant">
+              View-only
             </span>
           ) : (
             <>
@@ -140,18 +170,17 @@ export function TerminalPanel() {
                   icon="refresh"
                 />
               ) : null}
-              <IconButton onClick={clear} label="Clear terminal" icon="clear_all" />
+              <IconButton onClick={clear} label="Clear terminal" icon="delete_sweep" />
+              <span className="mx-1 h-3 w-px bg-outline-variant/60" aria-hidden />
             </>
           )}
           <IconButton onClick={toggleTerminal} label="Close terminal" icon="close" />
         </div>
       </div>
 
-      {/* xterm.js mount point. Clicking anywhere in it focuses the terminal so
-          keystrokes reach the shell. */}
       <div
         ref={terminalRef}
-        className="min-h-0 flex-1 overflow-hidden px-1 py-0.5"
+        className="terminal-xterm min-h-0 flex-1 overflow-hidden px-3 py-2"
         data-testid="terminal-xterm"
         aria-label="Terminal"
         aria-live="off"
@@ -176,7 +205,7 @@ function IconButton({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="rounded p-1 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
     >
       <MaterialIcon name={icon} className="text-[16px]" aria-hidden />
     </button>

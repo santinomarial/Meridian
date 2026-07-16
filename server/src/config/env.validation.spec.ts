@@ -25,17 +25,37 @@ describe('environment validation', () => {
     expect(env.E2E_TEST).toBe('false');
   });
 
-  it('allows E2E helpers in test and development processes', () => {
-    expect(
-      validateEnv({ ...REQUIRED_ENV, NODE_ENV: 'test', E2E_TEST: 'true' })
-        .E2E_TEST,
-    ).toBe('true');
-    expect(
+  it('rejects ENABLE_TERMINAL=true in production', () => {
+    expect(() =>
       validateEnv({
         ...REQUIRED_ENV,
-        NODE_ENV: 'development',
-        E2E_TEST: 'true',
-      }).E2E_TEST,
-    ).toBe('true');
+        NODE_ENV: 'production',
+        ENABLE_TERMINAL: 'true',
+      }),
+    ).toThrow(/ENABLE_TERMINAL cannot be enabled in production/);
+  });
+
+  it('parses TRUST_PROXY hop counts', () => {
+    expect(
+      validateEnv({ ...REQUIRED_ENV, TRUST_PROXY: '1' }).TRUST_PROXY,
+    ).toBe(1);
+    expect(
+      validateEnv({ ...REQUIRED_ENV, TRUST_PROXY: 'true' }).TRUST_PROXY,
+    ).toBe(true);
+  });
+
+  it('normalizes REDIS_KEY_PREFIX with a trailing colon', () => {
+    expect(
+      validateEnv({ ...REQUIRED_ENV, REDIS_KEY_PREFIX: 'prod' }).REDIS_KEY_PREFIX,
+    ).toBe('prod:');
+    expect(
+      validateEnv({ ...REQUIRED_ENV, REDIS_KEY_PREFIX: 'staging:' }).REDIS_KEY_PREFIX,
+    ).toBe('staging:');
+  });
+
+  it('parses REDIS_REQUIRED', () => {
+    expect(
+      validateEnv({ ...REQUIRED_ENV, REDIS_REQUIRED: 'true' }).REDIS_REQUIRED,
+    ).toBe(true);
   });
 });

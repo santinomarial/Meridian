@@ -71,9 +71,9 @@ secret distribution are outside this repository.
 In non-development environments, HTTP and Socket.IO CORS allow exactly
 `CLIENT_ORIGIN` with credentials. Development allows only the
 hard-coded localhost and 127.0.0.1 origins on ports 5173 through 5175.
-The application does not install Helmet or configure a Content Security Policy
-or other deployment security headers. TLS and required response headers must
-be supplied by the static host, reverse proxy, or deployment platform.
+The application installs Helmet with API-safe defaults (CSP and HSTS left to
+the static host / TLS terminator). Set `TRUST_PROXY` when the API sits behind
+a reverse proxy so client IP throttling is accurate.
 
 ## 3. Client architecture
 
@@ -238,10 +238,9 @@ Non-auth controllers skip the `auth` throttler. Health and readiness
 still use the default throttler. `E2E_TEST=true` raises both limits
 to 100,000.
 
-The storage is process-local and the app does not configure Express
-`trust proxy`. These limits are not a global abuse-control boundary
-and may identify a reverse proxy rather than the originating client. A
-production ingress needs its own controls and an explicit trusted-proxy review.
+The storage is process-local. Set `TRUST_PROXY` when behind a reverse proxy
+so throttling keys use the client address. These limits are still not a
+global abuse-control boundary — a production ingress needs its own controls.
 
 ## 5. Authentication and session lifecycle
 
@@ -319,16 +318,14 @@ Socket handlers return error events and revoke room access when reauthorization
 fails.
 
 Invite creation and token listing are owner-only. An invite token is a random
-24-byte base64url bearer credential stored in plaintext with a seven-day
-expiry. `Invite.email` is delivery metadata, not an acceptance
-restriction. Any authenticated holder can accept the token, and the token is
-reusable until expiry. The first acceptance stamps `acceptedAt`;
-later acceptances can add other users, while an existing member receives an
-idempotent success response.
+24-byte base64url bearer credential; only its SHA-256 hash is stored, with a
+seven-day expiry. Accepting an invite is single-use (`acceptedAt` stamps and
+blocks reuse). When `Invite.email` is set, only that account may accept.
+Open (email-less) invites remain shareable until first acceptance.
 
-The authenticated `GET /users/:userId` endpoint is not
-workspace-scoped and returns the target user's email and profile fields to any
-authenticated caller who knows the ID.
+The authenticated `GET /users/:userId` endpoint returns email only for self.
+Shared-workspace peers receive profile fields without email; unrelated callers
+get a 404.
 
 Account deletion removes the user's owned workspaces and then the user in one
 database transaction because the owner foreign key is restrictive. Workspace
@@ -471,33 +468,30 @@ Important constraints and delete behavior:
 
 ## 8. Document model and REST behavior
 
-### 8.1 Two document representations
+### 8.1 Authoritative CRDT and content checkpoint
 
-Meridian does not have one continuously synchronized document authority. It
-maintains parallel representations:
+Meridian has one collaborative text authority and one REST checkpoint:
 
-| Representation | Used by |
+| Representation | Role |
 |---|---|
-| `Document.content` | REST tree/content reads, manual saves, version creation, ZIP export, and terminal materialization |
-| In-memory `Y.Doc` plus `Snapshot`/`DocumentUpdate` | Live collaborative text and collaborative cold-load recovery |
+| In-memory `Y.Doc` plus `Snapshot`/`DocumentUpdate` | Authoritative collaborative text and cold-load recovery |
+| `Document.content` | Checkpoint of durable CRDT text for REST reads, ZIP export, and terminal materialization |
 | `DocumentVersion.content` | User-visible save history, detail, diff input, and restore source |
 
-The normal browser flow often aligns the first two: edits enter the Yjs
-document, then an explicit save PATCH writes the visible Monaco text to
-`Document.content` and creates a version when content changed.
-However, server-side Yjs persistence does not update
-`Document.content`. Unsaved collaborative edits therefore do not
-appear in REST export or a newly materialized terminal.
+Live Yjs updates never write `Document.content`. An explicit
+`POST /documents/:id/checkpoint` (Save) flushes pending persists, projects the
+current generation's durable CRDT text under the document advisory lock, updates
+`Document.content`, and creates a `DocumentVersion` when the checkpoint changed.
+`PATCH /documents/:id` is metadata-only and rejects `content`.
 
-The reverse direction is also not general. Arbitrary REST content PATCHes and
-bulk import updates do not reset or update existing Yjs history. Bulk import
-can overwrite an existing file's `Document.content` without making a
-version and without reconciling a loaded or persisted CRDT. If any CRDT history
-already exists, a later collaborative cold load uses that history rather than
-the newer plain-text column.
+Bulk import that overwrites an existing file's content bumps `crdtGeneration`
+and replaces the CRDT lineage so cold load cannot resurrect pre-import
+collaborative state. Version restore remains the specialized path that both
+rewrites the checkpoint and replaces the lineage under the same lock.
 
-Version restore is the only specialized reconciliation path, and it is a
-multi-step, local-instance operation described in section 10.
+Until the first collaborative seed, an empty lineage still treats
+`Document.content` as bootstrap text for cold load; after history exists, the
+CRDT rows are authoritative and the column is only a lagging checkpoint.
 
 ### 8.2 File tree invariants and limits
 
@@ -617,23 +611,25 @@ sequenceDiagram
     participant Pg as PostgreSQL
     participant Redis as Redis
 
-    Sender->>Gateway: yjs:update(documentId, bytes)
+    Sender->>Gateway: yjs:update(documentId, updateId, bytes)
     Gateway->>Gateway: rate, room, session, role, and 1 MiB checks
     Gateway->>Doc: Y.applyUpdate
     Gateway-->>Peer: yjs:update
-    Gateway->>Persist: enqueue update
-    Gateway->>Redis: publish cross-instance update
+    Gateway->>Persist: await persistUpdate(updateId)
     Persist->>Redis: allocate seq when available
-    Persist->>Pg: insert DocumentUpdate
-    Note over Sender,Gateway: No success acknowledgement or durable-write acknowledgement
+    Persist->>Pg: insert DocumentUpdate (or idempotent hit)
+    Persist-->>Gateway: committed(seq)
+    Gateway-->>Sender: yjs:ack(updateId, generation, seq)
+    Gateway->>Redis: publish cross-instance update (seq, updateId)
 ```
 
 The sender is excluded from the local relay because it already applied the
-update. Persistence is asynchronous and process-local: the gateway does not
-wait for PostgreSQL, and failures are logged and swallowed. A client emit,
-continued connection, or peer relay therefore does not mean the update is
-durable. Graceful shutdown waits for currently known write-chain tails, but a
-crash or failed write can lose changes after all live copies disappear.
+update. Local peers may see the edit before PostgreSQL commit. The sender's
+`yjs:ack` is emitted only after commit; clients keep unacked updates in an
+IndexedDB outbound queue and resend them with the same `updateId` on
+reconnect. Persist failure emits `yjs:nack` without dequeuing. Cross-replica
+Redis publication also waits for commit and includes `seq` so a receiving
+replica can catch up from PostgreSQL when it detects a gap.
 
 Yjs sync messages, Yjs updates, and awareness updates each have a configurable
 one MiB default cap. Chat is limited to 2,000 characters. Chat sender ID and
@@ -642,10 +638,9 @@ own optimistic local message because the server relays only to peers.
 
 Awareness is ephemeral and not written to PostgreSQL. The server verifies room
 membership and payload size, tracks awareness client IDs for disconnect
-cleanup, and relays the opaque Yjs awareness data. It does not bind the
-awareness payload's displayed `user` metadata to the authenticated
-identity, so presence display identity is client-asserted by an authenticated
-workspace member.
+cleanup, and relays awareness data after overwriting each owned client's
+`user` field with the authenticated socket identity (id, display name, and
+deterministic color).
 
 ## 10. Persistence, compaction, and restore
 
@@ -681,9 +676,10 @@ inserts it, and deletes covered rows while holding that lock. A later write
 cannot insert a lower sequence after the compaction cutoff, so cold load does
 not skip a late update.
 
-The threshold remains per process and compaction remains asynchronous; neither
-is a client durability acknowledgement. Redis still matters for live fan-out,
-but it is no longer required for sequence uniqueness or compaction ordering.
+The threshold remains per process and compaction remains asynchronous. Client
+durability is the post-commit `yjs:ack` path (IndexedDB queue + idempotent
+`updateId`), not compaction. Redis still matters for live fan-out, but it is
+no longer required for sequence uniqueness or compaction ordering.
 
 When a server-side `Y.Doc` reaches deferred teardown, the persistence service
 waits for its captured write-chain tail and evicts the local chain, Redis seed
@@ -693,26 +689,30 @@ newer chain.
 
 ### 10.3 Version restore
 
-Restore is not one atomic transaction across all representations:
+Restore is one PostgreSQL transaction holding the document advisory lock:
 
-1. `DocumentsService` commits a transaction that writes
-   `Document.content` and creates a new
-   `DocumentVersion`.
-2. `DocumentRestoreService` runs after that commit.
-3. If this process has the document loaded, it replaces its Yjs text, emits a
-   local `yjs:update`, flushes this process's persistence chain,
-   replaces CRDT history with a sequence-zero snapshot, best-effort clears the
-   Redis sequence key, and emits `document:restored`.
-4. If this process does not have the document loaded, it deletes CRDT history
-   so the next local cold load seeds from `Document.content`.
+1. `DocumentsService.restoreVersion` increments `Document.crdtGeneration`,
+   rewrites `Document.content`, records a new `DocumentVersion`, and replaces
+   the CRDT history with a single seq-0 snapshot of the restored text under
+   the new generation.
+2. After that commit, `DocumentRestoreService.applyRestore` reloads the local
+   `Y.Doc` (when loaded), emits `document:restored` to connected clients, and
+   publishes a restore-control event on Redis (`document:{id}:restore`) so
+   every other replica evicts its stale lineage and forces clients to
+   resynchronize.
+3. Persistence writes tagged with the pre-restore generation are rejected
+   inside their locked transaction (restore fencing), so a replica that has
+   not yet processed the control event can never commit pre-restore state.
+4. A periodic generation audit compares every loaded `Y.Doc` against
+   PostgreSQL and evicts stale ones, so a missed Redis message cannot leave a
+   replica serving a dead lineage indefinitely.
 5. The controller then best-effort syncs restored text into active terminal
-   projections.
+   projections (still outside the CRDT transaction).
 
-A failure after step 1 can leave the content/version committed while CRDT state
-or terminal projections remain unreconciled. Restore broadcasts and CRDT reset
-are local to the handling process; they are not published through Redis.
-Another replica can retain and later persist its pre-restore `Y.Doc`
-or pending writes. Multi-replica restore is therefore not convergent.
+The completion criterion is covered by the multi-replica integration test
+`restore-fencing.e2e-spec.ts`: two API processes open the same document,
+restore through either, continue editing under the new generation, and prove
+pre-restore state never reappears.
 
 ## 11. Redis and multiple server instances
 
@@ -842,8 +842,9 @@ or an external cleanup removes it.
 Pino logs are pretty-printed in development and JSON elsewhere. The
 configurable log level defaults to `info`. Authorization and Cookie headers,
 password/token body fields, and Set-Cookie response headers are configured for
-redaction. Request URLs are not redacted, so raw bearer invite tokens in
-`/invites/:token` paths can enter access and error logs. HTTP errors include
+redaction. Request URL serializers and error `path` fields redact
+`/invites/:token` and `/reset-password/:token` segments (and `token` query
+parameters). HTTP errors include
 the request correlation ID; Socket.IO errors are emitted as protocol events.
 
 Nest shutdown hooks are enabled. Shutdown waits for known document write
@@ -877,6 +878,15 @@ Startup uses a Zod schema and fails on invalid required values.
 | `MAIL_FROM` | `Meridian <no-reply@meridian.local>` |
 | `FORGOT_PASSWORD_TTL_MINUTES` | 30 |
 | `E2E_TEST` | `false` |
+
+Multi-replica Redis / metrics (see [operations.md](operations.md)):
+
+| Variable | Default |
+|---|---|
+| `REDIS_REQUIRED` | `false` |
+| `REDIS_KEY_PREFIX` | empty |
+| `METRICS_ENABLED` | `true` |
+| `TRUST_PROXY` | `false` |
 
 `E2E_TEST=true` cannot be combined with
 `NODE_ENV=production`; startup validation rejects it. In a
@@ -968,42 +978,61 @@ backend-dependent groups can skip when the API is unavailable. CI provisions
 PostgreSQL, Redis, the compiled API, E2E helpers, and terminal support so those
 groups execute in the full run.
 
-CI does not currently exercise a multi-replica deployment, PostgreSQL advisory
-locking against a real concurrent replica pair, Redis loss/recovery,
-cross-replica restore, terminal resource isolation, production TLS/cookie
-routing, database backup/restore, or long-running process memory growth.
+CI exercises a dual-AppModule multi-replica harness against shared PostgreSQL
+and Redis (`multi-replica.e2e-spec.ts`, `restore-fencing.e2e-spec.ts`):
+concurrent durable seqs, Redis fan-out, seq-gap catch-up, restore fencing, and
+pinned Socket.IO cross-replica delivery. It does not exercise a sticky load
+balancer, Redis loss/recovery under load, terminal resource isolation,
+production TLS/cookie routing, database backup/restore, or long-running
+process memory growth.
 
 ## 15. Known architectural limitations
 
 The most material limitations are collected here so they are not mistaken for
 guarantees:
 
-1. Version restore reconciles only the handling process and is non-atomic
-   across plain text, CRDT state, and terminal projection.
-2. Live edit persistence is asynchronous, has no client durability
-   acknowledgement, and logs and swallows failures without durable retry.
-3. `Document.content` and CRDT history can diverge after unsaved
-   edits, arbitrary REST updates, bulk overwrite, failed persistence, or failed
-   restore reconciliation.
-4. Redis pub/sub has no replay or reconnect path; multi-replica operation
-   during Redis failure can diverge in memory. Inbound pub/sub events trust
-   Redis, and names are not environment-prefixed.
-5. The terminal is host command execution, not a security sandbox, and does
-   not delete temporary projection directories on teardown.
-6. HTTP request parsing precedes Nest authentication/throttling; HTTP
-   throttling is process-local and proxy trust is not configured.
-7. ZIP export is built in memory rather than streamed, although document,
+1. Live edits are acknowledged to the sender only after PostgreSQL commit
+   (`yjs:ack` with `updateId` + `seq`). Clients keep an IndexedDB outbound
+   queue and resend unacked updates idempotently. Cross-replica Redis fan-out
+   also waits for commit and carries `seq` so receivers can catch up from
+   PostgreSQL on gaps. Transient persist failures emit `yjs:nack` and leave
+   the queue entry for retry; they do not roll back the local in-memory apply.
+2. `Document.content` is a checkpoint of durable CRDT text written by
+   `POST /documents/:id/checkpoint` (and by create / import lineage reset /
+   version restore). Unsaved collaborative edits remain absent from export and
+   terminal materialization until checkpoint. Independent content PATCH is
+   rejected.
+3. Redis pub/sub has no replay or reconnect path; multi-replica operation
+   during Redis failure can diverge in memory for fan-out (awareness, chat,
+   live updates). Restore fencing still rejects stale durable writes via
+   PostgreSQL even when a restore-control message is missed; the generation
+   audit eventually evicts stale in-memory documents. Inbound pub/sub events
+   trust Redis, and names are not environment-prefixed.
+4. The terminal is host command execution, not a security sandbox, and does
+   not delete temporary projection directories on teardown. `ENABLE_TERMINAL`
+   is refused when `NODE_ENV=production`.
+5. HTTP request parsing precedes Nest authentication/throttling; HTTP
+   throttling is process-local. Set `TRUST_PROXY` when behind a reverse proxy
+   so client IP keying is accurate; deployment-wide throttle budgets remain an
+   ops concern.
+6. ZIP export is built in memory rather than streamed, although document,
    file, source-content, and final-archive limits bound the operation.
-8. Invite tokens are plaintext, reusable bearer links; optional invite email
-    does not bind acceptance identity.
-9. Awareness display identity is client-asserted, email is not verified, and
-    an authenticated user lookup can disclose another user's email by ID.
-10. Expired/revoked authentication and invite records have no scheduled
-    retention cleanup.
-11. Reset-token email copy remains fixed at 30 minutes even when its configured
-    lifetime changes.
-12. Bearer invite tokens can be retained in request logs because they are URL
-    path parameters and URL redaction is not configured.
-13. Production infrastructure, security headers, ingress controls, isolation,
-    observability backend, backup policy, and disaster-recovery behavior are
-    not defined in this repository.
+7. Invite tokens are hashed at rest (SHA-256), single-use on accept, and
+   email-bound when an invite email is set. Raw tokens appear only in the
+   create response and invite URL.
+8. Awareness display identity is overwritten from the authenticated socket
+   user before relay. Email is not verified at registration. `GET /users/:id`
+   returns email only for self; shared-workspace peers see profile without
+   email; unrelated users get 404.
+9. Expired/revoked sessions, used/expired reset tokens, and expired/used
+   invites are purged hourly by `RetentionService`.
+10. Reset-token email copy uses `FORGOT_PASSWORD_TTL_MINUTES`.
+11. Invite and reset-password bearer tokens are redacted from request log
+    URLs and error `path` fields.
+12. The API applies Helmet defaults (CSP/HSTS deferred to the static host /
+    TLS terminator). Swagger `/docs` is disabled in production. Production
+    containers, Redis-required readiness, prefixed Redis channels, Prometheus
+    metrics, backup smoke tests, and incident runbooks are documented in
+    [operations.md](operations.md). Sticky LB, managed TLS, and terminal
+    isolation remain platform concerns — `ENABLE_TERMINAL` stays refused in
+    production.

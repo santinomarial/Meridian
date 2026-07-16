@@ -22,7 +22,13 @@ export class UpdateDocumentDto {
   @IsOptional()
   parentId?: string | null;
 
-  @ApiPropertyOptional({ example: 'export const x = 1;', nullable: true })
+  @ApiPropertyOptional({
+    example: 'export const x = 1;',
+    nullable: true,
+    deprecated: true,
+    description:
+      'Rejected. Use POST /documents/:id/checkpoint to save collaborative content.',
+  })
   @IsString()
   @IsOptional()
   content?: string | null;

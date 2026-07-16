@@ -109,16 +109,20 @@ export class AuthService {
 
   /**
    * Initiates a password reset for the given email.
-   * Always returns void — never reveals whether the email exists in the system.
+   * Always succeeds from the caller's perspective — never reveals whether the
+   * email exists. In development without Resend, `previewResetUrl` is returned
+   * so the UI can show the link (it is also logged on the server).
    */
-  async forgotPassword(dto: ForgotPasswordDto): Promise<void> {
+  async forgotPassword(
+    dto: ForgotPasswordDto,
+  ): Promise<{ previewResetUrl?: string }> {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
 
     if (user === null) {
       // Silently succeed — do not reveal that this email doesn't exist.
-      return;
+      return {};
     }
 
     // Invalidate any active tokens for this user so only one is valid at a time.
@@ -138,7 +142,14 @@ export class AuthService {
     const resetUrl = `${this.clientOrigin}/reset-password/${rawToken}`;
 
     try {
-      await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
+      const mail = await this.mailService.sendPasswordResetEmail(
+        user.email,
+        resetUrl,
+      );
+      if (!mail.delivered) {
+        return { previewResetUrl: mail.previewUrl };
+      }
+      return {};
     } catch (err) {
       // Log but do not propagate — the caller still returns a generic success
       // response so user existence is never exposed.
@@ -146,6 +157,7 @@ export class AuthService {
         { userId: user.id, err: (err as Error).message },
         'Failed to send password reset email',
       );
+      return {};
     }
   }
 

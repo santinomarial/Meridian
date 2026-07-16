@@ -114,7 +114,7 @@ function AuthenticatedState({
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isRealInvite = invite !== null && !invite.expired;
+  const isRealInvite = invite !== null && !invite.expired && !invite.used;
 
   const handleAccept = async (): Promise<void> => {
     if (!isRealInvite) {
@@ -127,7 +127,9 @@ function AuthenticatedState({
       const acceptedInvite = await acceptInvite(inviteId);
       navigate(`/workspace/${encodeURIComponent(acceptedInvite.workspaceId)}`);
     } catch {
-      setError("Could not accept this invite. It may have expired or been revoked.");
+      setError(
+        "Could not accept this invite. It may have expired, already been used, or been sent to a different email.",
+      );
       setAccepting(false);
     }
   };
@@ -136,7 +138,11 @@ function AuthenticatedState({
     <PageShell>
       <div className="mb-5 text-center">
         <MaterialIcon
-          name={invite?.expired === true ? "schedule" : "check_circle"}
+          name={
+            invite?.expired === true || invite?.used === true
+              ? "schedule"
+              : "check_circle"
+          }
           className="text-[36px] text-primary"
           aria-hidden
         />
@@ -163,6 +169,11 @@ function AuthenticatedState({
             This invite has expired. Ask for a new invite link.
           </p>
         ) : null}
+        {invite?.used === true ? (
+          <p className="mt-2 text-xs text-error">
+            This invite has already been used. Ask for a new invite link.
+          </p>
+        ) : null}
         {invite === null ? (
           <p className="mt-2 text-[10px] text-on-surface-variant/60">
             This invite link could not be verified — you can still open your own
@@ -172,7 +183,10 @@ function AuthenticatedState({
         {error !== null ? <p className="mt-2 text-xs text-error">{error}</p> : null}
       </div>
 
-      <PrimaryButton onClick={() => void handleAccept()} disabled={accepting || invite?.expired === true}>
+      <PrimaryButton
+        onClick={() => void handleAccept()}
+        disabled={accepting || invite?.expired === true || invite?.used === true}
+      >
         {accepting ? "Joining…" : isRealInvite ? "Accept & Open Workspace" : "Go to Workspace"}
         <MaterialIcon name="arrow_forward" className="text-[16px]" aria-hidden />
       </PrimaryButton>

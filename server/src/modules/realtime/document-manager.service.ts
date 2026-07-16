@@ -301,6 +301,7 @@ export class DocumentManagerService {
         documentId,
         generation,
         seq: 0,
+        updateId: `seed:${documentId}:${generation}`,
         update: Buffer.from(Y.encodeStateAsUpdate(doc)),
       }],
       skipDuplicates: true,

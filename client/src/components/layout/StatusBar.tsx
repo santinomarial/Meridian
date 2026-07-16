@@ -30,7 +30,7 @@ function StatusBarSegment({ children, className, ...rest }: HTMLAttributes<HTMLS
       className={[
         "inline-flex h-full items-center gap-1 px-2.5",
         transitionBase,
-        "hover:bg-on-primary/10",
+        "hover:bg-surface-container-highest/80",
         className,
       ]
         .filter(Boolean)
@@ -54,15 +54,29 @@ export function StatusBar() {
 
   return (
     <footer
-      className="flex h-[22px] shrink-0 items-center justify-between bg-primary-container px-0.5 font-mono text-[11px] leading-none text-on-primary"
+      className="flex h-[22px] shrink-0 items-center justify-between border-t meridian-crisp-border bg-surface-container-high px-0.5 font-mono text-[12px] leading-none text-on-surface-variant"
       role="contentinfo"
       aria-label="Status bar"
     >
       <div className="flex h-full min-w-0 items-center overflow-x-auto">
         <StatusBarSegment title="Errors and warnings in the active file">
-          <MaterialIcon name="error_outline" className="text-[12px]" aria-hidden />
+          <MaterialIcon
+            name="error_outline"
+            className={[
+              "text-[12px]",
+              diagnosticCounts.errors > 0 ? "text-error" : "text-on-surface-variant",
+            ].join(" ")}
+            aria-hidden
+          />
           <span className="tabular-nums">{diagnosticCounts.errors}</span>
-          <MaterialIcon name="warning_amber" className="ml-0.5 text-[12px]" aria-hidden />
+          <MaterialIcon
+            name="warning_amber"
+            className={[
+              "ml-0.5 text-[12px]",
+              diagnosticCounts.warnings > 0 ? "text-tertiary" : "text-on-surface-variant",
+            ].join(" ")}
+            aria-hidden
+          />
           <span className="tabular-nums">{diagnosticCounts.warnings}</span>
         </StatusBarSegment>
       </div>
@@ -73,7 +87,17 @@ export function StatusBar() {
         <StatusBarSegment className="hidden md:inline-flex">Spaces: 4</StatusBarSegment>
         <StatusBarSegment className="hidden lg:inline-flex">UTF-8</StatusBarSegment>
         <StatusBarSegment className="hidden sm:inline-flex">{languageLabel}</StatusBarSegment>
-        <StatusBarSegment data-testid="save-status" data-save-status={saveStatus}>
+        <StatusBarSegment
+          data-testid="save-status"
+          data-save-status={saveStatus}
+          className={
+            saveStatus === "error"
+              ? "text-error"
+              : saveStatus === "unsaved"
+                ? "text-tertiary"
+                : undefined
+          }
+        >
           {saveStatus === "saving"
             ? "Saving…"
             : saveStatus === "error"
@@ -82,7 +106,7 @@ export function StatusBar() {
                 ? "Unsaved"
                 : "Saved"}
         </StatusBarSegment>
-        <StatusBarSegment className="font-semibold tabular-nums">
+        <StatusBarSegment className="tabular-nums text-on-surface-variant/80">
           Meridian v{MERIDIAN_VERSION}
         </StatusBarSegment>
       </div>

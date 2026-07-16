@@ -1,11 +1,12 @@
 import { useCallback } from "react";
-import { ApiError, updateDocument } from "../lib/api";
+import { ApiError, checkpointDocument } from "../lib/api";
+import { listPendingYjsUpdates } from "../lib/yjsOutboundQueue";
 import { toast } from "../components/ui/Toast";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 
 export interface UseSaveActiveFileReturn {
   /**
-   * Persists the active file's current content to the backend.
+   * Checkpoints the active file's durable collaborative text on the server.
    * Resolves to `true` on success, `false` when the save was not attempted
    * (no active file / viewer / backend unavailable) or the request failed.
    * Updates save status, clears the tab's dirty flag, and emits the canonical
@@ -14,6 +15,26 @@ export interface UseSaveActiveFileReturn {
   saveActiveFile: () => Promise<boolean>;
   /** Whether a save can currently be performed (drives disabled UI states). */
   canSaveActiveFile: boolean;
+}
+
+const PENDING_ACK_WAIT_MS = 2_000;
+const PENDING_ACK_POLL_MS = 50;
+
+/**
+ * Waits briefly for the IndexedDB outbound queue to drain so the server
+ * checkpoint includes recently emitted updates that have not yet been acked.
+ */
+async function waitForPendingAcks(documentId: string): Promise<void> {
+  const deadline = Date.now() + PENDING_ACK_WAIT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const pending = await listPendingYjsUpdates(documentId);
+      if (pending.length === 0) return;
+    } catch {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, PENDING_ACK_POLL_MS));
+  }
 }
 
 /**
@@ -33,7 +54,7 @@ export function useSaveActiveFile(): UseSaveActiveFileReturn {
     (userRole === "OWNER" || userRole === "EDITOR");
 
   const saveActiveFile = useCallback(async (): Promise<boolean> => {
-    // Read fresh state at call time so a stale closure can't save old content.
+    // Read fresh state at call time so a stale closure can't save the wrong tab.
     const state = useWorkspaceStore.getState();
     const id = state.activeFileId;
     if (
@@ -45,17 +66,24 @@ export function useSaveActiveFile(): UseSaveActiveFileReturn {
       return false;
     }
 
-    const content = state.editorContentByFileId[id] ?? "";
     const tabName = state.openTabs.find((t) => t.fileId === id)?.name ?? "file";
+    const contentBefore = state.editorContentByFileId[id] ?? "";
 
     state.setSaveStatus("saving");
     try {
-      await updateDocument(id, { content });
+      await waitForPendingAcks(id);
+      const result = await checkpointDocument(id);
       const latest = useWorkspaceStore.getState();
-      const contentStillMatches = latest.editorContentByFileId[id] === content;
-      if (contentStillMatches) latest.clearTabDirty(id);
-      if (latest.activeFileId === id) {
-        latest.setSaveStatus(contentStillMatches ? "saved" : "unsaved");
+      // Align the editor mirror with the checkpoint without flipping dirty.
+      if ((latest.editorContentByFileId[id] ?? "") === contentBefore) {
+        latest.applyRemoteFileContent(id, result.content);
+      }
+      const after = useWorkspaceStore.getState();
+      const contentStillMatches =
+        (after.editorContentByFileId[id] ?? "") === result.content;
+      if (contentStillMatches) after.clearTabDirty(id);
+      if (after.activeFileId === id) {
+        after.setSaveStatus(contentStillMatches ? "saved" : "unsaved");
       }
       state.addNotification({
         icon: contentStillMatches ? "save" : "edit_note",

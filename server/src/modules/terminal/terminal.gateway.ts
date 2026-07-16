@@ -58,6 +58,8 @@ export function buildRunCommand(relPath: string): string | null {
       return `npx --no-install tsx ${quoted}`;
     case '.sh':
       return `bash ${quoted}`;
+    case '.go':
+      return `go run ${quoted}`;
     default:
       return null;
   }

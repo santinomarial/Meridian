@@ -10,7 +10,7 @@ import {
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { PanelSkeleton } from "../ui/Skeleton";
 import { EmptyState } from "../ui/EmptyState";
-import { getFileIconClassName, getFileIconName } from "../../constants/fileDisplay";
+import { FileLanguageIcon, languageFromFileName } from "../../constants/fileDisplay";
 import {
   focusRing,
   iconButtonMutedClass,
@@ -200,11 +200,7 @@ function FileTreeNode({
           className="flex items-center gap-0.5 border-l-2 border-primary py-[3px] pr-2"
           style={{ paddingLeft: paddingLeft + CHEVRON_W }}
         >
-          <MaterialIcon
-            name={getFileIconName(node.language)}
-            className={["w-[16px] shrink-0 text-[15px]", getFileIconClassName(node.language, node.name)].join(" ")}
-            aria-hidden
-          />
+          <FileLanguageIcon language={node.language} fileName={node.name} />
           <input
             ref={renameInputRef}
             type="text"
@@ -240,11 +236,7 @@ function FileTreeNode({
           style={{ paddingLeft: paddingLeft + CHEVRON_W }}
           aria-selected={isActive}
         >
-          <MaterialIcon
-            name={getFileIconName(node.language)}
-            className={["w-[16px] shrink-0 text-[15px]", getFileIconClassName(node.language, node.name)].join(" ")}
-            aria-hidden
-          />
+          <FileLanguageIcon language={node.language} fileName={node.name} />
           <span className="truncate">{node.name}</span>
         </button>
       )}
@@ -466,8 +458,9 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose, read
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const namingIcon = namingTarget === "folder" ? "create_new_folder" : "note_add";
   const namingPlaceholder = namingTarget === "folder" ? "folder-name" : "filename.ts";
+  const namingLanguage =
+    namingTarget === "file" ? languageFromFileName(newItemName || "file.txt") : null;
 
   return (
     <aside
@@ -570,7 +563,18 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose, read
         {/* Inline "new file/folder" input */}
         {namingTarget !== null ? (
           <div className="flex items-center gap-1 border-l-2 border-primary px-2 py-[3px]">
-            <MaterialIcon name={namingIcon} className="shrink-0 text-[15px] text-primary" aria-hidden />
+            {namingTarget === "folder" ? (
+              <MaterialIcon
+                name="create_new_folder"
+                className="shrink-0 text-[15px] text-primary"
+                aria-hidden
+              />
+            ) : (
+              <FileLanguageIcon
+                language={namingLanguage ?? "plaintext"}
+                fileName={newItemName}
+              />
+            )}
             <input
               ref={newItemInputRef}
               type="text"

@@ -1,5 +1,6 @@
 import request from 'supertest';
 import type TestAgent from 'supertest/lib/agent';
+import * as Y from 'yjs';
 import {
   createTestApp,
   cleanupByEmailPrefix,
@@ -7,6 +8,8 @@ import {
   STRONG_PASSWORD,
   type TestApp,
 } from './utils/test-app';
+import { DocumentManagerService } from '../src/modules/realtime/document-manager.service';
+import { DocumentPersistenceService } from '../src/modules/realtime/document-persistence.service';
 
 const PREFIX = 'int-doc-';
 
@@ -70,6 +73,7 @@ describe('Documents & workspace permissions (HTTP integration)', () => {
   });
 
   afterAll(async () => {
+    ctx.app.get(DocumentManagerService).destroyAll();
     await cleanupByEmailPrefix(ctx.prisma, PREFIX);
     await ctx.app.close();
   });
@@ -93,21 +97,52 @@ describe('Documents & workspace permissions (HTTP integration)', () => {
 
   // ── Write permission enforcement ───────────────────────────────────────────
 
-  it('forbids a viewer from modifying a document (403)', async () => {
-    const res = await viewer.patch(`/documents/${documentId}`).send({ content: 'hacked' });
+  it('forbids a viewer from checkpointing a document (403)', async () => {
+    const res = await viewer.post(`/documents/${documentId}/checkpoint`);
     expect(res.status).toBe(403);
-    // The content is unchanged in the DB.
     const doc = await ctx.prisma.document.findUnique({ where: { id: documentId } });
     expect(doc?.content).toBe('print("hi")');
   });
 
-  it('lets the owner modify a document (200)', async () => {
-    const res = await owner.patch(`/documents/${documentId}`).send({ content: 'print("updated")' });
-    expect(res.status).toBe(200);
-    expect(res.body.content).toBe('print("updated")');
+  it('rejects PATCH content — Save must use checkpoint (400)', async () => {
+    const res = await owner
+      .patch(`/documents/${documentId}`)
+      .send({ content: 'print("updated")' });
+    expect(res.status).toBe(400);
+    const doc = await ctx.prisma.document.findUnique({ where: { id: documentId } });
+    expect(doc?.content).toBe('print("hi")');
   });
 
-  it('serializes version allocation for concurrent meaningful saves', async () => {
+  it('lets the owner checkpoint durable CRDT text into Document.content', async () => {
+    const manager = ctx.app.get(DocumentManagerService);
+    const persistence = ctx.app.get(DocumentPersistenceService);
+    const ydoc = await manager.acquire(documentId);
+    ydoc.getText('content').delete(0, ydoc.getText('content').length);
+    ydoc.getText('content').insert(0, 'print("updated")');
+    await persistence.persistUpdate(
+      documentId,
+      Y.encodeStateAsUpdate(ydoc),
+      manager.getGeneration(documentId) ?? 0,
+      'e2e-upd-1',
+    );
+    await persistence.flushDocument(documentId);
+
+    const res = await owner
+      .post(`/documents/${documentId}/checkpoint`)
+      .expect(201);
+    expect(res.body.content).toBe('print("updated")');
+    expect(res.body.versionCreated).toBe(true);
+    expect(res.body.document.content).toBe('print("updated")');
+
+    manager.release(documentId);
+  });
+
+  it('allocates sequential versions across distinct CRDT checkpoints', async () => {
+    const manager = ctx.app.get(DocumentManagerService);
+    const persistence = ctx.app.get(DocumentPersistenceService);
+    const ydoc = await manager.acquire(documentId);
+    const generation = manager.getGeneration(documentId) ?? 0;
+
     const previous = await ctx.prisma.documentVersion.findFirst({
       where: { documentId },
       orderBy: { versionNumber: 'desc' },
@@ -115,13 +150,26 @@ describe('Documents & workspace permissions (HTTP integration)', () => {
     });
     const previousNumber = previous?.versionNumber ?? 0;
 
-    const [first, second] = await Promise.all([
-      owner.patch(`/documents/${documentId}`).send({ content: 'print("concurrent-a")' }),
-      owner.patch(`/documents/${documentId}`).send({ content: 'print("concurrent-b")' }),
-    ]);
+    ydoc.getText('content').insert(ydoc.getText('content').length, '\n# A');
+    await persistence.persistUpdate(
+      documentId,
+      Y.encodeStateAsUpdate(ydoc),
+      generation,
+      'e2e-upd-a',
+    );
+    await persistence.flushDocument(documentId);
+    await owner.post(`/documents/${documentId}/checkpoint`).expect(201);
 
-    expect(first.status).toBe(200);
-    expect(second.status).toBe(200);
+    ydoc.getText('content').insert(ydoc.getText('content').length, '\n# B');
+    await persistence.persistUpdate(
+      documentId,
+      Y.encodeStateAsUpdate(ydoc),
+      generation,
+      'e2e-upd-b',
+    );
+    await persistence.flushDocument(documentId);
+    await owner.post(`/documents/${documentId}/checkpoint`).expect(201);
+
     const versions = await ctx.prisma.documentVersion.findMany({
       where: { documentId, versionNumber: { gt: previousNumber } },
       orderBy: { versionNumber: 'asc' },
@@ -131,6 +179,8 @@ describe('Documents & workspace permissions (HTTP integration)', () => {
       previousNumber + 1,
       previousNumber + 2,
     ]);
+
+    manager.release(documentId);
   });
 
   it('rejects unknown fields on create (400 via ValidationPipe)', async () => {

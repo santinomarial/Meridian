@@ -17,7 +17,7 @@ export class CreateInviteDto {
     description: 'When set, an invite email is sent to this address',
     example: 'colleague@example.com',
   })
-  @IsEmail()
   @IsOptional()
+  @IsEmail()
   email?: string;
 }

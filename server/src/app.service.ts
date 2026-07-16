@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from './prisma/prisma.service';
 import { RedisService } from './redis/redis.service';
+import type { AppConfig } from './config/configuration.type';
+import { APP_CONFIG_KEY } from './config/app.config';
 
 export interface ReadinessResponse {
   status: 'ready' | 'not_ready';
@@ -13,10 +16,16 @@ export interface ReadinessResponse {
 
 @Injectable()
 export class AppService {
+  private readonly redisRequired: boolean;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-  ) {}
+    configService: ConfigService,
+  ) {
+    this.redisRequired =
+      configService.getOrThrow<AppConfig>(APP_CONFIG_KEY).redisRequired;
+  }
 
   getHealth(): {
     status: string;
@@ -38,7 +47,10 @@ export class AppService {
       this.checkRedis(),
     ]);
 
-    const status = postgres === 'ok' ? 'ready' : 'not_ready';
+    const redisBlocking =
+      this.redisRequired && redis !== 'ok';
+    const status =
+      postgres === 'ok' && !redisBlocking ? 'ready' : 'not_ready';
     return {
       status,
       dependencies: { postgres, redis },

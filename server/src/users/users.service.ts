@@ -34,6 +34,22 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
+  /**
+   * True when the viewer may see the target profile: self, or any user who
+   * shares at least one workspace membership with them.
+   */
+  async canViewProfile(viewerId: string, targetId: string): Promise<boolean> {
+    if (viewerId === targetId) return true;
+    const shared = await this.prisma.workspaceMember.findFirst({
+      where: {
+        userId: viewerId,
+        workspace: { members: { some: { userId: targetId } } },
+      },
+      select: { id: true },
+    });
+    return shared !== null;
+  }
+
   async listUsers(): Promise<User[]> {
     return this.prisma.user.findMany({ orderBy: { createdAt: 'asc' } });
   }

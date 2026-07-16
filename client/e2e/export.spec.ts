@@ -55,21 +55,18 @@ const exportCommand = (page: Page) =>
 
 // ── Demo mode (no backend) ──────────────────────────────────────────────────
 
-test("export is disabled with a reason when no workspace is loaded", async ({ page }) => {
-  // Block the backend so the app enters demo mode (an unauthenticated visit
-  // with a reachable backend redirects to the login page instead).
+test("export is unavailable when the workspace cannot load", async ({ page }) => {
+  // Block the backend so the app shows the unavailable gate (an unauthenticated
+  // visit with a reachable backend redirects to the login page instead).
   const apiBase = process.env["MERIDIAN_BACKEND_URL"] ?? "http://localhost:3000";
   await page.route(`${apiBase}/**`, (route) => route.abort("connectionrefused"));
   await page.goto("/workspace");
-  await page.waitForSelector('[data-testid="workspace-root"]', { timeout: 15_000 });
-  await page.waitForSelector('[data-testid="backend-unavailable-banner"]', {
-    timeout: 10_000,
+  await page.waitForSelector('[data-testid="backend-unavailable-gate"]', {
+    timeout: 15_000,
   });
-
+  // Command palette is not mounted on the gate — export must not be reachable.
   await page.keyboard.press("ControlOrMeta+k");
-  await expect(page.getByTestId("command-palette")).toBeVisible({ timeout: 5_000 });
-  await expect(exportCommand(page)).toHaveAttribute("data-disabled", "true");
-  await expect(exportCommand(page)).toContainText("Open a workspace first");
+  await expect(page.getByTestId("command-palette")).toHaveCount(0);
 });
 
 // ── Backend required ─────────────────────────────────────────────────────────

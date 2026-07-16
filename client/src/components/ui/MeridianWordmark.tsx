@@ -8,7 +8,7 @@ export function MeridianWordmark({ className }: MeridianWordmarkProps) {
       className={["inline-flex items-center gap-2", className].filter(Boolean).join(" ")}
     >
       <span
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] border meridian-crisp-border bg-surface-container"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] border border-outline-variant/80 bg-surface-container-lowest shadow-sm"
         aria-hidden
       >
         <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 text-primary" fill="none">
@@ -27,7 +27,7 @@ export function MeridianWordmark({ className }: MeridianWordmarkProps) {
           />
         </svg>
       </span>
-      <span className="font-black tracking-[-0.02em] text-[17px] leading-none text-primary">
+      <span className="font-black tracking-[-0.02em] text-[17px] leading-none text-on-surface">
         Meridian
       </span>
     </span>

@@ -55,18 +55,22 @@ async function bootstrap(): Promise<void> {
 
   app.useWebSocketAdapter(new SocketIoAdapter(app, corsOrigin));
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Meridian API')
-    .setDescription('Backend API for Meridian collaborative browser IDE')
-    .setVersion('0.1.0')
-    .addTag('health', 'Service liveness')
-    .addTag('users', 'User accounts')
-    .addTag('workspaces', 'Workspaces and membership')
-    .addTag('documents', 'Documents and file tree')
-    .build();
+  // Swagger is a development aid — do not expose the full OpenAPI surface in
+  // production (auth is cookie-based; the docs UI still discloses the API).
+  if (config.nodeEnv !== 'production') {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Meridian API')
+      .setDescription('Backend API for Meridian collaborative browser IDE')
+      .setVersion('0.1.0')
+      .addTag('health', 'Service liveness')
+      .addTag('users', 'User accounts')
+      .addTag('workspaces', 'Workspaces and membership')
+      .addTag('documents', 'Documents and file tree')
+      .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document);
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('docs', app, document);
+  }
 
   await app.listen(config.port);
 }

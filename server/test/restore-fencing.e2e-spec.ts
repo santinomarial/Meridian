@@ -112,17 +112,32 @@ describe('CRDT generation restore fencing (multi-replica)', () => {
       .expect(201);
     documentId = doc.body.id;
 
-    // A meaningful content change creates version 1 (the restore source).
-    await owner
-      .patch(`/documents/${documentId}`)
-      .send({ content: 'RESTORED_CONTENT' })
-      .expect(200);
+    // Checkpoint is the only writer of Document.content. Build version 1 as
+    // RESTORED_CONTENT, then checkpoint back to PRE_RESTORE so the live doc
+    // differs from the restore source.
+    const seedDoc = await managerA.acquire(documentId);
+    seedDoc.getText('content').delete(0, seedDoc.getText('content').length);
+    seedDoc.getText('content').insert(0, 'RESTORED_CONTENT');
+    await persistenceA.persistUpdate(
+      documentId,
+      Y.encodeStateAsUpdate(seedDoc),
+      0,
+      'seed-restored-content',
+    );
+    await persistenceA.flushDocument(documentId);
+    await owner.post(`/documents/${documentId}/checkpoint`).expect(201);
 
-    // Flip content back so the live document differs from version 1.
-    await owner
-      .patch(`/documents/${documentId}`)
-      .send({ content: 'PRE_RESTORE_CONTENT' })
-      .expect(200);
+    seedDoc.getText('content').delete(0, seedDoc.getText('content').length);
+    seedDoc.getText('content').insert(0, 'PRE_RESTORE_CONTENT');
+    await persistenceA.persistUpdate(
+      documentId,
+      Y.encodeStateAsUpdate(seedDoc),
+      0,
+      'seed-pre-restore-content',
+    );
+    await persistenceA.flushDocument(documentId);
+    await owner.post(`/documents/${documentId}/checkpoint`).expect(201);
+    managerA.release(documentId);
 
     const versions = await owner
       .get(`/documents/${documentId}/versions`)
@@ -132,7 +147,7 @@ describe('CRDT generation restore fencing (multi-replica)', () => {
       versions.body as { id: string; versionNumber: number }[]
     ).find((v) => v.versionNumber === 1);
     if (restored === undefined) {
-      throw new Error('Expected version 1 to exist after the first save');
+      throw new Error('Expected version 1 to exist after the first checkpoint');
     }
     versionId = restored.id;
   }, 60_000);
@@ -157,17 +172,19 @@ describe('CRDT generation restore fencing (multi-replica)', () => {
     // Simulate a live edit on A under generation 0 and persist it.
     docA.getText('content').insert(docA.getText('content').length, '+LIVE');
     const liveUpdate = Y.encodeStateAsUpdate(docA);
-    let fencedOnA = false;
-    persistenceA.persistUpdate(documentId, liveUpdate, 0, () => {
-      fencedOnA = true;
-    });
+    const preRestore = await persistenceA.persistUpdate(
+      documentId,
+      liveUpdate,
+      0,
+      'upd-pre-restore',
+    );
     await persistenceA.flushDocument(documentId);
-    expect(fencedOnA).toBe(false);
+    expect(preRestore.status).toBe('committed');
 
     // ── Restore via replica A (HTTP) ───────────────────────────────────────
     const restoreRes = await owner
       .post(`/documents/${documentId}/versions/${versionId}/restore`)
-      .expect(200);
+      .expect(201);
 
     expect(restoreRes.body.document.crdtGeneration).toBe(1);
     expect(restoreRes.body.document.content).toBe('RESTORED_CONTENT');
@@ -193,19 +210,23 @@ describe('CRDT generation restore fencing (multi-replica)', () => {
     expect(yText(managerB.getDoc(documentId)!)).not.toContain('+LIVE');
 
     // ── Stale-generation writes are fenced on both replicas ────────────────
-    let fencedB = false;
-    persistenceB.persistUpdate(documentId, liveUpdate, /* stale */ 0, () => {
-      fencedB = true;
-    });
+    const fencedB = await persistenceB.persistUpdate(
+      documentId,
+      liveUpdate,
+      /* stale */ 0,
+      'upd-stale-b',
+    );
     await persistenceB.flushDocument(documentId);
-    expect(fencedB).toBe(true);
+    expect(fencedB.status).toBe('fenced');
 
-    let fencedAStale = false;
-    persistenceA.persistUpdate(documentId, liveUpdate, /* stale */ 0, () => {
-      fencedAStale = true;
-    });
+    const fencedAStale = await persistenceA.persistUpdate(
+      documentId,
+      liveUpdate,
+      /* stale */ 0,
+      'upd-stale-a',
+    );
     await persistenceA.flushDocument(documentId);
-    expect(fencedAStale).toBe(true);
+    expect(fencedAStale.status).toBe('fenced');
 
     // Confirm PostgreSQL still holds only the restored lineage — no
     // DocumentUpdate row under generation 0 can be written after the fence.
@@ -220,10 +241,11 @@ describe('CRDT generation restore fencing (multi-replica)', () => {
     // ── Post-restore edits under the new generation persist cleanly ────────
     const freshA = managerA.getDoc(documentId)!;
     freshA.getText('content').insert(freshA.getText('content').length, '+AFTER_A');
-    persistenceA.persistUpdate(
+    await persistenceA.persistUpdate(
       documentId,
       Y.encodeStateAsUpdate(freshA),
       1,
+      'upd-after-a',
     );
     await persistenceA.flushDocument(documentId);
 
@@ -235,6 +257,7 @@ describe('CRDT generation restore fencing (multi-replica)', () => {
       documentId,
       Y.encodeStateAsUpdate(freshB),
       1,
+      'upd-after-b',
     );
     await persistenceB.flushDocument(documentId);
 

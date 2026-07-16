@@ -130,11 +130,14 @@ describe('TerminalService', () => {
         socket,
       );
       expect(service.hasSession('s1')).toBe(true);
-      // Welcome banner names the sandbox path.
-      const banner = emitted.find(
-        ([e, d]) => e === 'terminal:output' && String((d as { data: string }).data).includes('workspace sandbox'),
-      );
-      expect(banner).toBeDefined();
+      expect(
+        emitted.find(
+          ([e, d]) =>
+            e === 'terminal:output' &&
+            String((d as { data: string }).data).includes('workspace sandbox'),
+        ),
+      ).toBeUndefined();
+      expect(emitted).toContainEqual(['terminal:sync', { status: 'synced' }]);
     });
 
     it('spawns with a safe env (no DATABASE_URL/JWT_SECRET) and HOME inside the sandbox', async () => {

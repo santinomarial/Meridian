@@ -28,8 +28,47 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true'),
-  // Mail / password-reset
-  RESEND_API_KEY: z.string().optional(),
+  // When true or a hop count, Express trusts X-Forwarded-* for client IP
+  // (needed for accurate per-IP throttling behind a reverse proxy).
+  TRUST_PROXY: z
+    .string()
+    .default('false')
+    .transform((v, ctx) => {
+      if (v === 'true') return true as const;
+      if (v === 'false' || v === '') return false as const;
+      const hops = Number(v);
+      if (Number.isInteger(hops) && hops >= 1) return hops;
+      ctx.addIssue({
+        code: 'custom',
+        message: 'TRUST_PROXY must be true, false, or a positive integer hop count',
+      });
+      return z.NEVER;
+    }),
+  // Multi-replica: fail readiness when Redis is not ok.
+  REDIS_REQUIRED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
+  // Prefix Redis keys/channels (e.g. "prod" or "prod:" → "prod:").
+  REDIS_KEY_PREFIX: z
+    .string()
+    .default('')
+    .transform((v) => {
+      const trimmed = v.trim();
+      if (trimmed === '') return '';
+      return trimmed.endsWith(':') ? trimmed : `${trimmed}:`;
+    }),
+  METRICS_ENABLED: z
+    .string()
+    .default('true')
+    .transform((v) => v === 'true'),
+  RESEND_API_KEY: z
+    .string()
+    .optional()
+    .transform((v) => {
+      const trimmed = v?.trim();
+      return trimmed ? trimmed : undefined;
+    }),
   MAIL_FROM: z.string().default('Meridian <no-reply@meridian.local>'),
   FORGOT_PASSWORD_TTL_MINUTES: z.coerce.number().int().positive().default(30),
   E2E_TEST: z.enum(['true', 'false']).default('false'),
@@ -39,6 +78,14 @@ const envSchema = z.object({
       code: 'custom',
       path: ['E2E_TEST'],
       message: 'E2E_TEST cannot be enabled in production',
+    });
+  }
+  if (env.NODE_ENV === 'production' && env.ENABLE_TERMINAL) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['ENABLE_TERMINAL'],
+      message:
+        'ENABLE_TERMINAL cannot be enabled in production without an isolated runner (see docs)',
     });
   }
 });

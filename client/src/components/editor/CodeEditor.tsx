@@ -8,12 +8,7 @@ import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useYjsMonaco } from "../../hooks/useYjsMonaco";
 import { registerEditor, unregisterEditor } from "../../lib/editorRegistry";
 import { isApplyingRemoteDocumentUpdate } from "../../lib/yjsDocs";
-import { mockCollaborators } from "../../data/mock";
 import type { LanguageMode, WorkspaceTheme } from "../../types";
-import {
-  attachRemoteCollaboratorCursors,
-  type RemoteCursorController,
-} from "./remoteCollaboratorCursors";
 import {
   registerMeridianMonacoThemes,
   toMeridianMonacoTheme,
@@ -44,8 +39,8 @@ const EDITOR_OPTIONS: editor.IStandaloneEditorConstructionOptions = {
   tabSize: 4,
   insertSpaces: true,
   fontFamily: "JetBrains Mono, ui-monospace, monospace",
-  fontSize: 13,
-  lineHeight: 20,
+  fontSize: 14,
+  lineHeight: 22,
   smoothScrolling: true,
   automaticLayout: true,
   scrollBeyondLastLine: false,
@@ -75,7 +70,6 @@ type CodeEditorProps = {
 
 export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
-  const remoteCursorControllerRef = useRef<RemoteCursorController | null>(null);
   const [mountedEditor, setMountedEditor] = useState<editor.IStandaloneCodeEditor | null>(null);
   const monacoTheme: MeridianEditorTheme = toMeridianMonacoTheme(workspaceTheme);
 
@@ -89,9 +83,8 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   const setCursorPosition = useWorkspaceStore((state) => state.setCursorPosition);
   const backendStatus = useWorkspaceStore((state) => state.backendStatus);
   const userRole = useWorkspaceStore((state) => state.userRole);
-  const isDemoMode = backendStatus === "unavailable";
   const isViewer =
-    backendStatus !== "unavailable" &&
+    backendStatus === "available" &&
     userRole !== "OWNER" &&
     userRole !== "EDITOR";
 
@@ -111,8 +104,6 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   const handleMount: OnMount = (monacoEditor, monaco) => {
     registerMeridianMonacoThemes(monaco);
     monaco.editor.setTheme(monacoTheme);
-    remoteCursorControllerRef.current?.dispose();
-    remoteCursorControllerRef.current = null;
     editorRef.current = monacoEditor;
     registerEditor(monacoEditor);
     setMountedEditor(monacoEditor);
@@ -142,41 +133,15 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   };
 
   useEffect(() => {
-    remoteCursorControllerRef.current?.dispose();
-    remoteCursorControllerRef.current = null;
     // Reset the mounted-editor state when switching files so collaboration
-    // hooks don't act on the previous (about-to-remount) Monaco instance. This
-    // must sit beside the controller disposal, which can only run in an effect.
+    // hooks don't act on the previous (about-to-remount) Monaco instance.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMountedEditor(null);
     editorRef.current = null;
   }, [activeFileId]);
 
-  // Demo mode only: animate fake collaborator cursors so the offline demo
-  // still feels alive. With a backend, real cursors come from Yjs awareness
-  // (rendered by y-monaco via the styles in lib/awarenessPresence).
-  useEffect(() => {
-    if (!mountedEditor || !activeFileId || !isDemoMode) {
-      return;
-    }
-
-    remoteCursorControllerRef.current?.dispose();
-    remoteCursorControllerRef.current = attachRemoteCollaboratorCursors(
-      mountedEditor,
-      mockCollaborators,
-      activeFileId,
-    );
-
-    return () => {
-      remoteCursorControllerRef.current?.dispose();
-      remoteCursorControllerRef.current = null;
-    };
-  }, [mountedEditor, activeFileId, isDemoMode]);
-
   useEffect(() => {
     return () => {
-      remoteCursorControllerRef.current?.dispose();
-      remoteCursorControllerRef.current = null;
       editorRef.current = null;
       setMountedEditor(null);
     };

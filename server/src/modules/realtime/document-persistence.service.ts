@@ -8,6 +8,12 @@ import { RedisService } from '../../redis/redis.service';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 import { acquireDocumentLock } from '../../common/crdt/crdt-lineage';
+import { MetricsService } from '../../common/metrics/metrics.module';
+
+export type PersistUpdateResult =
+  | { status: 'committed'; seq: number; updateId: string; generation: number }
+  | { status: 'fenced' }
+  | { status: 'failed'; error: unknown };
 
 /** Redis key holding the shared sequence counter for one document lineage. */
 function seqKey(documentId: string, generation: number): string {
@@ -74,6 +80,7 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     configService: ConfigService,
     @InjectPinoLogger(DocumentPersistenceService.name)
     private readonly logger: PinoLogger,
+    private readonly metrics: MetricsService,
   ) {
     const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
     this.snapshotEveryN = config.snapshotEveryNUpdates;
@@ -87,33 +94,47 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
    * Enqueues a durable write for one Yjs update belonging to `generation`
    * (the generation the in-memory Y.Doc was loaded with).
    *
-   * Returns immediately so the gateway can relay the update to peers without
-   * waiting for the database.  After the write settles, compaction is
-   * attempted if the per-document counter reaches the threshold.  Errors are
-   * caught, logged, and swallowed so a transient DB failure never crashes the
-   * gateway or disrupts live editing.
+   * Resolves only after the PostgreSQL transaction settles:
+   *   - `committed` — row inserted (or an identical updateId already existed);
+   *     `seq` is the durable sequence number.
+   *   - `fenced` — Document.crdtGeneration no longer matches (restore happened).
+   *   - `failed` — transient DB error; the client should keep and resend the
+   *     update. Errors are logged but never thrown so the write chain continues.
    *
-   * When PostgreSQL holds a different generation (the document was restored),
-   * the write is rejected and `onFenced` is invoked so the caller can trigger
-   * an immediate resynchronization instead of waiting for the periodic audit.
+   * Local peer relay happens in the gateway before awaiting this promise so
+   * sticky-session collaborators still see low-latency edits. Cross-replica
+   * Redis publication and the sender's `yjs:ack` happen only after `committed`.
    */
   persistUpdate(
     documentId: string,
     update: Uint8Array,
     generation: number,
-    onFenced?: () => void,
-  ): void {
+    updateId: string,
+  ): Promise<PersistUpdateResult> {
     const previous = this.writeChain.get(documentId) ?? Promise.resolve();
+    let settle!: (result: PersistUpdateResult) => void;
+    const resultPromise = new Promise<PersistUpdateResult>((resolve) => {
+      settle = resolve;
+    });
+
     const next = previous
-      .then(() => this.doWrite(documentId, update, generation))
-      .then((written) => {
-        if (!written) {
-          onFenced?.();
+      .then(() => this.doWrite(documentId, update, generation, updateId))
+      .then(async (written) => {
+        if (written === null) {
+          this.metrics.recordPersistResult('fenced');
+          settle({ status: 'fenced' });
           return;
         }
+        this.metrics.recordPersistResult('committed');
+        settle({
+          status: 'committed',
+          seq: written.seq,
+          updateId: written.updateId,
+          generation,
+        });
         // Compaction errors are caught separately so a failed compaction does
         // not prevent subsequent updates from being written.
-        return this.maybeCompact(documentId, generation).catch((err: unknown) => {
+        await this.maybeCompact(documentId, generation).catch((err: unknown) => {
           this.logger.error(
             { documentId, err },
             'Compaction failed — will retry after next batch of updates',
@@ -122,11 +143,19 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
       })
       .catch((err: unknown) => {
         this.logger.error(
-          { documentId, err },
-          'Failed to persist Yjs update — update may be lost on restart',
+          { documentId, updateId, err },
+          'Failed to persist Yjs update — client should resend',
         );
+        this.metrics.recordPersistResult('failed');
+        settle({ status: 'failed', error: err });
       });
-    this.writeChain.set(documentId, next);
+    this.writeChain.set(documentId, next.then(() => undefined, () => undefined));
+    return resultPromise;
+  }
+
+  /** Number of documents with an in-flight local write chain (gauge source). */
+  writeChainDepth(): number {
+    return this.writeChain.size;
   }
 
   /** Waits until all pending writes for one document have settled. */
@@ -195,16 +224,20 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   /**
    * Writes one update inside a locked transaction, fencing against restores:
    * if PostgreSQL's Document.crdtGeneration no longer matches the generation
-   * this update was produced under, the write is dropped. Returns whether the
-   * update was written.
+   * this update was produced under, the write is dropped. Returns the durable
+   * seq on success (including idempotent replay of the same updateId), or null
+   * when fenced.
    */
   private async doWrite(
     documentId: string,
     update: Uint8Array,
     generation: number,
-  ): Promise<boolean> {
-    const seq = await this.prisma.$transaction(
-      async (tx: Prisma.TransactionClient): Promise<number | null> => {
+    updateId: string,
+  ): Promise<{ seq: number; updateId: string } | null> {
+    const result = await this.prisma.$transaction(
+      async (
+        tx: Prisma.TransactionClient,
+      ): Promise<{ seq: number; updateId: string } | null> => {
         await acquireDocumentLock(tx, documentId);
 
         const document = await tx.document.findUnique({
@@ -215,29 +248,66 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
           return null;
         }
 
+        // Idempotent resend: the same client updateId already committed for this
+        // lineage — return the existing seq without allocating another.
+        const existing = await tx.documentUpdate.findFirst({
+          where: { documentId, generation, updateId },
+          select: { seq: true },
+        });
+        if (existing !== null) {
+          return { seq: existing.seq, updateId };
+        }
+
         const nextSeq = await this.nextSeq(tx, documentId, generation);
         await tx.documentUpdate.create({
           data: {
             documentId,
             generation,
+            updateId,
             update: Buffer.from(update),
             seq: nextSeq,
           },
         });
-        return nextSeq;
+        return { seq: nextSeq, updateId };
       },
     );
 
-    if (seq === null) {
+    if (result === null) {
       this.logger.warn(
-        { documentId, generation },
+        { documentId, generation, updateId },
         'Persistence write fenced — stale CRDT generation after restore',
       );
-      return false;
+      return null;
     }
 
-    this.lastPersistedSeq.set(documentId, seq);
-    return true;
+    this.lastPersistedSeq.set(documentId, result.seq);
+    return result;
+  }
+
+  /**
+   * Loads durable Yjs updates with seq strictly greater than `afterSeq` for the
+   * given lineage, ordered ascending. Used by replicas that detect a sequence
+   * gap (missed Redis message) to catch up from PostgreSQL.
+   */
+  async fetchUpdatesAfter(
+    documentId: string,
+    generation: number,
+    afterSeq: number,
+  ): Promise<Array<{ seq: number; update: Uint8Array; updateId: string | null }>> {
+    const rows = await this.prisma.documentUpdate.findMany({
+      where: {
+        documentId,
+        generation,
+        seq: { gt: afterSeq },
+      },
+      orderBy: { seq: 'asc' },
+      select: { seq: true, update: true, updateId: true },
+    });
+    return rows.map((row) => ({
+      seq: row.seq,
+      update: new Uint8Array(row.update),
+      updateId: row.updateId,
+    }));
   }
 
   private async nextSeq(

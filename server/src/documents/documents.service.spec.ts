@@ -9,6 +9,7 @@ import JSZip from 'jszip';
 import type { Document, DocumentVersion } from '@prisma/client';
 import { DocumentType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { DocumentPersistenceService } from '../modules/realtime/document-persistence.service';
 import {
   DocumentsService,
   WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES,
@@ -57,15 +58,19 @@ describe('DocumentsService', () => {
   let service: DocumentsService;
   let prisma: DeepMockProxy<PrismaService>;
 
+  let persistence: DeepMockProxy<DocumentPersistenceService>;
+
   beforeEach(() => {
     prisma = mockDeep<PrismaService>();
+    persistence = mockDeep<DocumentPersistenceService>();
+    persistence.flushDocument.mockResolvedValue(undefined);
     prisma.$transaction.mockImplementation(
       async (cb: (tx: typeof prisma) => unknown) => cb(prisma),
     );
     prisma.$queryRaw.mockResolvedValue([
       { documentCount: 0n, fileCount: 0n, contentBytes: 0n },
     ] as never);
-    service = new DocumentsService(prisma);
+    service = new DocumentsService(prisma, persistence);
   });
 
   describe('createDocument', () => {
@@ -361,23 +366,10 @@ describe('DocumentsService', () => {
   });
 
   describe('updateContent', () => {
-    it('updates and returns the document with new content', async () => {
-      const updated = { ...BASE_DOC, content: 'const x = 1;' };
-      prisma.document.update.mockResolvedValue(updated);
-
-      const result = await service.updateContent('doc-1', 'const x = 1;');
-
-      expect(prisma.document.update).toHaveBeenCalledWith({
-        where: { id: 'doc-1' },
-        data: { content: 'const x = 1;' },
-      });
-      expect(result.content).toBe('const x = 1;');
-    });
-
-    it('rejects content larger than 1 MiB', async () => {
-      await expect(
-        service.updateContent('doc-1', 'x'.repeat(1024 * 1024 + 1)),
-      ).rejects.toBeInstanceOf(PayloadTooLargeException);
+    it('rejects direct content writes in favor of checkpoint', async () => {
+      await expect(service.updateContent('doc-1', 'const x = 1;')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
       expect(prisma.document.update).not.toHaveBeenCalled();
     });
   });
@@ -415,7 +407,7 @@ describe('DocumentsService', () => {
     });
   });
 
-  // ── Version creation on save ────────────────────────────────────────────────
+  // ── Checkpoint vs metadata patch ────────────────────────────────────────────
 
   describe('patchDocument', () => {
     // Make $transaction run its callback with the prisma mock as the tx client.
@@ -425,47 +417,11 @@ describe('DocumentsService', () => {
       );
     });
 
-    it('creates a version when content meaningfully changes', async () => {
-      prisma.document.findUnique.mockResolvedValue({ ...BASE_DOC, content: 'old' });
-      prisma.document.update.mockResolvedValue({ ...BASE_DOC, content: 'new' });
-      prisma.documentVersion.findFirst.mockResolvedValue(null);
-      prisma.documentVersion.create.mockResolvedValue({} as DocumentVersion);
-
-      await service.patchDocument('doc-1', { content: 'new' }, 'user-1');
-
-      expect(prisma.documentVersion.create).toHaveBeenCalledTimes(1);
-      expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
-      expect(prisma.documentVersion.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          documentId: 'doc-1',
-          workspaceId: 'ws-1',
-          createdById: 'user-1',
-          versionNumber: 1,
-          content: 'new',
-          message: null,
-        }),
-      });
-    });
-
-    it('rejects content larger than 1 MiB before opening a transaction', async () => {
+    it('rejects content patches — callers must checkpoint from CRDT', async () => {
       await expect(
-        service.patchDocument(
-          'doc-1',
-          { content: 'x'.repeat(1024 * 1024 + 1) },
-          'user-1',
-        ),
-      ).rejects.toBeInstanceOf(PayloadTooLargeException);
+        service.patchDocument('doc-1', { content: 'new' }, 'user-1'),
+      ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
-    });
-
-    it('does NOT create a version when content is unchanged (no duplicates)', async () => {
-      prisma.document.findUnique.mockResolvedValue({ ...BASE_DOC, content: 'same' });
-      prisma.document.update.mockResolvedValue({ ...BASE_DOC, content: 'same' });
-
-      await service.patchDocument('doc-1', { content: 'same' }, 'user-1');
-
-      expect(prisma.documentVersion.create).not.toHaveBeenCalled();
-      expect(prisma.$executeRaw).not.toHaveBeenCalled();
     });
 
     it('does NOT create a version for a metadata-only patch', async () => {
@@ -478,26 +434,11 @@ describe('DocumentsService', () => {
       expect(prisma.documentVersion.create).not.toHaveBeenCalled();
     });
 
-    it('increments versionNumber from the current max for the document', async () => {
-      prisma.document.findUnique.mockResolvedValue({ ...BASE_DOC, content: 'old' });
-      prisma.document.update.mockResolvedValue({ ...BASE_DOC, content: 'new' });
-      prisma.documentVersion.findFirst.mockResolvedValue({
-        versionNumber: 7,
-      } as DocumentVersion);
-      prisma.documentVersion.create.mockResolvedValue({} as DocumentVersion);
-
-      await service.patchDocument('doc-1', { content: 'new' }, 'user-1');
-
-      expect(prisma.documentVersion.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ versionNumber: 8 }),
-      });
-    });
-
     it('throws NotFound when the document does not exist', async () => {
       prisma.document.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.patchDocument('missing', { content: 'x' }, 'user-1'),
+        service.patchDocument('missing', { name: 'x.ts' }, 'user-1'),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -534,6 +475,85 @@ describe('DocumentsService', () => {
       await expect(
         service.patchDocument('folder-1', { parentId: 'folder-2' }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+  });
+
+  describe('checkpointDocument', () => {
+    beforeEach(() => {
+      prisma.$transaction.mockImplementation(
+        async (cb: (tx: typeof prisma) => unknown) => cb(prisma),
+      );
+      prisma.$executeRaw.mockResolvedValue(undefined as never);
+      prisma.snapshot.findFirst.mockResolvedValue(null);
+      prisma.documentUpdate.findMany.mockResolvedValue([]);
+    });
+
+    it('is a no-op when CRDT is empty and content already matches bootstrap', async () => {
+      prisma.document.findUnique.mockResolvedValue(BASE_DOC);
+
+      const result = await service.checkpointDocument('doc-1', 'user-1');
+
+      expect(persistence.flushDocument).toHaveBeenCalledWith('doc-1');
+      expect(result).toMatchObject({
+        versionCreated: false,
+        content: BASE_DOC.content,
+        generation: 0,
+      });
+      expect(prisma.document.update).not.toHaveBeenCalled();
+      expect(prisma.documentVersion.create).not.toHaveBeenCalled();
+    });
+
+    it('projects CRDT text into Document.content and creates a version', async () => {
+      const { encodeSeededState } = await import('../common/crdt/crdt-lineage');
+      const state = Buffer.from(encodeSeededState('doc-1', 0, 'from-crdt'));
+      prisma.document.findUnique.mockResolvedValue({
+        ...BASE_DOC,
+        content: 'stale-checkpoint',
+      });
+      prisma.snapshot.findFirst.mockResolvedValue({
+        seq: 0,
+        state,
+      } as never);
+      prisma.document.update.mockResolvedValue({
+        ...BASE_DOC,
+        content: 'from-crdt',
+      });
+      prisma.documentVersion.findFirst.mockResolvedValue(null);
+      prisma.documentVersion.create.mockResolvedValue({} as DocumentVersion);
+
+      const result = await service.checkpointDocument('doc-1', 'user-1');
+
+      expect(result.versionCreated).toBe(true);
+      expect(result.content).toBe('from-crdt');
+      expect(prisma.document.update).toHaveBeenCalledWith({
+        where: { id: 'doc-1' },
+        data: { content: 'from-crdt' },
+      });
+      expect(prisma.documentVersion.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          documentId: 'doc-1',
+          content: 'from-crdt',
+          createdById: 'user-1',
+          versionNumber: 1,
+        }),
+      });
+    });
+
+    it('rejects checkpointing a folder', async () => {
+      prisma.document.findUnique.mockResolvedValue(FOLDER_DOC);
+
+      await expect(service.checkpointDocument('folder-1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('patchDocument hierarchy', () => {
+    beforeEach(() => {
+      prisma.$transaction.mockImplementation(
+        async (cb: (tx: typeof prisma) => unknown) => cb(prisma),
+      );
     });
 
     it('updates every descendant path atomically when a folder is renamed', async () => {

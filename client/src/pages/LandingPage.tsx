@@ -66,7 +66,7 @@ function LandingHeader({ onGetStarted }: { onGetStarted: () => void }) {
       <button
         type="button"
         onClick={onGetStarted}
-        className="rounded-lg bg-primary-container px-4 py-1.5 text-body-md font-medium text-on-primary-container transition-all hover:opacity-90 active:scale-95"
+        className="rounded-lg btn-primary px-4 py-1.5 text-body-md font-semibold transition-all hover:opacity-95 active:scale-95"
       >
         Get Started
       </button>
@@ -103,7 +103,7 @@ function IconField({
       <div className="group relative">
         <MaterialIcon
           name={icon}
-          className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-outline transition-colors group-focus-within:text-primary"
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-on-surface-variant transition-colors group-focus-within:text-primary"
           aria-hidden
         />
         <input
@@ -113,7 +113,7 @@ function IconField({
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           autoComplete={autoComplete}
-          className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-outline-variant focus:border-primary focus:ring-1 focus:ring-primary"
+          className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
         />
       </div>
     </div>
@@ -139,6 +139,7 @@ function AuthCard({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [forgotSuccess, setForgotSuccess] = useState(false);
+  const [previewResetUrl, setPreviewResetUrl] = useState<string | null>(null);
 
   // Keep email when switching signin ↔ forgot so the forgot-password form is pre-filled.
   // Clear email for all other transitions (entering/leaving signup).
@@ -166,8 +167,12 @@ function AuthCard({
 
     if (mode === "forgot") {
       setLoading(true);
+      setPreviewResetUrl(null);
       try {
-        await forgotPassword({ email });
+        const result = await forgotPassword({ email });
+        if (result.previewResetUrl) {
+          setPreviewResetUrl(result.previewResetUrl);
+        }
       } catch {
         setError("Unable to send reset link right now. Please try again later.");
       } finally {
@@ -213,7 +218,7 @@ function AuthCard({
   return (
     <div className="glass-panel inner-glow flex w-full max-w-[420px] flex-col gap-8 rounded-xl p-8" data-testid="auth-card">
       <div className="space-y-2 text-center">
-        <div className="mb-2 inline-flex items-center justify-center rounded border border-outline-variant/30 bg-surface-container-high px-2 py-0.5 uppercase text-primary-fixed-dim label-caps">
+        <div className="mb-2 inline-flex items-center justify-center rounded border border-outline-variant/50 bg-surface-container px-2 py-0.5 uppercase text-on-surface-variant label-caps">
           {isSignUp ? "Start Coding" : isForgot ? "Reset Password" : "Welcome Back"}
         </div>
         <h1 className="text-headline-md font-semibold tracking-tight text-on-surface">
@@ -229,11 +234,22 @@ function AuthCard({
       </div>
 
       {isForgot && forgotSuccess ? (
-        <div className="rounded-lg bg-primary/10 px-4 py-5 text-center" data-testid="forgot-success">
+        <div className="rounded-lg border border-outline-variant/40 bg-surface-container-low px-4 py-5 text-center" data-testid="forgot-success">
           <MaterialIcon name="mark_email_read" className="mb-3 text-4xl text-primary" aria-hidden />
           <p className="text-body-sm text-on-surface">
-            If an account exists for this email, a reset link has been sent.
+            {previewResetUrl
+              ? "No email provider is configured locally. Use this reset link:"
+              : "If an account exists for this email, a reset link has been sent."}
           </p>
+          {previewResetUrl ? (
+            <a
+              href={previewResetUrl}
+              className="mt-3 inline-block break-all text-body-sm text-accent underline underline-offset-2"
+              data-testid="forgot-preview-link"
+            >
+              Open reset link
+            </a>
+          ) : null}
         </div>
       ) : (
         <form className="space-y-4" onSubmit={handleSubmit} noValidate data-testid="auth-form">
@@ -270,7 +286,7 @@ function AuthCard({
                   <button
                     type="button"
                     onClick={() => onModeChange("forgot", email)}
-                    className="text-[11px] font-medium text-primary hover:underline"
+                    className="text-[11px] text-accent hover:underline"
                     data-testid="forgot-password-link"
                   >
                     Forgot password?
@@ -280,7 +296,7 @@ function AuthCard({
               <div className="group relative">
                 <MaterialIcon
                   name="lock"
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-outline transition-colors group-focus-within:text-primary"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-on-surface-variant transition-colors group-focus-within:text-primary"
                   aria-hidden
                 />
                 <input
@@ -290,7 +306,7 @@ function AuthCard({
                   onChange={(event) => setPassword(event.target.value)}
                   placeholder="••••••••"
                   autoComplete={isSignUp ? "new-password" : "current-password"}
-                  className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-outline-variant focus:border-primary focus:ring-1 focus:ring-primary"
+                  className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
                 />
               </div>
               {isSignUp ? <PasswordStrength password={password} /> : null}
@@ -308,7 +324,7 @@ function AuthCard({
               <div className="group relative">
                 <MaterialIcon
                   name="lock"
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-outline transition-colors group-focus-within:text-primary"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-on-surface-variant transition-colors group-focus-within:text-primary"
                   aria-hidden
                 />
                 <input
@@ -318,7 +334,7 @@ function AuthCard({
                   onChange={(event) => setConfirmPassword(event.target.value)}
                   placeholder="••••••••"
                   autoComplete="new-password"
-                  className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-outline-variant focus:border-primary focus:ring-1 focus:ring-primary"
+                  className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
                 />
               </div>
             </div>
@@ -334,7 +350,7 @@ function AuthCard({
             type="submit"
             disabled={loading}
             data-testid="auth-submit"
-            className="group mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-inverse-primary py-3 text-body-md font-semibold text-on-primary-fixed shadow-lg shadow-primary/10 transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-60"
+            className="group mt-4 flex w-full items-center justify-center gap-2 rounded-lg btn-primary py-3 text-body-md font-semibold shadow-lg shadow-primary/15 transition-all active:scale-[0.98] disabled:opacity-60"
           >
             {loading
               ? isSignUp
@@ -364,7 +380,7 @@ function AuthCard({
             <button
               type="button"
               onClick={() => onModeChange("signin")}
-              className="font-medium text-primary hover:underline"
+              className="text-accent hover:underline"
               data-testid="back-to-login"
             >
               Back to Log in
@@ -376,7 +392,7 @@ function AuthCard({
             <button
               type="button"
               onClick={() => onModeChange(isSignUp ? "signin" : "signup")}
-              className="font-medium text-primary hover:underline"
+              className="text-accent hover:underline"
               data-testid={isSignUp ? "switch-to-login" : "switch-to-signup"}
             >
               {isSignUp ? "Log in" : "Sign up"}
@@ -384,7 +400,7 @@ function AuthCard({
           </p>
         )}
         {isSignUp ? (
-          <p className="text-center text-[11px] leading-relaxed text-outline">
+          <p className="text-center text-[11px] leading-relaxed text-on-surface-variant">
             Your account is protected with a secure, revocable session.
           </p>
         ) : null}

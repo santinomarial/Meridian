@@ -62,7 +62,7 @@ jobs:
   # supertest drives the booted AppModule (ValidationPipe, JwtAuthGuard, the
   # throttler, the exception filter, real Prisma) — no port is bound.
   server-integration:
-    name: Server (HTTP integration)
+    name: Server (integration + multi-replica)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -96,7 +96,8 @@ jobs:
       JWT_SECRET: ci-test-secret-at-least-16-chars
       CLIENT_ORIGIN: http://localhost:5173
       # Deliberately NOT setting E2E_TEST: integration tests exercise the real
-      # throttler and reject the test-only endpoints.
+      # throttler and reject the test-only endpoints. Multi-replica specs boot
+      # two AppModules against this shared Postgres + Redis.
       NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
@@ -109,6 +110,8 @@ jobs:
       - run: npx prisma generate
       - run: npx prisma migrate deploy
       - run: npm run test:integration
+        # Includes dual-AppModule harness: restore-fencing, multi-replica
+        # fan-out / seq catch-up / concurrent durable edits / pinned sockets.
 
   # ── End-to-end: real backend (Postgres + Redis + terminal) + Playwright ────
   e2e:
@@ -222,3 +225,90 @@ jobs:
           cache-dependency-path: client/package-lock.json
       - run: npm ci
       - run: npm run lint
+
+  # ── Dependency vulnerability scan ────────────────────────────────────────
+  security-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            client/package-lock.json
+      - name: Server npm audit (high+)
+        working-directory: server
+        run: npm ci && npm audit --omit=dev --audit-level=high
+      - name: Client npm audit (high+)
+        working-directory: client
+        run: npm ci && npm audit --omit=dev --audit-level=high
+
+  # ── Container image scan (production Dockerfiles) ────────────────────────
+  container-scan:
+    name: Container scan (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -t meridian-api:ci ./server
+      - name: Build web image
+        run: docker build -t meridian-web:ci ./client
+      - name: Trivy API image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: meridian-api:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Trivy web image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: meridian-web:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+
+  # ── Backup script smoke test against integration Postgres ────────────────
+  ops-backup:
+    name: Backup/restore smoke
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: meridian
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/meridian?schema=public
+      JWT_SECRET: ci-test-secret-at-least-16-chars
+      CLIENT_ORIGIN: http://localhost:5173
+      NODE_ENV: test
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - name: Dump and restore round-trip
+        run: |
+          ./scripts/backup-pg.sh dump /tmp/meridian-ci.sql
+          # Drop and recreate public schema, then restore
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+          ./scripts/backup-pg.sh restore /tmp/meridian-ci.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT 1 FROM \"_prisma_migrations\" LIMIT 1;"

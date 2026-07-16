@@ -3,8 +3,10 @@ import { useParams } from "react-router-dom";
 import { CodeEditor } from "../components/editor/CodeEditor";
 import { EditorTabs } from "../components/editor/EditorTabs";
 import { ActivityBar } from "../components/layout/ActivityBar";
+import { BackendUnavailableGate } from "../components/layout/BackendUnavailableGate";
 import { Breadcrumb } from "../components/layout/Breadcrumb";
 import { CollaborationPanel } from "../components/layout/CollaborationPanel";
+import { ConnectionStatusBanner } from "../components/layout/ConnectionStatusBanner";
 import { FileExplorer } from "../components/layout/FileExplorer";
 import { Header } from "../components/layout/Header";
 import { PanelOverlay } from "../components/layout/PanelOverlay";
@@ -20,6 +22,7 @@ import { useSessionSocket } from "../hooks/useSessionSocket";
 import { useWorkspaceReady } from "../hooks/useWorkspaceReady";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { TerminalPanel } from "../components/layout/TerminalPanel";
+import { EditorSkeleton } from "../components/ui/Skeleton";
 import type { PanelKey } from "../types";
 
 export function WorkspacePage() {
@@ -37,7 +40,7 @@ export function WorkspacePage() {
   const backendStatus = useWorkspaceStore((state) => state.backendStatus);
   const userRole = useWorkspaceStore((state) => state.userRole);
   const isReadOnly =
-    backendStatus !== "unavailable" &&
+    backendStatus === "available" &&
     userRole !== "OWNER" &&
     userRole !== "EDITOR";
 
@@ -45,7 +48,7 @@ export function WorkspacePage() {
 
   const isWorkspaceReady = useWorkspaceReady();
 
-  // Load workspace from backend (mock fallback on failure)
+  // Load workspace from backend — hard-gates on failure (no silent mock).
   useBackendWorkspace();
 
   // Manage Socket.IO connection lifecycle
@@ -80,6 +83,8 @@ export function WorkspacePage() {
   // editor or terminal is focused. Only the K combo is intercepted, so other
   // shortcuts (including Cmd+S) are untouched.
   useEffect(() => {
+    if (backendStatus !== "available") return;
+
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
       e.preventDefault();
@@ -89,7 +94,7 @@ export function WorkspacePage() {
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
+  }, [backendStatus]);
 
   const hasOpenOverlay = isCompact && (isExplorerOpen || isCollaborationPanelOpen);
 
@@ -102,6 +107,34 @@ export function WorkspacePage() {
     [togglePanel],
   );
 
+  if (backendStatus === "unavailable") {
+    return (
+      <div
+        className="flex h-screen flex-col overflow-hidden bg-surface-container-lowest"
+        data-session-id={sessionId}
+        data-testid="workspace-root"
+        data-backend-status={backendStatus}
+      >
+        <BackendUnavailableGate />
+        <SettingsDialog />
+      </div>
+    );
+  }
+
+  if (backendStatus === "pending" || !isWorkspaceReady) {
+    return (
+      <div
+        className="flex h-screen flex-col overflow-hidden bg-surface-container-lowest"
+        data-session-id={sessionId}
+        data-testid="workspace-root"
+        data-backend-status={backendStatus}
+      >
+        <Header />
+        <EditorSkeleton />
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex h-screen flex-col overflow-hidden bg-surface-container-lowest"
@@ -111,19 +144,9 @@ export function WorkspacePage() {
     >
       <Header />
       <Breadcrumb />
+      <ConnectionStatusBanner />
 
-      {backendStatus === "unavailable" ? (
-        <div
-          role="status"
-          className="flex items-center gap-2 bg-surface-container-high px-4 py-1.5 text-[11px] text-on-surface-variant"
-          data-testid="backend-unavailable-banner"
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-outline" aria-hidden />
-          Backend unavailable — using local mock workspace.
-        </div>
-      ) : null}
-
-      {isReadOnly && backendStatus === "available" ? (
+      {isReadOnly ? (
         <div
           role="status"
           className="flex items-center gap-2 bg-tertiary/10 px-4 py-1.5 text-[11px] text-tertiary"
@@ -140,7 +163,7 @@ export function WorkspacePage() {
         <ActivityBar />
 
         {!isCompact && isExplorerOpen ? (
-          <FileExplorer isLoading={!isWorkspaceReady} mode="inline" readOnly={isReadOnly} />
+          <FileExplorer isLoading={false} mode="inline" readOnly={isReadOnly} />
         ) : null}
 
         <main
@@ -152,7 +175,7 @@ export function WorkspacePage() {
         </main>
 
         {!isCompact && isCollaborationPanelOpen ? (
-          <CollaborationPanel isLoading={!isWorkspaceReady} mode="inline" />
+          <CollaborationPanel isLoading={false} mode="inline" />
         ) : null}
       </div>
 
@@ -167,7 +190,7 @@ export function WorkspacePage() {
           onClose={() => closePanel("explorer")}
         >
           <FileExplorer
-            isLoading={!isWorkspaceReady}
+            isLoading={false}
             mode="drawer"
             onClose={() => closePanel("explorer")}
             readOnly={isReadOnly}
@@ -182,7 +205,7 @@ export function WorkspacePage() {
           onClose={() => closePanel("collaboration")}
         >
           <CollaborationPanel
-            isLoading={!isWorkspaceReady}
+            isLoading={false}
             mode="drawer"
             onClose={() => closePanel("collaboration")}
           />

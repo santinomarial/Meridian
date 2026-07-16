@@ -11,22 +11,55 @@ type ExitPayload = { code: number | null };
 type StatusPayload = { status: "ready" | "running" };
 type SyncPayload = { status: "synced" | "syncing" | "failed" };
 
-// Readable xterm palettes for each app theme. The background is kept in sync
-// with the app surface so the terminal never stays black in light mode.
+// Readable xterm palettes aligned with Meridian surface tokens.
 const DARK_TERMINAL_THEME: ITheme = {
-  background: "#1e1e1e",
-  foreground: "#d4d4d4",
-  cursor: "#aeafad",
-  cursorAccent: "#1e1e1e",
-  selectionBackground: "#264f78",
+  background: "#0f1219",
+  foreground: "#e8eaf2",
+  cursor: "#a5b4fc",
+  cursorAccent: "#0f1219",
+  selectionBackground: "#2a3350",
+  selectionForeground: "#e8eaf2",
+  black: "#1a1f2b",
+  red: "#fca5a5",
+  green: "#5eead4",
+  yellow: "#fdba74",
+  blue: "#93c5fd",
+  magenta: "#c4b5fd",
+  cyan: "#67e8f9",
+  white: "#e8eaf2",
+  brightBlack: "#6b7280",
+  brightRed: "#fecaca",
+  brightGreen: "#99f6e4",
+  brightYellow: "#fed7aa",
+  brightBlue: "#bfdbfe",
+  brightMagenta: "#ddd6fe",
+  brightCyan: "#a5f3fc",
+  brightWhite: "#ffffff",
 };
 
 const LIGHT_TERMINAL_THEME: ITheme = {
-  background: "#ffffff",
-  foreground: "#1f2328",
-  cursor: "#1f2328",
-  cursorAccent: "#ffffff",
-  selectionBackground: "#add6ff",
+  background: "#eceef3",
+  foreground: "#3a4150",
+  cursor: "#4f46e5",
+  cursorAccent: "#eceef3",
+  selectionBackground: "#c7d2fe",
+  selectionForeground: "#3a4150",
+  black: "#3a4150",
+  red: "#dc2626",
+  green: "#0d9488",
+  yellow: "#c2410c",
+  blue: "#2563eb",
+  magenta: "#7c3aed",
+  cyan: "#0891b2",
+  white: "#e0e3ea",
+  brightBlack: "#848c9c",
+  brightRed: "#ef4444",
+  brightGreen: "#14b8a6",
+  brightYellow: "#ea580c",
+  brightBlue: "#3b82f6",
+  brightMagenta: "#8b5cf6",
+  brightCyan: "#06b6d4",
+  brightWhite: "#3a4150",
 };
 
 function themeFor(appTheme: WorkspaceTheme): ITheme {
@@ -87,13 +120,18 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
     if (xtermRef.current === null) {
       const term = new Terminal({
         cursorBlink: true,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-        fontSize: 13,
-        // Seed with the current app theme; a dedicated effect keeps it in sync.
+        cursorStyle: "bar",
+        cursorWidth: 2,
+        fontFamily: '"JetBrains Mono", Menlo, Monaco, "Courier New", monospace',
+        fontSize: 14,
+        lineHeight: 1.4,
+        letterSpacing: 0,
         theme: themeFor(useWorkspaceStore.getState().theme),
-        // The PTY (server side) owns echo and newline translation, so we send
-        // raw keystrokes and let the shell handle them like a real terminal.
+        // The PTY owns echo and newline translation — send raw keystrokes.
         convertEol: false,
+        scrollback: 5_000,
+        smoothScrollDuration: 0,
+        allowTransparency: false,
       });
 
       const fitAddon = new FitAddon();
