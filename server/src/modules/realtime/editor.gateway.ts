@@ -179,7 +179,7 @@ export class EditorGateway
 
     if (this.redis.isAvailable) {
       this.logger.info(
-        { originId: ORIGIN_ID },
+        { originId: this.originId },
         'EditorGateway subscribed to Redis cross-instance channels',
       );
     }
@@ -269,6 +269,7 @@ export class EditorGateway
       client.emit('joinedDocument', {
         documentId: dto.documentId,
         socketId: client.id,
+        generation: this.documentManager.getGeneration(dto.documentId) ?? 0,
       });
       return;
     }
@@ -306,6 +307,15 @@ export class EditorGateway
       return;
     }
 
+    // Remember which CRDT generation this socket synchronized against. After
+    // a restore replaces the lineage, updates from sockets still on the old
+    // generation are dropped and answered with a resync prompt.
+    const generation = this.documentManager.getGeneration(dto.documentId) ?? 0;
+    const docGenerations =
+      (client.data['documentGenerations'] as Record<string, number> | undefined) ?? {};
+    docGenerations[dto.documentId] = generation;
+    client.data['documentGenerations'] = docGenerations;
+
     const step1Encoder = encoding.createEncoder();
     syncProtocol.writeSyncStep1(step1Encoder, doc);
     client.emit('yjs:sync', {
@@ -336,10 +346,11 @@ export class EditorGateway
     client.emit('joinedDocument', {
       documentId: dto.documentId,
       socketId: client.id,
+      generation,
     });
 
     this.logger.info(
-      { socketId: client.id, documentId: dto.documentId, userId: user.id },
+      { socketId: client.id, documentId: dto.documentId, userId: user.id, generation },
       'Socket joined document',
     );
   }
@@ -709,7 +720,7 @@ export class EditorGateway
       return;
     }
 
-    if (payload.originId === ORIGIN_ID) return;
+    if (payload.originId === this.originId) return;
     if (!this.documentManager.hasDocument(payload.documentId)) return;
 
     try {
@@ -737,7 +748,7 @@ export class EditorGateway
       return;
     }
 
-    if (payload.originId === ORIGIN_ID) return;
+    if (payload.originId === this.originId) return;
     if (!this.documentManager.hasDocument(payload.documentId)) return;
 
     const awareness = this.documentManager.getAwareness(payload.documentId);
@@ -768,7 +779,7 @@ export class EditorGateway
       return;
     }
 
-    if (payload.originId === ORIGIN_ID) return;
+    if (payload.originId === this.originId) return;
 
     this.server
       .to(`workspace:${payload.workspaceId}`)
@@ -784,7 +795,7 @@ export class EditorGateway
     update: Uint8Array,
   ): Promise<void> {
     const payload: CrossInstanceUpdate = {
-      originId: ORIGIN_ID,
+      originId: this.originId,
       documentId,
       update: Buffer.from(update).toString('base64'),
     };
@@ -799,7 +810,7 @@ export class EditorGateway
     update: Uint8Array,
   ): Promise<void> {
     const payload: CrossInstanceAwareness = {
-      originId: ORIGIN_ID,
+      originId: this.originId,
       documentId,
       update: Buffer.from(update).toString('base64'),
     };
@@ -814,7 +825,7 @@ export class EditorGateway
     message: ChatMessagePayload,
   ): Promise<void> {
     const payload: CrossInstanceChat = {
-      originId: ORIGIN_ID,
+      originId: this.originId,
       workspaceId,
       message,
     };
