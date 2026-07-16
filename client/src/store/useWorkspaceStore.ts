@@ -45,6 +45,12 @@ type WorkspaceActions = {
   toggleCommandPalette: () => void;
   setShareRequested: (requested: boolean) => void;
   markDocumentRestored: (fileId: string) => void;
+  /**
+   * Forces a CRDT resynchronize for `documentId` after a version restore.
+   * No-ops when `generation` is not newer than the generation already known
+   * for that document (duplicate/stale events).
+   */
+  requestDocumentResync: (documentId: string, generation: number) => void;
   setTheme: (theme: WorkspaceTheme) => void;
   toggleTheme: () => void;
   setCursorPosition: (pos: CursorPosition) => void;

@@ -134,4 +134,15 @@ export type WorkspaceState = {
   saveStatus: SaveStatus;
   backendStatus: BackendStatus;
   connectionStatus: ConnectionStatus;
+  /**
+   * Per-document CRDT generation last observed by this client. Used to ignore
+   * duplicate/stale `document:restored` events after a version restore.
+   */
+  documentGenerations: Record<string, number>;
+  /**
+   * Per-document epoch bumped when a restore forces a full Yjs resynchronize.
+   * `useYjsMonaco` depends on this so it tears down the old binding, discards
+   * the dead lineage, and re-runs the join/sync handshake.
+   */
+  documentResyncEpoch: Record<string, number>;
 };

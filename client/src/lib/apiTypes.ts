@@ -26,6 +26,8 @@ export interface ApiDocument {
   name: string;
   language: string | null;
   content: string | null;
+  /** CRDT lineage counter. Bumped by version restore; absent on older payloads. */
+  crdtGeneration?: number;
   createdAt: string;
   updatedAt: string;
   children?: ApiDocument[];
