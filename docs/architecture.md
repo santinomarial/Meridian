@@ -742,19 +742,19 @@ PostgreSQL works. The application does not enforce that only one replica is
 running.
 
 If Redis is lost after startup, there is no reconnect loop. The service can
-remain marked available while commands fail; readiness reports Redis
-`error`, publications are lost, and sequence allocation falls back
-to process-local counters on command failure. HTTP readiness still depends
-only on PostgreSQL. Multiple active replicas during either Redis failure mode
-can diverge, miss authorization invalidations, and allocate colliding
-sequences.
+remain marked available while commands fail; readiness reports Redis `error`
+and publications are lost. A failed sequence command falls back to the
+PostgreSQL high-water mark while holding the document advisory lock, so durable
+sequence ordering remains intact. HTTP readiness still depends only on
+PostgreSQL. Multiple active replicas during either Redis failure mode can still
+diverge in memory and miss authorization invalidations.
 
 Socket.IO connections and rooms are process-local, so any load balancer must
 support WebSocket upgrade and sticky routing for long-polling/session
 continuity. Shared PostgreSQL, Redis, and sticky routing are necessary for
-multiple replicas, but they are not sufficient to fix the sequence-compaction
-and restore defects above. Multi-replica collaborative editing should be
-treated as unsupported until those paths are redesigned and tested.
+multiple replicas, but they are not sufficient to fix missing Pub/Sub replay
+or restore's local-only reconciliation. Multi-replica collaborative editing
+should be treated as unsupported until those paths are redesigned and tested.
 
 See [scaling.md](scaling.md) for additional deployment discussion, but source
 code and the limitations in this document take precedence over broader design
@@ -960,34 +960,32 @@ backend-dependent groups can skip when the API is unavailable. CI provisions
 PostgreSQL, Redis, the compiled API, E2E helpers, and terminal support so those
 groups execute in the full run.
 
-CI does not currently exercise a multi-replica deployment, out-of-order
-cross-replica persistence, Redis loss/recovery, cross-replica restore, terminal
-resource isolation, production TLS/cookie routing, database backup/restore, or
-long-running process memory growth.
+CI does not currently exercise a multi-replica deployment, PostgreSQL advisory
+locking against a real concurrent replica pair, Redis loss/recovery,
+cross-replica restore, terminal resource isolation, production TLS/cookie
+routing, database backup/restore, or long-running process memory growth.
 
 ## 15. Known architectural limitations
 
 The most material limitations are collected here so they are not mistaken for
 guarantees:
 
-1. Multi-replica Yjs durability is unsafe because sequence allocation and
-   process-local write/compaction ordering can create snapshot gaps.
-2. Version restore reconciles only the handling process and is non-atomic
+1. Version restore reconciles only the handling process and is non-atomic
    across plain text, CRDT state, and terminal projection.
-3. Live edit persistence is asynchronous, has no client durability
+2. Live edit persistence is asynchronous, has no client durability
    acknowledgement, and logs and swallows failures without durable retry.
-4. `Document.content` and CRDT history can diverge after unsaved
+3. `Document.content` and CRDT history can diverge after unsaved
    edits, arbitrary REST updates, bulk overwrite, failed persistence, or failed
    restore reconciliation.
-5. Redis pub/sub has no replay or reconnect path; multi-replica operation
-   during Redis failure can diverge and allocate duplicate sequence numbers.
-   Inbound pub/sub events trust Redis, and names are not environment-prefixed.
-6. The terminal is host command execution, not a security sandbox, lacks
+4. Redis pub/sub has no replay or reconnect path; multi-replica operation
+   during Redis failure can diverge in memory. Inbound pub/sub events trust
+   Redis, and names are not environment-prefixed.
+5. The terminal is host command execution, not a security sandbox, lacks
    editor-gateway message-rate protection, and leaks its active projection
    registration after a natural PTY exit.
-7. HTTP request parsing precedes Nest authentication/throttling; HTTP
+6. HTTP request parsing precedes Nest authentication/throttling; HTTP
    throttling is process-local and proxy trust is not configured.
-8. Client CRDT objects and server persistence bookkeeping grow per touched
+7. Client CRDT objects and server persistence bookkeeping grow per touched
    document until browser reload or server restart, respectively.
 9. ZIP export is built in memory without a server-side output cap.
 10. Version number allocation has a concurrent unique-conflict failure mode

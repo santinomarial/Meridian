@@ -10,31 +10,27 @@ account for. For component setup and configuration, see the
 ## Current support boundary
 
 Shared PostgreSQL, shared Redis, and Socket.IO session affinity are required for
-more than one API replica, but they are not sufficient to make every workflow
-cross-replica safe.
+multi-replica realtime collaboration, but they are not sufficient to make every
+workflow cross-replica safe.
 
-Even with healthy dependencies, the current implementation has two primary
-data-integrity limitations:
+Every durable Yjs write, compaction, and history reset acquires the same
+PostgreSQL transaction-scoped advisory lock for its document. This prevents the
+former late-insert compaction race across API processes, even when Redis is
+unavailable. Version restore remains the material data-integrity limitation:
+its content transaction, CRDT reset, local broadcast, and terminal projection
+are separate steps, and other replicas are not fenced from stale state.
 
-1. Yjs sequence allocation is global, but PostgreSQL writes and compaction are
-   serialized only within each API process. A lower sequence can be inserted
-   after another replica has compacted through a higher sequence, causing the
-   late update to be skipped on a future cold load.
-2. Version restore changes and CRDT history resets are coordinated only on the
-   replica that handles the HTTP request. Other replicas with the document open
-   are not notified or fenced from writing stale state.
-
-For workloads that require durable collaborative editing or version restore,
-run one API replica until those limitations are corrected. Multiple replicas
-can distribute ordinary HTTP work and provide best-effort realtime fan-out, but
-the complete API tier should not currently be treated as generally safe for
-horizontal collaborative editing.
+Run one API replica for version restore or for workloads that require a fully
+coherent live collaborative view. Multiple replicas can distribute ordinary HTTP
+work, retain correctly ordered durable Yjs history, and provide best-effort
+realtime fan-out, but the complete API tier should not currently be treated as
+generally safe for horizontal collaborative editing.
 
 | Area | Current classification |
 |---|---|
 | HTTP authentication and metadata CRUD | Shared PostgreSQL state and distributable; document content writes and version restore have the concurrency and reconciliation limits below; throttling is per process |
 | Live Yjs relay | Best effort through Redis Pub/Sub while Redis and all subscriptions are healthy |
-| Yjs persistence and compaction | Not safe for general multi-replica use; see the sequence race below |
+| Yjs persistence and compaction | Ordered by a PostgreSQL document advisory lock; durable history is safe across application processes that use this service |
 | Version restore | Single-replica only |
 | Awareness and workspace chat | Ephemeral, best effort, and not replayed |
 | Session and membership revocation | Redis invalidation fast path plus PostgreSQL rechecks and periodic audits |
@@ -96,8 +92,8 @@ channels.
 | Users, sessions, workspaces, memberships, invites, saved documents, versions, Yjs updates, and snapshots | PostgreSQL | Shared and durable |
 | Open `Y.Doc` and awareness state | Each API process | Duplicated when the same document is open on multiple replicas |
 | Socket.IO sockets and room membership | Each API process | Not shared; selected events are relayed manually through Redis |
-| Document sequence counter | Redis when available | Atomic per document while Redis is healthy |
-| Yjs persistence queue | Each API process | Per-document promise chain; not coordinated with other processes |
+| Document sequence allocation | PostgreSQL document advisory lock, with Redis acceleration | Ordered per document even when Redis commands fail |
+| Yjs persistence queue | Each API process | Per-document promise chain; PostgreSQL lock coordinates durable write, compaction, and reset across processes |
 | Authorization cache | Each API process | One-second cache; invalidated locally and through Redis |
 | HTTP throttle counters | Each API process | No shared global budget |
 | Editor/chat throttle counters | Each API process, keyed by socket ID | One fixed one-second budget per socket |
@@ -189,51 +185,38 @@ size beyond the original binary payload.
 
 ### Sequence allocation
 
-Each `DocumentUpdate` has a per-document integer `seq`. With Redis available,
-the first allocation by a process reads the maximum sequence from both
-`DocumentUpdate` and `Snapshot`, then runs a Lua operation that seeds
-`meridian:doc:<documentId>:seq` only if absent and increments it atomically.
-Later allocations by that process use `INCR`.
+Each `DocumentUpdate` has a per-document integer `seq`. The write transaction
+first takes `pg_advisory_xact_lock(hashtextextended(documentId, 0))`. With Redis
+available, the transaction uses a Lua seed-and-increment operation on
+`meridian:doc:<documentId>:seq`; the first allocation seeds from the maximum
+sequence in `DocumentUpdate` and `Snapshot`. Later allocations use `INCR`.
 
-In the absence of a concurrent history reset, this prevents duplicate
-allocations while every writer uses the same healthy Redis counter. If Redis is
-unavailable or a counter command fails, the service falls back to a
-process-local counter seeded from the PostgreSQL high-water mark. That fallback
-is collision-free only when one API process is writing. PostgreSQL has a unique
-constraint on `(documentId, seq)`; a collision causes that update write to fail,
-be logged, and be dropped from durable history.
+When Redis is unavailable or a counter command fails, the same locked
+transaction reads that durable high-water mark and assigns the next value. The
+advisory lock is released automatically at transaction completion or connection
+loss. It serializes all service-managed writes for the document, so the fallback
+is collision-free across API processes rather than process-local.
 
 The first CRDT seed for a saved document uses a deterministic Yjs client ID and
-inserts sequence zero with duplicate skipping. This protects the initial
-cold-open race, but it does not address later asynchronous persistence or
-compaction races.
+inserts sequence zero with duplicate skipping. The first client cannot edit
+until its server has awaited that seed path. The advisory lock then orders later
+asynchronous writes, compaction, and reset operations.
 
-### Cross-replica compaction race
+### Compaction ordering
 
-The Redis sequence is allocated before the corresponding PostgreSQL insert,
-and promise chains serialize writes only inside one process. The following
-ordering is possible:
+Every process still counts locally and attempts compaction after its own
+`SNAPSHOT_EVERY_N_UPDATES` successful writes. The compaction transaction takes
+the same document advisory lock before it reads a base snapshot, replays durable
+updates through its cutoff, inserts the replacement snapshot, and deletes
+covered rows. A pending writer must either commit before compaction begins or
+wait until it ends and receive a sequence above the snapshot cutoff. A cold
+load therefore cannot skip a late lower-sequence row.
 
-1. Replica A allocates sequence 5, but its PostgreSQL insert is delayed.
-2. Replica B allocates and inserts sequence 6.
-3. Replica B compacts through sequence 6. Its serializable transaction rebuilds
-   a snapshot from the durable rows visible at that time, where sequence 5 is
-   absent, and deletes covered update rows.
-4. Replica A inserts sequence 5 after the compaction commits.
-5. A cold load reads the snapshot at sequence 6 and then queries only updates
-   with `seq > 6`, so the late sequence 5 update is never applied.
-
-Serializable isolation protects the compaction transaction from conflicting
-database transactions; it does not reserve Redis-allocated sequences or prove
-that every lower sequence has already been inserted. The local compaction
-counter and `lastPersistedSeq` are also process-local. Consequently, the current
-compaction design is not safe for concurrent writers on multiple API replicas.
-
-Within one process, updates for a document are serialized. Graceful application
-shutdown waits for that process's pending write chains. A crash, forced kill, or
-host loss can still discard updates accepted in memory but not yet inserted.
-Database write errors are swallowed after logging so later queued updates can
-continue; there is no durable retry queue.
+Within one process, updates for a document are serialized by the local promise
+chain. Graceful application shutdown waits for that process's pending write
+chains. A crash, forced kill, or host loss can still discard updates accepted in
+memory but not yet inserted. Database write errors are swallowed after logging
+so later queued updates can continue; there is no durable retry queue.
 
 ### Version restore
 
