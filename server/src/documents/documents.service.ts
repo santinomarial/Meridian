@@ -10,6 +10,10 @@ import { DocumentType, Prisma } from '@prisma/client';
 import JSZip from 'jszip';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertSafeRelPath } from '../modules/terminal/path-safety';
+import {
+  acquireDocumentLock,
+  encodeSeededState,
+} from '../common/crdt/crdt-lineage';
 
 export type { DocumentType };
 
@@ -84,6 +88,8 @@ export interface RestoreResult {
   restoredFromVersion: number;
   newVersionNumber: number;
   content: string;
+  /** The new CRDT generation created by the restore. */
+  generation: number;
 }
 
 export interface CreateDocumentData {
