@@ -129,8 +129,7 @@ export class TerminalService implements OnModuleDestroy {
 
     const exitDisposable = child.onExit(({ exitCode }) => {
       this.logger.info({ socketId, code: exitCode }, 'Terminal process exited');
-      this.cleanupTimers(socketId);
-      this.sessions.delete(socketId);
+      this.releaseSession(socketId);
       socket.emit('terminal:exit', { code: exitCode });
     });
 
@@ -192,22 +191,27 @@ export class TerminalService implements OnModuleDestroy {
     }
   }
 
-  private cleanupTimers(socketId: string): void {
+  /**
+   * Removes all local references to a session and its sandbox projection.
+   * This is shared by explicit kills and natural PTY exits so an exited shell
+   * cannot continue receiving document-to-sandbox sync operations.
+   */
+  private releaseSession(socketId: string): TerminalSession | undefined {
     const session = this.sessions.get(socketId);
-    if (!session) return;
+    if (!session) return undefined;
     clearTimeout(session.idleTimer);
     clearTimeout(session.lifetimeTimer);
+    for (const disposable of session.disposables) {
+      try { disposable.dispose(); } catch { /* already disposed */ }
+    }
+    this.sessions.delete(socketId);
+    this.sandbox.unregister(socketId);
+    return session;
   }
 
   killSession(socketId: string): void {
-    const session = this.sessions.get(socketId);
+    const session = this.releaseSession(socketId);
     if (!session) return;
-
-    clearTimeout(session.idleTimer);
-    clearTimeout(session.lifetimeTimer);
-    for (const d of session.disposables) {
-      try { d.dispose(); } catch { /* already disposed */ }
-    }
 
     try {
       session.pty.kill();
@@ -220,8 +224,6 @@ export class TerminalService implements OnModuleDestroy {
       // Already exited
     }
 
-    this.sessions.delete(socketId);
-    this.sandbox.unregister(socketId);
     this.logger.info({ socketId }, 'Terminal session killed');
   }
 

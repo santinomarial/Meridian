@@ -170,7 +170,7 @@ describe('TerminalService', () => {
       expect(out.some(([, d]) => (d as { data: string }).data === 'meridian@host % ')).toBe(true);
     });
 
-    it('removes session and emits terminal:exit when the PTY exits', async () => {
+    it('releases the sandbox, removes the session, and emits terminal:exit when the PTY exits', async () => {
       const fake = makeFakePty();
       spawnMock.mockReturnValue(fake.pty);
 
@@ -179,6 +179,7 @@ describe('TerminalService', () => {
       fake.emitExit({ exitCode: 0 });
 
       expect(service.hasSession('s5')).toBe(false);
+      expect(sandbox.unregister).toHaveBeenCalledWith('s5');
       const exit = emitted.find(([e]) => e === 'terminal:exit');
       expect((exit![1] as { code: number }).code).toBe(0);
     });
