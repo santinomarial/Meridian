@@ -7,7 +7,7 @@ import * as decoding from "lib0/decoding";
 import { getSocket } from "../lib/socket";
 import {
   getOrCreateAwareness,
-  getOrCreateDoc,
+  getDocumentState,
   runWithRemoteDocumentUpdate,
 } from "../lib/yjsDocs";
 import { colorForUser } from "../lib/collabColors";
@@ -66,7 +66,8 @@ export function useSessionSocket(): void {
       const bytes = toUint8Array(message);
       if (bytes === null) return;
 
-      const doc = getOrCreateDoc(documentId);
+      const doc = getDocumentState(documentId);
+      if (doc === undefined) return;
       const decoder = decoding.createDecoder(bytes);
       const responseEncoder = encoding.createEncoder();
       const messageType = runWithRemoteDocumentUpdate(documentId, () =>
@@ -102,8 +103,10 @@ export function useSessionSocket(): void {
     const onYjsUpdate = ({ documentId, update }: UpdatePayload): void => {
       const bytes = toUint8Array(update);
       if (bytes === null) return;
+      const doc = getDocumentState(documentId);
+      if (doc === undefined) return;
       runWithRemoteDocumentUpdate(documentId, () => {
-        Y.applyUpdate(getOrCreateDoc(documentId), bytes, "remote");
+        Y.applyUpdate(doc, bytes, "remote");
       });
     };
 
@@ -118,6 +121,7 @@ export function useSessionSocket(): void {
     const onAwarenessUpdate = ({ documentId, update }: UpdatePayload): void => {
       const bytes = toUint8Array(update);
       if (bytes === null) return;
+      if (getDocumentState(documentId) === undefined) return;
       awarenessProtocol.applyAwarenessUpdate(
         getOrCreateAwareness(documentId),
         bytes,

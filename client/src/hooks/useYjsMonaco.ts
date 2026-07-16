@@ -7,8 +7,9 @@ import * as syncProtocol from "y-protocols/sync";
 import * as decoding from "lib0/decoding";
 import { getSocket } from "../lib/socket";
 import {
+  acquireDocumentState,
   getOrCreateAwareness,
-  getOrCreateDoc,
+  releaseDocumentState,
   runWithRemoteDocumentUpdate,
 } from "../lib/yjsDocs";
 import { colorForUser } from "../lib/collabColors";
@@ -60,7 +61,7 @@ export function useYjsMonaco(
     if (model === null) return;
 
     const socket = getSocket();
-    const doc = getOrCreateDoc(documentId);
+    const doc = acquireDocumentState(documentId);
     let disposed = false;
     let setupTimer: number | null = null;
     let teardownBinding: (() => void) | null = null;
@@ -218,6 +219,7 @@ export function useYjsMonaco(
       if (setupTimer !== null) window.clearTimeout(setupTimer);
       teardownBinding?.();
       if (socket.connected) socket.emit("leaveDocument", { documentId });
+      releaseDocumentState(documentId);
       useWorkspaceStore.getState().setCollaborators([]);
     };
   }, [monacoEditor, documentId, backendAvailable, currentUser]);

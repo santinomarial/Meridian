@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  acquireDocumentState,
+  activeDocumentStateCount,
+  getDocumentState,
   isApplyingRemoteDocumentUpdate,
+  releaseDocumentState,
   runWithRemoteDocumentUpdate,
 } from "./yjsDocs";
 
@@ -26,5 +30,25 @@ describe("remote Yjs update tracking", () => {
       }),
     ).toThrow("bad update");
     expect(isApplyingRemoteDocumentUpdate("doc-2")).toBe(false);
+  });
+});
+
+describe("Yjs document lifecycle", () => {
+  it("destroys state only after the final active reference is released", () => {
+    const first = acquireDocumentState("doc-lifecycle");
+    const second = acquireDocumentState("doc-lifecycle");
+    expect(second).toBe(first);
+    expect(activeDocumentStateCount()).toBe(1);
+
+    releaseDocumentState("doc-lifecycle");
+    expect(getDocumentState("doc-lifecycle")).toBe(first);
+
+    releaseDocumentState("doc-lifecycle");
+    expect(getDocumentState("doc-lifecycle")).toBeUndefined();
+    expect(activeDocumentStateCount()).toBe(0);
+  });
+
+  it("makes release idempotent for unknown document ids", () => {
+    expect(() => releaseDocumentState("never-opened")).not.toThrow();
   });
 });

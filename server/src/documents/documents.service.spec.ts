@@ -11,6 +11,9 @@ import { DocumentType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   DocumentsService,
+  WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES,
+  WORKSPACE_EXPORT_MAX_CONTENT_BYTES,
+  WORKSPACE_EXPORT_MAX_DOCUMENTS,
   sanitizeZipFilenameStem,
   isExcludedExportPath,
   type CreateDocumentData,
@@ -55,6 +58,9 @@ describe('DocumentsService', () => {
 
   beforeEach(() => {
     prisma = mockDeep<PrismaService>();
+    prisma.$queryRaw.mockResolvedValue([
+      { documentCount: 0n, fileCount: 0n, contentBytes: 0n },
+    ] as never);
     service = new DocumentsService(prisma);
   });
 
@@ -424,6 +430,7 @@ describe('DocumentsService', () => {
       await service.patchDocument('doc-1', { content: 'new' }, 'user-1');
 
       expect(prisma.documentVersion.create).toHaveBeenCalledTimes(1);
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
       expect(prisma.documentVersion.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           documentId: 'doc-1',
@@ -454,6 +461,7 @@ describe('DocumentsService', () => {
       await service.patchDocument('doc-1', { content: 'same' }, 'user-1');
 
       expect(prisma.documentVersion.create).not.toHaveBeenCalled();
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
     });
 
     it('does NOT create a version for a metadata-only patch', async () => {
@@ -716,6 +724,16 @@ describe('DocumentsService', () => {
       prisma.workspace.findUnique.mockResolvedValue(
         name === null ? null : ({ name } as never),
       );
+      prisma.$queryRaw.mockResolvedValue([{
+        documentCount: BigInt(docs.length),
+        fileCount: BigInt(docs.filter((doc) => doc.type === DocumentType.FILE).length),
+        contentBytes: BigInt(
+          docs.reduce(
+            (total, doc) => total + Buffer.byteLength(doc.content ?? '', 'utf8'),
+            0,
+          ),
+        ),
+      }] as never);
       prisma.document.findMany.mockResolvedValue(docs as never);
     }
 
@@ -777,6 +795,45 @@ describe('DocumentsService', () => {
 
       setExportDocs(null, []);
       expect((await service.exportWorkspaceZip('ws-1')).filename).toBe('workspace.zip');
+    });
+
+    it('rejects an oversized workspace before loading document rows', async () => {
+      prisma.workspace.findUnique.mockResolvedValue({ name: 'large' } as never);
+      prisma.$queryRaw.mockResolvedValue([{
+        documentCount: BigInt(WORKSPACE_EXPORT_MAX_DOCUMENTS + 1),
+        fileCount: 0n,
+        contentBytes: 0n,
+      }] as never);
+
+      await expect(service.exportWorkspaceZip('ws-1')).rejects.toBeInstanceOf(
+        PayloadTooLargeException,
+      );
+      expect(prisma.document.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects source content over the preflight limit', async () => {
+      prisma.workspace.findUnique.mockResolvedValue({ name: 'large' } as never);
+      prisma.$queryRaw.mockResolvedValue([{
+        documentCount: 1n,
+        fileCount: 1n,
+        contentBytes: BigInt(WORKSPACE_EXPORT_MAX_CONTENT_BYTES + 1),
+      }] as never);
+
+      await expect(service.exportWorkspaceZip('ws-1')).rejects.toBeInstanceOf(
+        PayloadTooLargeException,
+      );
+      expect(prisma.document.findMany).not.toHaveBeenCalled();
+    });
+
+    it('enforces the final archive byte limit', async () => {
+      const content = 'x'.repeat(WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES);
+      setExportDocs('large', [
+        { type: DocumentType.FILE, path: 'large.txt', content },
+      ]);
+
+      await expect(service.exportWorkspaceZip('ws-1')).rejects.toBeInstanceOf(
+        PayloadTooLargeException,
+      );
     });
   });
 

@@ -342,9 +342,9 @@ describe('DocumentPersistenceService', () => {
     it('retains a newer chain appended while the captured tail drains', async () => {
       let releaseFirstWrite!: () => void;
       prisma.documentUpdate.create.mockImplementationOnce(
-        () => new Promise<never>((resolve) => {
+        (() => new Promise<never>((resolve) => {
           releaseFirstWrite = () => resolve(NOOP_CREATE);
-        }),
+        })) as never,
       );
 
       service.persistUpdate('doc-1', new Uint8Array([1]));

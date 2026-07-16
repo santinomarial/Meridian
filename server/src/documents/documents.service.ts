@@ -24,6 +24,16 @@ export const BULK_IMPORT_MAX_TOTAL_CONTENT_BYTES = 25 * 1024 * 1024;
 export const DOCUMENT_MAX_PATH_BYTES = 4096;
 export const DOCUMENT_MAX_SEGMENT_BYTES = 255;
 export const DOCUMENT_MAX_DEPTH = 64;
+export const WORKSPACE_EXPORT_MAX_DOCUMENTS = BULK_IMPORT_MAX_DOCUMENTS;
+export const WORKSPACE_EXPORT_MAX_FILES = BULK_IMPORT_MAX_FILES;
+export const WORKSPACE_EXPORT_MAX_CONTENT_BYTES = BULK_IMPORT_MAX_TOTAL_CONTENT_BYTES;
+export const WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
+
+interface WorkspaceExportMetrics {
+  documentCount: bigint;
+  fileCount: bigint;
+  contentBytes: bigint;
+}
 
 /** Result of building a workspace export. */
 export interface WorkspaceExport {
@@ -258,9 +268,9 @@ export class DocumentsService {
    * rejected if it is absolute, contains `..`, or has control characters —
    * such documents are skipped rather than allowed to escape the archive.
    *
-   * Limitation: the archive is assembled in memory before sending. That is fine
-   * at Meridian's current scale (per-file content is small and capped); a very
-   * large workspace would warrant a streaming archiver instead.
+   * The archive is assembled in memory, so a database preflight and a second
+   * check over the fetched rows bound document count, file count, source bytes,
+   * and final archive bytes before the response is returned.
    */
   async exportWorkspaceZip(workspaceId: string): Promise<WorkspaceExport> {
     const workspace = await this.prisma.workspace.findUnique({
@@ -268,11 +278,41 @@ export class DocumentsService {
       select: { name: true },
     });
 
+    // Reject oversized workspaces before loading document content into the
+    // Node.js heap. The second in-memory check below closes the ordinary race
+    // where documents are added after this preflight query.
+    const [metrics] = await this.prisma.$queryRaw<WorkspaceExportMetrics[]>`
+      SELECT
+        COUNT(*)::bigint AS "documentCount",
+        COUNT(*) FILTER (WHERE "type" = 'FILE')::bigint AS "fileCount",
+        COALESCE(SUM(octet_length(COALESCE("content", ''))), 0)::bigint AS "contentBytes"
+      FROM "Document"
+      WHERE "workspaceId" = ${workspaceId}
+    `;
+    this.assertWorkspaceExportLimits(
+      Number(metrics?.documentCount ?? 0),
+      Number(metrics?.fileCount ?? 0),
+      Number(metrics?.contentBytes ?? 0),
+    );
+
     const docs = await this.prisma.document.findMany({
       where: { workspaceId },
       orderBy: { path: 'asc' },
       select: { type: true, path: true, content: true },
+      take: WORKSPACE_EXPORT_MAX_DOCUMENTS + 1,
     });
+
+    let observedFiles = 0;
+    let observedContentBytes = 0;
+    for (const doc of docs) {
+      if (doc.type === DocumentType.FILE) observedFiles += 1;
+      observedContentBytes += Buffer.byteLength(doc.content ?? '', 'utf8');
+    }
+    this.assertWorkspaceExportLimits(
+      docs.length,
+      observedFiles,
+      observedContentBytes,
+    );
 
     const zip = new JSZip();
     const seenFiles = new Set<string>();
@@ -298,6 +338,11 @@ export class DocumentsService {
     }
 
     const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+    if (buffer.byteLength > WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES) {
+      throw new PayloadTooLargeException(
+        'Workspace export exceeds the 25 MiB archive limit',
+      );
+    }
     return {
       buffer,
       filename: `${sanitizeZipFilenameStem(workspace?.name)}.zip`,
@@ -542,6 +587,28 @@ export class DocumentsService {
           'Bulk import exceeds the 25 MiB total content limit',
         );
       }
+    }
+  }
+
+  private assertWorkspaceExportLimits(
+    documentCount: number,
+    fileCount: number,
+    contentBytes: number,
+  ): void {
+    if (documentCount > WORKSPACE_EXPORT_MAX_DOCUMENTS) {
+      throw new PayloadTooLargeException(
+        `Workspace export is limited to ${WORKSPACE_EXPORT_MAX_DOCUMENTS} documents`,
+      );
+    }
+    if (fileCount > WORKSPACE_EXPORT_MAX_FILES) {
+      throw new PayloadTooLargeException(
+        `Workspace export is limited to ${WORKSPACE_EXPORT_MAX_FILES} files`,
+      );
+    }
+    if (contentBytes > WORKSPACE_EXPORT_MAX_CONTENT_BYTES) {
+      throw new PayloadTooLargeException(
+        'Workspace export exceeds the 25 MiB source-content limit',
+      );
     }
   }
 
@@ -829,6 +896,15 @@ export class DocumentsService {
       message?: string;
     },
   ): Promise<DocumentVersion> {
+    // Make max+1 allocation an explicit cross-process critical section. The
+    // transaction-scoped lock is released automatically on commit, rollback,
+    // or connection loss, and prevents concurrent replicas from selecting the
+    // same version number.
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(
+        hashtextextended(${`version:${params.documentId}`}, 0)
+      )
+    `;
     const last = await tx.documentVersion.findFirst({
       where: { documentId: params.documentId },
       orderBy: { versionNumber: 'desc' },
