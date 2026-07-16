@@ -107,6 +107,32 @@ describe('Documents & workspace permissions (HTTP integration)', () => {
     expect(res.body.content).toBe('print("updated")');
   });
 
+  it('serializes version allocation for concurrent meaningful saves', async () => {
+    const previous = await ctx.prisma.documentVersion.findFirst({
+      where: { documentId },
+      orderBy: { versionNumber: 'desc' },
+      select: { versionNumber: true },
+    });
+    const previousNumber = previous?.versionNumber ?? 0;
+
+    const [first, second] = await Promise.all([
+      owner.patch(`/documents/${documentId}`).send({ content: 'print("concurrent-a")' }),
+      owner.patch(`/documents/${documentId}`).send({ content: 'print("concurrent-b")' }),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const versions = await ctx.prisma.documentVersion.findMany({
+      where: { documentId, versionNumber: { gt: previousNumber } },
+      orderBy: { versionNumber: 'asc' },
+      select: { versionNumber: true },
+    });
+    expect(versions.map((version) => version.versionNumber)).toEqual([
+      previousNumber + 1,
+      previousNumber + 2,
+    ]);
+  });
+
   it('rejects unknown fields on create (400 via ValidationPipe)', async () => {
     const res = await owner
       .post(`/workspaces/${workspaceId}/documents`)
