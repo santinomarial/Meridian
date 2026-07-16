@@ -96,6 +96,12 @@ model Document {
   name        String
   language    String?
   content     String?
+  // CRDT lineage counter. A version restore replaces the Yjs history with a
+  // brand-new lineage and increments this under the document advisory lock.
+  // Persistence writes tagged with a different generation are rejected
+  // (restore fencing), so a stale replica can never resurrect pre-restore
+  // state.
+  crdtGeneration Int       @default(0)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
@@ -137,25 +143,31 @@ model DocumentUpdate {
   id         String   @id @default(cuid())
   documentId String
   update     Bytes
+  // The Document.crdtGeneration this update belongs to. Rows from older
+  // generations are deleted by restore; the column exists so seq uniqueness
+  // and cold loads are always scoped to the current lineage.
+  generation Int      @default(0)
   seq        Int
   createdAt  DateTime @default(now())
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
-  @@unique([documentId, seq])
-  @@index([documentId, seq])
+  @@unique([documentId, generation, seq])
+  @@index([documentId, generation, seq])
 }
 
 model Snapshot {
   id         String   @id @default(cuid())
   documentId String
   state      Bytes
+  // The Document.crdtGeneration this snapshot belongs to (see DocumentUpdate).
+  generation Int      @default(0)
   seq        Int
   createdAt  DateTime @default(now())
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
-  @@index([documentId, seq])
+  @@index([documentId, generation, seq])
 }
 
 model Session {
