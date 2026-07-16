@@ -271,17 +271,17 @@ A recommended containment and recovery sequence is:
 4. Restart the entire API fleet and require Redis `ok` before admitting it.
 5. Reconnect clients so Socket.IO rooms and passive realtime state are rebuilt.
 
-This sequence limits further divergence but cannot guarantee recovery of writes
-that were already queued when Redis failed; those writes may already have used
-process-local sequence allocation. Reconnect and Yjs sync do not provide a
-durable recovery protocol for an update the server accepted and then failed to
-persist. If persistence failed before the outage, restarting cannot recreate
-updates that existed only in process or client memory. Preserve text through a
-manual copy from a client that still holds it or a successful explicit Save
-before that client state is lost. A Save protects `Document.content` and version
-history but does not repair CRDT history automatically, so complete
-reconciliation in a controlled single-replica maintenance window. Otherwise,
-recovery requires backups or an application-specific repair procedure.
+This sequence limits further divergence but cannot guarantee recovery of a
+realtime publication that was already lost when Redis failed. Reconnect and Yjs
+sync do not provide a durable recovery protocol for an update the server
+accepted and then failed to persist. If persistence failed before the outage,
+restarting cannot recreate updates that existed only in process or client
+memory. Preserve text through a manual copy from a client that still holds it or
+a successful explicit Save before that client state is lost. A Save protects
+`Document.content` and version history but does not repair CRDT history
+automatically, so complete reconciliation in a controlled single-replica
+maintenance window. Otherwise, recovery requires backups or an
+application-specific repair procedure.
 
 ## Other failure modes
 
