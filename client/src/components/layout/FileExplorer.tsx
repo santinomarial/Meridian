@@ -10,7 +10,8 @@ import {
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { PanelSkeleton } from "../ui/Skeleton";
 import { EmptyState } from "../ui/EmptyState";
-import { FileLanguageIcon, languageFromFileName } from "../../constants/fileDisplay";
+import { FileLanguageIcon } from "../../constants/fileDisplay";
+import { getLanguageModeFromFilename } from "../../lib/language";
 import {
   focusRing,
   iconButtonMutedClass,
@@ -460,7 +461,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose, read
 
   const namingPlaceholder = namingTarget === "folder" ? "folder-name" : "filename.ts";
   const namingLanguage =
-    namingTarget === "file" ? languageFromFileName(newItemName || "file.txt") : null;
+    namingTarget === "file" ? getLanguageModeFromFilename(newItemName || "file.txt") : null;
 
   return (
     <aside

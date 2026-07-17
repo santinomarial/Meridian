@@ -58,6 +58,11 @@ export function toLanguageMode(lang: string): LanguageMode {
   return lang as LanguageMode;
 }
 
+/** Resolve a language while the user is still entering a filename. */
+export function getLanguageModeFromFilename(filename: string): LanguageMode {
+  return toLanguageMode(getLanguageFromFilename(filename.trim() || 'file.txt'));
+}
+
 // ---------------------------------------------------------------------------
 // Supported file extensions
 // ---------------------------------------------------------------------------

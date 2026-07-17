@@ -1,13 +1,12 @@
 import type { ReactNode } from "react";
 import type { LanguageMode } from "../types";
-import { getLanguageFromFilename, toLanguageMode } from "../lib/language";
 
 /**
  * Compact language marks shown next to filenames (tree, tabs, breadcrumb).
  * Brand-colored glyphs read clearly at ~14–16px — better than generic Material icons.
  */
 
-export const TYPESCRIPT_ICON_COLOR = "#3178C6";
+const TYPESCRIPT_ICON_COLOR = "#3178C6";
 
 const SIZE = 16;
 
@@ -76,11 +75,6 @@ function SvgShell({
   );
 }
 
-/** Resolve language from an in-progress filename (e.g. while creating `app.py`). */
-export function languageFromFileName(fileName: string): LanguageMode {
-  return toLanguageMode(getLanguageFromFilename(fileName.trim() || "file.txt"));
-}
-
 export function FileLanguageIcon({
   language,
   fileName,
@@ -89,7 +83,7 @@ export function FileLanguageIcon({
 }: IconProps) {
   switch (language) {
     case "typescript":
-      return <Badge label="TS" bg="#3178C6" size={size} className={className} />;
+      return <Badge label="TS" bg={TYPESCRIPT_ICON_COLOR} size={size} className={className} />;
     case "javascript":
       return <Badge label="JS" bg="#F7DF1E" fg="#000" size={size} className={className} />;
     case "python":
@@ -150,72 +144,5 @@ export function FileLanguageIcon({
         return <Badge label="·" bg="#64748B" size={size} className={className} />;
       }
       return <Badge label="TXT" bg="#64748B" size={size} className={className} />;
-  }
-}
-
-/** @deprecated Prefer FileLanguageIcon — kept for any leftover Material icon call sites. */
-export function getFileIconName(language: LanguageMode): string {
-  switch (language) {
-    case "typescript":
-    case "javascript":
-      return "description";
-    case "python":
-      return "code_blocks";
-    case "go":
-    case "rust":
-    case "java":
-    case "cpp":
-    case "c":
-      return "code";
-    case "html":
-      return "html";
-    case "css":
-      return "css";
-    case "json":
-    case "yaml":
-      return "data_object";
-    case "markdown":
-      return "article";
-    case "sql":
-      return "table";
-    case "shell":
-      return "terminal";
-    default:
-      return "description";
-  }
-}
-
-export function getFileIconClassName(language: LanguageMode, fileName?: string): string {
-  switch (language) {
-    case "typescript":
-    case "javascript":
-      return "text-[#3178C6]";
-    case "python":
-      return "text-[#3572A5]";
-    case "go":
-      return "text-[#00ACD7]";
-    case "rust":
-      return "text-[#DEA584]";
-    case "java":
-      return "text-[#B07219]";
-    case "cpp":
-    case "c":
-      return "text-[#555555]";
-    case "html":
-      return "text-[#E34C26]";
-    case "css":
-      return "text-[#563D7C]";
-    case "json":
-    case "yaml":
-      return "text-secondary";
-    case "markdown":
-      return "text-on-surface-variant";
-    case "sql":
-      return "text-[#e38c00]";
-    case "shell":
-      return "text-[#4EAA25]";
-    default:
-      if (fileName?.startsWith(".")) return "text-outline";
-      return "text-on-surface-variant";
   }
 }

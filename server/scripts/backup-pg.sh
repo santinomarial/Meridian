@@ -26,14 +26,46 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   exit 1
 fi
 
+# Prisma accepts `schema` in PostgreSQL connection URLs, but libpq tools such
+# as pg_dump and psql reject that parameter. Preserve standard libpq options
+# such as sslmode while removing only Prisma's schema selector.
+postgres_url() {
+  local url="$1"
+  if [[ "$url" != *"?"* ]]; then
+    printf '%s' "$url"
+    return
+  fi
+
+  local base="${url%%\?*}"
+  local query="${url#*\?}"
+  local parameter
+  local joined=""
+  local parameters=()
+  local IFS='&'
+
+  read -r -a parameters <<< "$query"
+  for parameter in "${parameters[@]}"; do
+    if [[ -n "$parameter" && "${parameter%%=*}" != "schema" ]]; then
+      joined="${joined:+$joined&}$parameter"
+    fi
+  done
+
+  printf '%s' "$base"
+  if [[ -n "$joined" ]]; then
+    printf '?%s' "$joined"
+  fi
+}
+
+POSTGRES_URL="$(postgres_url "$DATABASE_URL")"
+
 case "$cmd" in
   dump)
-    pg_dump --no-owner --format=plain --file="$file" "$DATABASE_URL"
+    pg_dump --no-owner --format=plain --file="$file" "$POSTGRES_URL"
     echo "Wrote $file"
     ;;
   restore)
     # Plain SQL dump from `dump`.
-    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
+    psql "$POSTGRES_URL" -v ON_ERROR_STOP=1 -f "$file"
     echo "Restored $file"
     ;;
   *)

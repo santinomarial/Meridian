@@ -13,6 +13,9 @@ concurrency:
 env:
   NODE_VERSION: "22"
 
+permissions:
+  contents: read
+
 jobs:
   # ── Server: generate Prisma client, build, run unit tests ──────────────────
   # Unit tests mock PrismaService (jest-mock-extended), so no database is
@@ -24,8 +27,8 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -45,8 +48,8 @@ jobs:
       run:
         working-directory: client
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -100,8 +103,8 @@ jobs:
       # two AppModules against this shared Postgres + Redis.
       NODE_ENV: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -152,8 +155,8 @@ jobs:
       NODE_ENV: development
       MERIDIAN_BACKEND_URL: http://localhost:3000
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -217,8 +220,8 @@ jobs:
       run:
         working-directory: client
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -231,8 +234,8 @@ jobs:
     name: Dependency audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -251,19 +254,19 @@ jobs:
     name: Container scan (Trivy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build API image
         run: docker build -t meridian-api:ci ./server
       - name: Build web image
         run: docker build -t meridian-web:ci ./client
       - name: Trivy API image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: meridian-api:ci
           severity: CRITICAL,HIGH
           exit-code: "1"
       - name: Trivy web image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: meridian-web:ci
           severity: CRITICAL,HIGH
@@ -288,7 +291,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/meridian?schema=public
+      # PostgreSQL CLI tools reject Prisma's optional `schema` URL parameter.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/meridian
       JWT_SECRET: ci-test-secret-at-least-16-chars
       CLIENT_ORIGIN: http://localhost:5173
       NODE_ENV: test
@@ -296,8 +300,8 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
