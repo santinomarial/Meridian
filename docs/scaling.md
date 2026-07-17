@@ -11,27 +11,28 @@ account for. For component setup and configuration, see the
 
 Shared PostgreSQL, shared Redis, and Socket.IO session affinity are required for
 multi-replica realtime collaboration, but they are not sufficient to make every
-workflow cross-replica safe.
+workflow equivalent to a single process.
 
-Every durable Yjs write, compaction, and history reset acquires the same
+Every durable Yjs write, compaction, checkpoint, and version restore acquires a
 PostgreSQL transaction-scoped advisory lock for its document. This prevents the
 former late-insert compaction race across API processes, even when Redis is
-unavailable. Version restore remains the material data-integrity limitation:
-its content transaction, CRDT reset, local broadcast, and terminal projection
-are separate steps, and other replicas are not fenced from stale state.
+unavailable. Version restore is generation-fenced: the restore transaction bumps
+`Document.crdtGeneration`, replaces the CRDT lineage, and causes stale writes to
+be rejected before commit.
 
-Run one API replica for version restore or for workloads that require a fully
-coherent live collaborative view. Multiple replicas can distribute ordinary HTTP
-work, retain correctly ordered durable Yjs history, and provide best-effort
-realtime fan-out, but the complete API tier should not currently be treated as
-generally safe for horizontal collaborative editing.
+Multiple replicas can distribute ordinary HTTP work, retain correctly ordered
+durable Yjs history, provide best-effort realtime fan-out, and converge after a
+generation-fenced version restore. The remaining multi-replica limits are
+operational rather than hidden data-integrity guarantees: Redis Pub/Sub has no
+durable replay for awareness/chat, terminal processes are local, terminal file
+projection is best effort, and rate limiting remains per process.
 
 | Area | Current classification |
 |---|---|
-| HTTP authentication and metadata CRUD | Shared PostgreSQL state and distributable; document content writes and version restore have the concurrency and reconciliation limits below; throttling is per process |
+| HTTP authentication and metadata CRUD | Shared PostgreSQL state and distributable; document content writes and version restore are serialized through document advisory locks; throttling is per process |
 | Live Yjs relay | Best effort through Redis Pub/Sub while Redis and all subscriptions are healthy |
 | Yjs persistence and compaction | Ordered by a PostgreSQL document advisory lock; durable history is safe across application processes that use this service |
-| Version restore | Single-replica only |
+| Version restore | Generation-fenced and convergent across replicas that process Redis restore-control events or the generation audit |
 | Awareness and workspace chat | Ephemeral, best effort, and not replayed |
 | Session and membership revocation | Redis invalidation fast path plus PostgreSQL rechecks and periodic audits |
 | Terminal PTY | Local to one process and one socket |
@@ -194,11 +195,13 @@ size beyond the original binary payload.
 
 ### Sequence allocation
 
-Each `DocumentUpdate` has a per-document integer `seq`. The write transaction
-first takes `pg_advisory_xact_lock(hashtextextended(documentId, 0))`. With Redis
-available, the transaction uses a Lua seed-and-increment operation on
-`meridian:doc:<documentId>:seq`; the first allocation seeds from the maximum
-sequence in `DocumentUpdate` and `Snapshot`. Later allocations use `INCR`.
+Each `DocumentUpdate` has an integer `seq` scoped to `(documentId, generation)`.
+The write transaction first takes
+`pg_advisory_xact_lock(hashtextextended(documentId, 0))`. With Redis available,
+the transaction uses a Lua seed-and-increment operation on
+`meridian:doc:<documentId>:gen:<generation>:seq`; the first allocation seeds
+from the maximum sequence in `DocumentUpdate` and `Snapshot` for that lineage.
+Later allocations use `INCR`.
 
 When Redis is unavailable or a counter command fails, the same locked
 transaction reads that durable high-water mark and assigns the next value. The
@@ -209,7 +212,7 @@ is collision-free across API processes rather than process-local.
 The first CRDT seed for a saved document uses a deterministic Yjs client ID and
 inserts sequence zero with duplicate skipping. The first client cannot edit
 until its server has awaited that seed path. The advisory lock then orders later
-asynchronous writes, compaction, and reset operations.
+asynchronous writes, compaction, checkpoint, and restore operations.
 
 ### Compaction ordering
 
