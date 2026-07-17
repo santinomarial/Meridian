@@ -2,12 +2,13 @@
 
 Meridian's server is a NestJS 11 application that exposes an HTTP API and a Socket.IO endpoint on one port. PostgreSQL stores accounts, authorization state, workspace metadata, saved document content, version history, and persisted Yjs history. Redis provides optional cross-process coordination; it is not a durable data store.
 
-The recommended deployment is one server process backed by PostgreSQL. Durable
-Yjs writes and compaction are serialized across processes by PostgreSQL, but
-live Redis fan-out and version restore still do not provide a complete
-multi-replica consistency model. See
-[Deployment topology and Redis](#deployment-topology-and-redis) before adding
-replicas.
+The simplest deployment is one server process backed by PostgreSQL. Multiple
+replicas are supported for the durable document paths when they share
+PostgreSQL and Redis and use sticky Socket.IO routing: Yjs writes, compaction,
+checkpointing, and version restore are serialized or generation-fenced through
+PostgreSQL. Redis remains a live fan-out and acceleration layer, so awareness,
+chat, terminal projection, and Pub/Sub delivery still carry the operational
+limits described in [Deployment topology and Redis](#deployment-topology-and-redis).
 
 For system-wide context, see [architecture.md](../docs/architecture.md). For capacity and failure-mode analysis, see [scaling.md](../docs/scaling.md).
 
@@ -114,7 +115,7 @@ The seed is intended for disposable environments. It updates the demo users' pas
 | `WS_MAX_YJS_UPDATE_BYTES` | `1048576` | Maximum binary payload accepted by Yjs sync, update, and awareness handlers |
 | `ENABLE_TERMINAL` | `false` | Enables host-backed PTY events and terminal projection subscriptions |
 | `REDIS_REQUIRED` | `false` | When `true`, `/ready` requires Redis `ok` (multi-replica gate) |
-| `REDIS_KEY_PREFIX` | empty | Prefix for Redis keys and pub/sub channels (`prod` → `prod:`) |
+| `REDIS_KEY_PREFIX` | empty | Prefix for Redis keys and pub/sub channels (`prod` becomes `prod:`) |
 | `METRICS_ENABLED` | `true` | Expose Prometheus `GET /metrics` |
 | `TRUST_PROXY` | `false` | Express trust proxy (`true`, `false`, or hop count) |
 | `RESEND_API_KEY` | Unset | Resend API key for password-reset and invite email delivery |

@@ -155,7 +155,7 @@ For an accepted `yjs:update`, the origin replica:
    current workspace role;
 2. applies the update to its local in-memory `Y.Doc`;
 3. relays it to other sockets in the local document room (low-latency sticky
-   path — peers may see the edit before durable commit);
+   path; peers may see the edit before durable commit);
 4. awaits a PostgreSQL write under `(documentId, generation, updateId)`
    idempotency, then emits `yjs:ack` `{ documentId, updateId, generation, seq }`
    to the sender; and
@@ -383,14 +383,14 @@ captured chain and is abandoned if a newer write appears concurrently.
 Capacity planning must include duplicated hot-document memory, Redis fan-out to
 every subscriber, base64/JSON message expansion, PostgreSQL connections from
 every replica, local terminal processes, and temporary sandbox storage. The
-application exposes health endpoints and structured logs but no built-in
-metrics endpoint or distributed backpressure mechanism.
+application exposes health endpoints, structured logs, and a process-local
+Prometheus `/metrics` endpoint, but no distributed backpressure mechanism.
 
 ## Deployment and shutdown checklist
 
-1. Use one API replica for version restore and for collaboration that requires
-   replayable cross-replica state until the remaining realtime limitations are
-   fixed.
+1. Use one API replica for the simplest operations model, or use multiple API
+   replicas only with shared PostgreSQL, shared Redis, Socket.IO affinity, and
+   the remaining realtime limitations documented here.
 2. Apply committed Prisma migrations once before admitting a new application
    version. Do not let every replica run `prisma migrate dev`.
 3. Start and verify PostgreSQL and Redis before the API fleet. The repository's

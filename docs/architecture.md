@@ -64,7 +64,7 @@ secret distribution are outside this repository.
 | Static host | Delivers the Vite assets and must provide SPA fallback for browser routes. It is not implemented by the NestJS server. |
 | NestJS process | Authentication, authorization, validation, document coordination, and optional host command execution occur here. A process owns its sockets, loaded Yjs documents, rate-limit state, and PTYs. |
 | PostgreSQL | Durable store for users, sessions, workspaces, documents, versions, Yjs updates, and Yjs snapshots. It is required for readiness. |
-| Redis | Best-effort cross-process message fan-out plus accelerated document sequence allocation. It is not document storage and pub/sub has no replay. PostgreSQL serializes durable document persistence, but Redis loss and local-only restore still make multi-replica editing unsafe. |
+| Redis | Best-effort cross-process message fan-out plus accelerated document sequence allocation. It is not document storage and pub/sub has no replay. PostgreSQL serializes durable document persistence and restore fencing, while Redis carries live fan-out, restore-control, authorization invalidation, chat, awareness, and terminal projection messages. |
 | Mail provider | Receives email addresses and action links when Resend is configured. Development without a provider logs action URLs; other environments report delivery failures internally. |
 | PTY and temporary filesystem | High-risk boundary. A terminal shell runs as the server OS user. The temporary working directory and reduced environment are not an OS sandbox. |
 
@@ -240,7 +240,7 @@ to 100,000.
 
 The storage is process-local. Set `TRUST_PROXY` when behind a reverse proxy
 so throttling keys use the client address. These limits are still not a
-global abuse-control boundary — a production ingress needs its own controls.
+global abuse-control boundary; a production ingress needs its own controls.
 
 ## 5. Authentication and session lifecycle
 
@@ -727,7 +727,7 @@ Each client gets a three-second startup connection timeout.
 | `workspace:*:chat` | Cross-instance workspace chat |
 | `realtime:authorization:invalidate` | Session, user, and membership invalidation |
 | `meridian:sandbox:*:sync` | Best-effort terminal projection changes |
-| `meridian:doc:<id>:seq` | Atomic document update sequence counter |
+| `meridian:doc:<id>:gen:<generation>:seq` | Accelerated document update sequence counter for one CRDT lineage |
 
 Redis is a trusted internal boundary. Inbound collaboration, chat, and sandbox
 pub/sub messages are not independently authenticated or re-authorized against
@@ -1034,5 +1034,5 @@ guarantees:
     containers, Redis-required readiness, prefixed Redis channels, Prometheus
     metrics, backup smoke tests, and incident runbooks are documented in
     [operations.md](operations.md). Sticky LB, managed TLS, and terminal
-    isolation remain platform concerns — `ENABLE_TERMINAL` stays refused in
+    isolation remain platform concerns; `ENABLE_TERMINAL` stays refused in
     production.
