@@ -717,8 +717,9 @@ pre-restore state never reappears.
 ## 11. Redis and multiple server instances
 
 Redis uses separate publisher and subscriber clients with lazy connection,
-offline queues disabled, no command retries, and no automatic reconnection.
-Each client gets a three-second startup connection timeout.
+offline queues disabled, capped reconnect backoff, and automatic pattern
+resubscription after reconnect. Each client gets a three-second startup
+connection timeout.
 
 | Redis name | Purpose |
 |---|---|
@@ -731,10 +732,10 @@ Each client gets a three-second startup connection timeout.
 
 Redis is a trusted internal boundary. Inbound collaboration, chat, and sandbox
 pub/sub messages are not independently authenticated or re-authorized against
-PostgreSQL. A party that can publish to these channels can inject events. The
-channel and key names are not prefixed by deployment or environment, and Redis
-pub/sub is not isolated by logical database number. Deployments must not share
-an untrusted or overlapping Redis channel namespace.
+PostgreSQL. A party that can publish to these channels can inject events.
+`REDIS_KEY_PREFIX` prefixes keys and pub/sub channels for environment
+separation, but Redis pub/sub is not isolated by logical database number.
+Deployments must not share an untrusted or overlapping Redis channel namespace.
 
 Messages carry a process origin ID so the publisher ignores its own fan-out.
 Inbound document updates are applied only when that instance already has the
@@ -748,13 +749,15 @@ Readiness reports Redis as `disabled`, but remains ready when
 PostgreSQL works. The application does not enforce that only one replica is
 running.
 
-If Redis is lost after startup, there is no reconnect loop. The service can
-remain marked available while commands fail; readiness reports Redis `error`
-and publications are lost. A failed sequence command falls back to the
-PostgreSQL high-water mark while holding the document advisory lock, so durable
-sequence ordering remains intact. HTTP readiness still depends only on
-PostgreSQL. Multiple active replicas during either Redis failure mode can still
-diverge in memory and miss authorization invalidations.
+If Redis is lost after startup, clients reconnect with capped backoff and the
+subscriber restores pattern subscriptions. Commands issued during the outage
+still fail without offline buffering, so publications can be lost. A failed
+sequence command falls back to the PostgreSQL high-water mark while holding the
+document advisory lock, so durable sequence ordering remains intact. HTTP
+readiness reports Redis `error` for optional Redis and `not_ready` when
+`REDIS_REQUIRED=true`. Multiple active replicas during either Redis failure
+mode can still diverge in memory and miss authorization invalidations until
+reconnect and later audits/events repair the parts that are repairable.
 
 Socket.IO connections and rooms are process-local, so any load balancer must
 support WebSocket upgrade and sticky routing for long-polling/session
@@ -1002,12 +1005,14 @@ guarantees:
    version restore). Unsaved collaborative edits remain absent from export and
    terminal materialization until checkpoint. Independent content PATCH is
    rejected.
-3. Redis pub/sub has no replay or reconnect path; multi-replica operation
-   during Redis failure can diverge in memory for fan-out (awareness, chat,
-   live updates). Restore fencing still rejects stale durable writes via
+3. Redis pub/sub has no durable replay; multi-replica operation during Redis
+   failure can diverge in memory for fan-out (awareness, chat, live updates).
+   Redis reconnects and resubscribes, but commands issued during the outage are
+   not buffered. Restore fencing still rejects stale durable writes via
    PostgreSQL even when a restore-control message is missed; the generation
    audit eventually evicts stale in-memory documents. Inbound pub/sub events
-   trust Redis, and names are not environment-prefixed.
+   trust Redis, and environment separation depends on correct
+   `REDIS_KEY_PREFIX` configuration.
 4. The terminal is host command execution, not a security sandbox, and does
    not delete temporary projection directories on teardown. `ENABLE_TERMINAL`
    is refused when `NODE_ENV=production`.

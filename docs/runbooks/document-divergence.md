@@ -14,7 +14,7 @@
 2. Missed restore-control message (generation audit should eventually heal
    in-memory lineage; durable writes for the old generation stay fenced).
 3. Partial fleet restart after a Postgres restore or Redis replacement.
-4. Operators writing `Document.content` out of band (unsupported — use
+4. Operators writing `Document.content` out of band (unsupported; use
    checkpoint / restore APIs).
 
 ## Immediate actions

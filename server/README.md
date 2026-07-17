@@ -430,12 +430,12 @@ npm run test:integration
 The integration suite creates prefixed synthetic accounts and removes them afterward. Use a disposable test database despite that cleanup boundary. Browser end-to-end tests live in the client package; see the [client test documentation](../client/README.md).
 
 CI uses PostgreSQL 16, Redis 7, Node.js 22, `prisma migrate deploy`, serial
-HTTP integration tests, and Playwright against one server process. Unit tests
-cover the Redis and persistence services with mocks, but CI does not start
-multiple application processes or verify PostgreSQL advisory locking against a
-real concurrent replica pair, restore, Redis outage behavior, or terminal
-Pub/Sub ordering. Redis being present in CI is not evidence that the unsupported
-multi-replica topology is safe.
+HTTP integration tests, Playwright against one server process, and dedicated
+multi-replica integration suites for advisory-lock sequence allocation,
+post-commit Yjs fan-out, sequence-gap catch-up, durable acknowledgements, and
+restore fencing. Unit tests still cover most Redis and persistence service
+branches with mocks. CI does not exercise a real sticky load balancer, Redis
+outage under sustained load, or terminal Pub/Sub ordering.
 
 ### E2E-only server mode
 

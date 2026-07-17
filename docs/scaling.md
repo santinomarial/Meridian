@@ -269,7 +269,7 @@ environments can share one Redis deployment.
 | Failure | Observable behavior | Required response for a multi-replica deployment |
 |---|---|---|
 | Redis unavailable at startup | API starts; `/ready` can return 200 with Redis `disabled`; Pub/Sub is not subscribed; durable sequences still use PostgreSQL locks | Do not admit cross-replica collaboration; restore Redis and restart the API fleet before enabling it |
-| Redis lost after startup | Pub/Sub and counters fail without retry; `/ready` can still return 200 with Redis `error`; loaded documents and sandboxes may diverge, while durable sequence ordering continues | Stop collaborative writes, drain replicas, restore Redis, and restart every replica |
+| Redis lost after startup | Commands issued during the outage fail without offline retry; clients reconnect and resubscribe, but lost Pub/Sub messages are not replayed; `/ready` can still return 200 with Redis `error`; loaded documents and sandboxes may diverge, while durable sequence ordering continues | Stop collaborative writes, drain replicas, restore Redis, and restart every replica |
 | Redis command fails transiently | The update uses PostgreSQL high-water allocation under the document lock; its publication can still be lost | Treat as loss of cross-replica realtime safety, not as a harmless transient |
 | Redis data is replaced or restored | Fresh processes can reseed acceleration keys from PostgreSQL, but running processes can retain stale client state and Redis seed flags | Quiesce writes and perform a coordinated restart before resuming cross-replica collaboration |
 

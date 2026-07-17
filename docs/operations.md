@@ -37,26 +37,26 @@ API --> Postgres (internal)
 API --> Redis (internal)
 ```
 
-### Phase 1 — Harden before opening DNS / firewall to the world
+### Phase 1 - Harden before opening DNS / firewall to the world
 
 **Secrets and identity**
 
 - Generate new production secrets (never reuse laptop `.env` or Resend test keys):
-  - `JWT_SECRET` ≥ 32 random bytes (`openssl rand -base64 48`)
+  - `JWT_SECRET` at least 32 random bytes (`openssl rand -base64 48`)
   - `POSTGRES_PASSWORD` strong random
   - Unique `REDIS_KEY_PREFIX` (e.g. `prod:`)
 - Set `CLIENT_ORIGIN=https://YOUR_DOMAIN`
-- Set `DOMAIN=YOUR_DOMAIN` and optional `ACME_EMAIL` for Let’s Encrypt
+- Set `DOMAIN=YOUR_DOMAIN` and optional `ACME_EMAIL` for Let's Encrypt
 - Leave `VITE_API_URL` / `VITE_SOCKET_URL` empty for same-origin, or set both to
   `https://YOUR_DOMAIN`
 - Keep `ENABLE_TERMINAL` unset/false; compose forces `"false"`
 - Keep `TRUST_PROXY=1` behind Caddy (compose sets this)
-- Do **not** publish Postgres, Redis, or API port 3000 on the host — compose
+- Do **not** publish Postgres, Redis, or API port 3000 on the host; compose
   only publishes Caddy `80`/`443`. Scrape `/metrics` over SSH tunnel / private
   network only (Caddy returns 404 for `/metrics` publicly)
 - Swagger `/docs` stays off in production; Caddy also blocks `/docs` and `/e2e`
 
-**App hardening already in-repo (verify, don’t reinvent)**
+**App hardening already in-repo (verify, do not reinvent)**
 
 - HttpOnly auth cookie, `Secure` in production, Helmet on the API
 - Invite tokens hashed at rest; single-use accept
@@ -65,9 +65,9 @@ API --> Redis (internal)
 
 **Known residual risks (accept or mitigate)**
 
-- No email verification at signup — treat addresses as unverified until you add that flow
+- No email verification at signup; treat addresses as unverified until you add that flow
 - Invite email to arbitrary inboxes needs a **verified Resend domain**; until then use copy-link only
-- Process-local HTTP throttling — add edge rate limits if you expect abuse
+- Process-local HTTP throttling; add edge rate limits if you expect abuse
 - Terminal must stay disabled for multi-tenant public use
 
 **Host hardening (VPS)**
@@ -77,23 +77,23 @@ API --> Redis (internal)
 - Install Docker Engine + Compose plugin
 - Never bind Postgres/Redis to `0.0.0.0`
 
-### Phase 2 — DNS and bring-up
+### Phase 2 - DNS and bring-up
 
 1. Point DNS `A` / `AAAA` for `YOUR_DOMAIN` at the VPS; wait for propagation.
 2. On the VPS, from the repo root:
 
 ```bash
 cp .env.production.example .env
-# edit .env — DOMAIN, CLIENT_ORIGIN, JWT_SECRET, POSTGRES_PASSWORD, REDIS_KEY_PREFIX
+# edit .env: DOMAIN, CLIENT_ORIGIN, JWT_SECRET, POSTGRES_PASSWORD, REDIS_KEY_PREFIX
 docker compose -f docker-compose.prod.yml up --build -d
 ```
 
 3. Caddy obtains certificates automatically for `DOMAIN`.
 
-### Phase 3 — Go-live checklist
+### Phase 3 - Go-live checklist
 
 1. `https://YOUR_DOMAIN/ready` returns 200
-2. Sign up → create file → Share copy-link → second browser accepts invite → live edit
+2. Sign up, create file, share copy-link, accept invite in a second browser, and live edit
 3. Confirm auth cookies are `Secure` over HTTPS; no mixed content in DevTools
 4. Enable Postgres backups (daily `pg_dump` or provider snapshots); test one restore
    ([`server/scripts/backup-pg.sh`](../server/scripts/backup-pg.sh))
@@ -104,7 +104,7 @@ docker compose -f docker-compose.prod.yml up --build -d
 | Variable | Default | Meaning |
 |---|---|---|
 | `REDIS_REQUIRED` | `false` | When `true`, `GET /ready` returns 503 unless Redis is `ok` |
-| `REDIS_KEY_PREFIX` | empty | Prefix for every Redis key and pub/sub channel (`prod` → `prod:`) |
+| `REDIS_KEY_PREFIX` | empty | Prefix for every Redis key and pub/sub channel (`prod` becomes `prod:`) |
 
 Use a non-empty prefix whenever staging and production share Redis, or when
 multiple Meridian fleets share one cluster. The public Compose stack sets
@@ -137,7 +137,7 @@ Process-local Prometheus metrics include:
 - default Node process metrics from `prom-client`
 
 Expose `/metrics` only on an internal scrape network (SSH tunnel to the API
-container, or a private overlay). Caddy’s public Caddyfile returns **404** for
+container, or a private overlay). Caddy's public Caddyfile returns **404** for
 `/metrics`. Pair with your OpenTelemetry collector or Prometheus federation as
 needed; the application does not ship an OTLP exporter.
 
@@ -176,7 +176,7 @@ PostgreSQL is the durability boundary. Minimum practice:
    ([`server/scripts/backup-pg.sh`](../server/scripts/backup-pg.sh)).
 3. After restore, restart the **entire** API fleet so in-memory Y.Docs and Redis
    seq seed flags cannot diverge from the restored lineage.
-4. Redis AOF/RDB is optional acceleration — do not treat Redis as the restore
+4. Redis AOF/RDB is optional acceleration; do not treat Redis as the restore
    source for documents.
 
 CI validates that the backup script can dump and restore schema+data against

@@ -33,6 +33,6 @@
 
 - Updates that were acked (`yjs:ack`) are in PostgreSQL and survive.
 - Updates accepted into memory but never persisted are not recoverable from
-  Redis replay — there is none. Prefer client outbound-queue resend after
+  Redis replay; there is none. Prefer client outbound-queue resend after
   reconnect.
-- Full detail: [scaling.md — Redis failure behavior](../scaling.md#redis-failure-behavior).
+- Full detail: [scaling.md - Redis failure behavior](../scaling.md#redis-failure-behavior).
