@@ -72,7 +72,7 @@ describe('HTTP body limits', () => {
     expect(updateResponse.status).toBe(401);
   });
 
-  it('persists authenticated create, update, and bulk requests over 100 KB', async () => {
+  it('persists supported writes over 100 KB and rejects direct content PATCH', async () => {
     const initialContent = 'a'.repeat(150 * 1024);
     const updatedContent = 'b'.repeat(180 * 1024);
     const created = await agent
@@ -86,11 +86,11 @@ describe('HTTP body limits', () => {
       .expect(201);
     expect(created.body.content).toHaveLength(initialContent.length);
 
-    const updated = await agent
+    const rejectedUpdate = await agent
       .patch(`/documents/${created.body.id as string}`)
       .send({ content: updatedContent })
-      .expect(200);
-    expect(updated.body.content).toHaveLength(updatedContent.length);
+      .expect(400);
+    expect(rejectedUpdate.body.message).toContain('PATCH cannot set content');
 
     const bulk = await agent
       .post(`/workspaces/${workspaceId}/documents/bulk`)

@@ -501,7 +501,7 @@ a folder updates descendant paths in a transaction.
 
 | Limit | Value and enforcement |
 |---|---|
-| Saved content per file | 1 MiB of UTF-8 bytes on create, update, and bulk import |
+| Saved content per file | 1 MiB of UTF-8 bytes on create, checkpoint, bulk import, and version restore |
 | Bulk import | At most 1,000 files, 2,000 total documents, and 25 MiB of decoded text |
 | Workspace export | At most 1,000 files, 2,000 documents, 25 MiB of source content, and a 25 MiB final archive |
 | Bulk transaction | 60-second Prisma transaction timeout |
@@ -525,10 +525,11 @@ checked again, and the generated archive has a final 25 MiB cap. Construction
 is still in memory rather than streamed, but its application-level inputs and
 output are bounded.
 
-A meaningful content PATCH creates the next plain-text version in the same
-transaction as the content change. Version numbers are selected as
-`max + 1` while holding a transaction-scoped PostgreSQL advisory lock derived
-from the document ID. The unique constraint remains a database backstop.
+A checkpoint that changes `Document.content` creates the next plain-text
+version in the same transaction as the content change. Version numbers are
+selected as `max + 1` while holding a transaction-scoped PostgreSQL advisory
+lock derived from the document ID. The unique constraint remains a database
+backstop.
 
 ## 9. Realtime protocol
 
