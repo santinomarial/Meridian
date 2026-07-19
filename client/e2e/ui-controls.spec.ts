@@ -5,8 +5,8 @@
  * that needs a real workspace runs only when the backend is available.
  */
 import { test, expect, type Page } from "@playwright/test";
-import { isBackendAvailable, uniqueEmail, signUpViaUI } from "./helpers/auth.js";
-import { STRONG_PASSWORD, freshWorkspace } from "./helpers/workspace.js";
+import { isBackendAvailable } from "./helpers/auth.js";
+import { freshWorkspace } from "./helpers/workspace.js";
 
 /** Block the API and open the hard-gated unavailable screen. */
 async function openUnavailableGate(page: Page): Promise<void> {
@@ -183,13 +183,7 @@ test.describe("collaboration panel", () => {
     test("backend mode shows 'No collaborators yet' when no collaborators joined", async ({
       page,
     }) => {
-      await page.goto("/");
-      await signUpViaUI(page, uniqueEmail(), STRONG_PASSWORD);
-      await page.waitForURL("/workspace", { timeout: 20_000 });
-
-      await page.waitForSelector('[data-testid="workspace-root"][data-backend-status="available"]', {
-        timeout: 15_000,
-      });
+      await freshWorkspace(page);
 
       const noCollabEl = page.getByTestId("collab-no-collaborators");
       const panelVisible = await page

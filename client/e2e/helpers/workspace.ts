@@ -33,11 +33,13 @@ export async function freshWorkspace(page: Page, displayName = "Test User"): Pro
   await page.goto("/");
   await signUpViaUI(page, uniqueEmail(), STRONG_PASSWORD, displayName);
   await page.waitForURL("/workspace", { timeout: 20_000 });
-  await expect(page.getByTestId("file-explorer")).toBeVisible({ timeout: 15_000 });
   await page.waitForSelector(
     '[data-testid="workspace-root"][data-backend-status="available"]',
     { timeout: 20_000 },
   );
+  // The main editor shell exists only after workspace data is fully loaded and
+  // remains stable across desktop, tablet, and mobile layouts.
+  await expect(page.locator("#main-content")).toBeVisible({ timeout: 15_000 });
 }
 
 /**

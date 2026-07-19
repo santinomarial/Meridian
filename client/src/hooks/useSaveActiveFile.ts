@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { ApiError, checkpointDocument } from "../lib/api";
 import { listPendingYjsUpdates } from "../lib/yjsOutboundQueue";
+import { flushDocumentUpdates } from "../lib/yjsUpdateFlush";
 import { toast } from "../components/ui/Toast";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 
@@ -19,6 +20,17 @@ export interface UseSaveActiveFileReturn {
 
 const PENDING_ACK_WAIT_MS = 2_000;
 const PENDING_ACK_POLL_MS = 50;
+const FLUSHER_READY_WAIT_MS = 2_000;
+const FLUSHER_READY_POLL_MS = 20;
+
+async function flushEditorUpdates(documentId: string): Promise<void> {
+  const deadline = Date.now() + FLUSHER_READY_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (await flushDocumentUpdates(documentId)) return;
+    await new Promise((resolve) => setTimeout(resolve, FLUSHER_READY_POLL_MS));
+  }
+  throw new Error("Collaborative editor binding was not ready before save");
+}
 
 /**
  * Waits briefly for the IndexedDB outbound queue to drain so the server
@@ -30,11 +42,14 @@ async function waitForPendingAcks(documentId: string): Promise<void> {
     try {
       const pending = await listPendingYjsUpdates(documentId);
       if (pending.length === 0) return;
-    } catch {
-      return;
+    } catch (error: unknown) {
+      throw new Error("Could not verify the collaborative update queue", {
+        cause: error,
+      });
     }
     await new Promise((r) => setTimeout(r, PENDING_ACK_POLL_MS));
   }
+  throw new Error("Collaborative updates were not acknowledged before save");
 }
 
 /**
@@ -71,6 +86,7 @@ export function useSaveActiveFile(): UseSaveActiveFileReturn {
 
     state.setSaveStatus("saving");
     try {
+      await flushEditorUpdates(id);
       await waitForPendingAcks(id);
       const result = await checkpointDocument(id);
       const latest = useWorkspaceStore.getState();

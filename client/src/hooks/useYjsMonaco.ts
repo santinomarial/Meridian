@@ -19,6 +19,7 @@ import {
   listPendingYjsUpdates,
 } from "../lib/yjsOutboundQueue";
 import { colorForUser } from "../lib/collabColors";
+import { registerDocumentUpdateFlusher } from "../lib/yjsUpdateFlush";
 import {
   collaboratorsFromAwareness,
   syncRemoteSelectionStyles,
@@ -95,44 +96,72 @@ export function useYjsMonaco(
       const UPDATE_FLUSH_MS = 50;
       let pendingUpdates: Uint8Array[] = [];
       let updateFlushTimer: number | null = null;
+      let activeFlush: Promise<void> | null = null;
 
       const emitDurableUpdate = (update: Uint8Array, updateId: string): void => {
         socket.emit("yjs:update", { documentId, updateId, update });
       };
 
-      const flushUpdates = (): void => {
-        updateFlushTimer = null;
-        if (!socket.connected || pendingUpdates.length === 0) return;
-        const merged =
-          pendingUpdates.length === 1
-            ? pendingUpdates[0]!
-            : Y.mergeUpdates(pendingUpdates);
+      const flushUpdates = (): Promise<void> => {
+        if (updateFlushTimer !== null) {
+          window.clearTimeout(updateFlushTimer);
+          updateFlushTimer = null;
+        }
+
+        // A caller arriving during a flush also drains edits collected while
+        // that IndexedDB transaction was in flight.
+        if (activeFlush !== null) {
+          return activeFlush.then(() => flushUpdates());
+        }
+        if (pendingUpdates.length === 0) return Promise.resolve();
+
+        const updates = pendingUpdates;
         pendingUpdates = [];
+        const merged =
+          updates.length === 1 ? updates[0]! : Y.mergeUpdates(updates);
         const updateId = newUpdateId();
-        // Enqueue before emit so a crash between the two still resends on
-        // reconnect. Duplicate resends are idempotent on the server.
-        void enqueueYjsUpdate(documentId, updateId, merged)
+
+        // Enqueue even while disconnected. Re-join resends the durable entry;
+        // a tab switch or teardown must never discard the in-memory batch.
+        activeFlush = enqueueYjsUpdate(documentId, updateId, merged)
           .then(() => {
-            if (disposed || !socket.connected) return;
-            emitDurableUpdate(merged, updateId);
-          })
-          .catch(() => {
-            // IndexedDB unavailable — still try the live path; durability is
-            // best-effort in private/incognito contexts that block storage.
             if (!disposed && socket.connected) {
               emitDurableUpdate(merged, updateId);
             }
+          })
+          .catch((error: unknown) => {
+            // IndexedDB can be unavailable in restricted browser contexts.
+            // Preserve the existing live fallback, but reject the explicit
+            // save so it cannot claim a durable checkpoint without evidence.
+            if (!disposed && socket.connected) {
+              emitDurableUpdate(merged, updateId);
+            }
+            throw error;
+          })
+          .finally(() => {
+            activeFlush = null;
+            if (!disposed && pendingUpdates.length > 0) {
+              updateFlushTimer ??= window.setTimeout(() => {
+                void flushUpdates().catch(() => undefined);
+              }, UPDATE_FLUSH_MS);
+            }
           });
+
+        return activeFlush;
       };
 
       const handleUpdate = (update: Uint8Array, origin: unknown): void => {
         if (origin === "remote") return;
         pendingUpdates.push(update);
-        if (socket.connected) {
-          updateFlushTimer ??= window.setTimeout(flushUpdates, UPDATE_FLUSH_MS);
-        }
+        updateFlushTimer ??= window.setTimeout(() => {
+          void flushUpdates().catch(() => undefined);
+        }, UPDATE_FLUSH_MS);
       };
       doc.on("update", handleUpdate);
+      const unregisterUpdateFlusher = registerDocumentUpdateFlusher(
+        documentId,
+        flushUpdates,
+      );
 
       // Awareness is ephemeral, so only the latest coalesced state matters.
       const AWARENESS_FLUSH_MS = 80;
@@ -202,7 +231,7 @@ export function useYjsMonaco(
       syncPresence();
 
       flushQueuedChanges = (): void => {
-        flushUpdates();
+        void flushUpdates().catch(() => undefined);
         flushAwareness();
       };
 
@@ -216,6 +245,7 @@ export function useYjsMonaco(
       };
 
       teardownBinding = (): void => {
+        unregisterUpdateFlusher();
         doc.off("update", handleUpdate);
         awareness.off("change", syncPresence);
 
@@ -223,7 +253,7 @@ export function useYjsMonaco(
         awareness.setLocalState(null);
 
         if (updateFlushTimer !== null) window.clearTimeout(updateFlushTimer);
-        flushUpdates();
+        void flushUpdates().catch(() => undefined);
         if (awarenessFlushTimer !== null) window.clearTimeout(awarenessFlushTimer);
         flushAwareness();
         awareness.off("update", handleAwarenessUpdate);

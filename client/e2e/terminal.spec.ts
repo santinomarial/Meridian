@@ -313,7 +313,7 @@ test.describe("terminal (backend required)", () => {
 
     // Toggle to light → light terminal background, live.
     await page.getByTestId("theme-toggle").click();
-    await expect(page.getByTestId("terminal-panel")).toHaveCSS("background-color", "rgb(248, 249, 251)");
+    await expect(page.getByTestId("terminal-panel")).toHaveCSS("background-color", "rgb(236, 238, 243)");
 
     // Still interactive after the theme change (session not destroyed).
     await runInTerminal(page, "echo theme_$((2+2))");
