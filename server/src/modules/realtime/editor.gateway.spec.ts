@@ -15,7 +15,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { WorkspaceRole } from '@prisma/client';
 import type { JwtPayload } from '../auth/types/auth-user.type';
 import { Doc } from 'yjs';
-import { Awareness } from 'y-protocols/awareness';
+import { Awareness, encodeAwarenessUpdate } from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as syncProtocol from 'y-protocols/sync';
 import { RealtimeAuthorizationService } from '../realtime-authorization/realtime-authorization.service';
@@ -454,6 +454,67 @@ describe('EditorGateway.handleJoinDocument', () => {
       'joinedDocument',
       expect.objectContaining({ documentId: 'doc-1' }) as object,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Awareness lifecycle
+// ---------------------------------------------------------------------------
+
+describe('EditorGateway awareness lifecycle', () => {
+  it('ignores awareness ids from the destroyed generation when leaving after restore', async () => {
+    const { gateway, documentManager, server } = makeGateway();
+    const socket = makeSocket({
+      data: {
+        user: AUTH_USER,
+        documentRoles: { 'doc-1': WorkspaceRole.EDITOR },
+        documentWorkspaces: { 'doc-1': 'ws-1' },
+        documentAuthorizationCheckedAt: { 'doc-1': Date.now() },
+      },
+      rooms: ['document:doc-1'],
+    });
+    const roomEmit = jest.fn();
+    socket.to.mockReturnValue({ emit: roomEmit } as never);
+    server.to.mockReturnValue({ emit: roomEmit } as never);
+    socket.leave.mockResolvedValue(undefined as never);
+
+    const clientDoc = new Doc();
+    const clientAwareness = new Awareness(clientDoc);
+    const serverDoc = new Doc();
+    const oldServerAwareness = new Awareness(serverDoc);
+    const restoredDoc = new Doc();
+    const restoredAwareness = new Awareness(restoredDoc);
+
+    try {
+      clientAwareness.setLocalState({ user: { name: 'Alice' } });
+      const update = encodeAwarenessUpdate(clientAwareness, [
+        clientAwareness.clientID,
+      ]);
+      documentManager.getAwareness.mockReturnValue(oldServerAwareness);
+
+      await gateway.handleAwarenessUpdate(
+        { documentId: 'doc-1', update },
+        socket,
+      );
+      expect(oldServerAwareness.getStates().has(clientAwareness.clientID)).toBe(true);
+
+      // DocumentManager.reload() replaces the entire Awareness instance. The
+      // socket still owns ids from the old generation until its client-side
+      // restore handler tears down and rejoins.
+      documentManager.getAwareness.mockReturnValue(restoredAwareness);
+
+      await expect(
+        gateway.handleLeaveDocument({ documentId: 'doc-1' }, socket),
+      ).resolves.toBeUndefined();
+      expect(socket.leave).toHaveBeenCalledWith('document:doc-1');
+    } finally {
+      clientAwareness.destroy();
+      clientDoc.destroy();
+      oldServerAwareness.destroy();
+      serverDoc.destroy();
+      restoredAwareness.destroy();
+      restoredDoc.destroy();
+    }
   });
 });
 

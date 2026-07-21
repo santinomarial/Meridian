@@ -1431,11 +1431,24 @@ export class EditorGateway
     const awareness = this.documentManager.getAwareness(documentId);
     if (awareness === undefined) return;
 
-    awarenessProtocol.removeAwarenessStates(awareness, clientIds, 'server-disconnect');
+    // A restore replaces the document's Awareness instance before clients
+    // leave and rejoin. socketAwarenessIds can therefore still reference
+    // client ids from the destroyed generation. Only ids present in the
+    // current instance have metadata clocks that can be encoded safely.
+    const activeClientIds = clientIds.filter((clientId) =>
+      awareness.getStates().has(clientId),
+    );
+    if (activeClientIds.length === 0) return;
+
+    awarenessProtocol.removeAwarenessStates(
+      awareness,
+      activeClientIds,
+      'server-disconnect',
+    );
 
     const removalUpdate = awarenessProtocol.encodeAwarenessUpdate(
       awareness,
-      clientIds,
+      activeClientIds,
       new Map<number, { [x: string]: unknown }>(),
     );
 
