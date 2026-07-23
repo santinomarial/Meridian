@@ -946,9 +946,10 @@ npm run build
 
 `prisma migrate dev`, exposed as `npm run db:migrate`, is
 for development. Deployment should use `npx prisma migrate deploy`
-before starting the compiled server. The repository does not include a
-production process manager, reverse-proxy configuration, container image, or
-hosting manifest.
+before starting the compiled server. The production Compose path uses a
+dedicated non-root migration image, a hardened API image, a non-root Nginx SPA
+image, and Caddy as the TLS reverse proxy. It is a single-VPS deployment
+baseline, not a managed hosting or cluster-orchestration manifest.
 
 ## 14. Verification and CI
 
@@ -961,6 +962,9 @@ The GitHub Actions workflow uses Node.js 22.
 | Server integration | Prisma migrations plus Supertest against the real Nest application, PostgreSQL 16, and Redis 7 |
 | End to end | Compiled server, PostgreSQL 16, Redis 7, terminal enabled, Vite dev server, and Playwright Chromium |
 | Lint | Client ESLint only |
+| Dependency audit | Production dependency trees for server and client, failing on high or critical advisories |
+| Container scan | Builds API, migration, and web images; checks runtime invariants and scans each image with Trivy |
+| Backup/restore smoke | Dumps schema and data from PostgreSQL, restores into an isolated database, and verifies restored content |
 
 Relevant local commands:
 
@@ -974,21 +978,27 @@ npm test
 npm run lint
 npm run build
 npm run test:e2e
+
+cd ..
+docker build -t meridian-api:ci ./server
+docker build --target migrate -t meridian-migrate:ci ./server
+docker build -t meridian-web:ci ./client
+bash scripts/smoke-containers.sh
 ```
 
 The server integration suite requires its PostgreSQL/Redis environment and
 applied migrations. Playwright starts the Vite dev server itself;
 backend-dependent groups can skip when the API is unavailable. CI provisions
 PostgreSQL, Redis, the compiled API, E2E helpers, and terminal support so those
-groups execute in the full run.
+groups execute in the full run. Separate jobs exercise the production
+container targets and perform a real PostgreSQL dump/restore round trip.
 
 CI exercises a dual-AppModule multi-replica harness against shared PostgreSQL
 and Redis (`multi-replica.e2e-spec.ts`, `restore-fencing.e2e-spec.ts`):
 concurrent durable seqs, Redis fan-out, seq-gap catch-up, restore fencing, and
 pinned Socket.IO cross-replica delivery. It does not exercise a sticky load
 balancer, Redis loss/recovery under load, terminal resource isolation,
-production TLS/cookie routing, database backup/restore, or long-running
-process memory growth.
+production TLS/cookie routing, or long-running process memory growth.
 
 ## 15. Known architectural limitations
 

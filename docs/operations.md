@@ -11,6 +11,7 @@ and are covered under Sticky load balancing below.
 | Artifact | Role |
 |---|---|
 | [`server/Dockerfile`](../server/Dockerfile) | Non-root Node 22/Alpine API image (`uid 10001`), multi-stage native-module build, build tooling removed from runtime, `tini` entrypoint |
+| `server/Dockerfile` `migrate` target | Non-root, one-shot Prisma migration image; CLI excluded from the long-running API image |
 | [`client/Dockerfile`](../client/Dockerfile) + [`client/nginx.conf`](../client/nginx.conf) | Minimal non-root Nginx/Alpine SPA on 8080; same-origin CSP + optional `CSP_CONNECT_SRC_EXTRA` |
 | [`deploy/Caddyfile`](../deploy/Caddyfile) | Public TLS edge: HSTS, API + Socket.IO proxy, SPA fallback; blocks `/metrics` |
 | [`docker-compose.prod.yml`](../docker-compose.prod.yml) | Postgres, Redis, migrate, API, web, Caddy (only 80/443 published) |
@@ -21,8 +22,9 @@ cp .env.production.example .env   # fill DOMAIN, CLIENT_ORIGIN, JWT_SECRET, POST
 docker compose -f docker-compose.prod.yml up --build -d
 ```
 
-The migrate service runs `npx prisma migrate deploy` once and exits. The API
-depends on a successful migrate. Do not run `prisma migrate dev` in production.
+The migrate service uses the Dockerfile's dedicated `migrate` target to run
+`prisma migrate deploy` once and exit. The API depends on a successful
+migration. Do not run `prisma migrate dev` in production.
 
 ## Public deploy
 
@@ -184,8 +186,9 @@ the integration Postgres service (see the `ops-backup` job).
 
 ## Vulnerability scanning
 
-CI runs `npm audit --omit=dev` for server and client lockfiles (high+), and
-Trivy against the production Dockerfiles when Compose artifacts change.
+CI runs `npm audit --omit=dev` for server and client lockfiles (high+), runtime
+smoke tests against the API, migration, and web images, and Trivy against all
+three production container targets on every workflow run.
 
 ## Related runbooks
 

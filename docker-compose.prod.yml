@@ -45,15 +45,13 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+      target: migrate
     environment:
       DATABASE_URL: postgresql://meridian:${POSTGRES_PASSWORD}@postgres:5432/meridian?schema=public
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
-      CLIENT_ORIGIN: ${CLIENT_ORIGIN:?set CLIENT_ORIGIN to https://YOUR_DOMAIN}
       NODE_ENV: production
     depends_on:
       postgres:
         condition: service_healthy
-    entrypoint: ["npx", "prisma", "migrate", "deploy"]
     restart: "no"
 
   api:
