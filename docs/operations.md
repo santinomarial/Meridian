@@ -10,8 +10,8 @@ and are covered under Sticky load balancing below.
 
 | Artifact | Role |
 |---|---|
-| [`server/Dockerfile`](../server/Dockerfile) | Non-root API image (`uid 10001`), multi-stage build, `tini` entrypoint |
-| [`client/Dockerfile`](../client/Dockerfile) + [`client/nginx.conf`](../client/nginx.conf) | Non-root nginx SPA on 8080; same-origin CSP + optional `CSP_CONNECT_SRC_EXTRA` |
+| [`server/Dockerfile`](../server/Dockerfile) | Non-root Node 22/Alpine API image (`uid 10001`), multi-stage native-module build, build tooling removed from runtime, `tini` entrypoint |
+| [`client/Dockerfile`](../client/Dockerfile) + [`client/nginx.conf`](../client/nginx.conf) | Minimal non-root Nginx/Alpine SPA on 8080; same-origin CSP + optional `CSP_CONNECT_SRC_EXTRA` |
 | [`deploy/Caddyfile`](../deploy/Caddyfile) | Public TLS edge: HSTS, API + Socket.IO proxy, SPA fallback; blocks `/metrics` |
 | [`docker-compose.prod.yml`](../docker-compose.prod.yml) | Postgres, Redis, migrate, API, web, Caddy (only 80/443 published) |
 | [`.env.production.example`](../.env.production.example) | VPS env template (no secrets) |
