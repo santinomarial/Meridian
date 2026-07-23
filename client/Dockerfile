@@ -34,4 +34,5 @@ RUN sed "s|__CSP_CONNECT_SRC_EXTRA__|${CSP_CONNECT_SRC_EXTRA}|g" /tmp/nginx.conf
 
 USER meridian
 EXPOSE 8080
+ENTRYPOINT []
 CMD ["nginx", "-g", "daemon off;"]
