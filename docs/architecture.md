@@ -964,7 +964,7 @@ The GitHub Actions workflow uses Node.js 22.
 | Lint | Client ESLint only |
 | Dependency audit | Production dependency trees for server and client, failing on high or critical advisories |
 | Container scan | Builds API, migration, and web images; checks runtime invariants and scans each image with Trivy |
-| Backup/restore smoke | Dumps schema and data from PostgreSQL, restores into an isolated database, and verifies restored content |
+| Backup/restore smoke | Applies migrations with the production image, dumps schema and data, restores the database, and verifies restored content |
 
 Relevant local commands:
 

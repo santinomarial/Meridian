@@ -181,8 +181,9 @@ PostgreSQL is the durability boundary. Minimum practice:
 4. Redis AOF/RDB is optional acceleration; do not treat Redis as the restore
    source for documents.
 
-CI validates that the backup script can dump and restore schema+data against
-the integration Postgres service (see the `ops-backup` job).
+CI applies migrations through the production migration image, then validates
+that the backup script can dump and restore schema and data against the
+integration PostgreSQL service (see the `ops-backup` job).
 
 ## Vulnerability scanning
 

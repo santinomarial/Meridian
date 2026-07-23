@@ -311,14 +311,14 @@ jobs:
         working-directory: server
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: server/package-lock.json
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - run: npm ci
-      - run: npx prisma migrate deploy
+      - name: Build migration image
+        run: docker build --target migrate -t meridian-migrate:ci .
+      - name: Apply migrations with production image
+        run: >-
+          docker run --rm --network host
+          -e "DATABASE_URL=${DATABASE_URL}?schema=public"
+          meridian-migrate:ci
       - name: Dump and restore round-trip
         run: |
           ./scripts/backup-pg.sh dump /tmp/meridian-ci.sql
