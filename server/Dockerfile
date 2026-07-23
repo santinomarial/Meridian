@@ -4,7 +4,7 @@
 FROM node:22-alpine3.24 AS build
 WORKDIR /app
 
-RUN apk add --no-cache python3 make g++
+RUN apk add --no-cache python3 make g++ openssl
 
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
