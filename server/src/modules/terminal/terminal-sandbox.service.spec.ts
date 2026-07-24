@@ -64,7 +64,7 @@ describe('TerminalSandboxService', () => {
       { type: DocumentType.FILE, path: 'src/util/helpers.js', content: 'module.exports = {};' },
     ]);
 
-    const returned = await service.materialize(wsId, userId);
+    const returned = await service.materialize('sock-materialize', wsId, userId);
     expect(returned).toBe(root);
 
     expect(fs.readFileSync(path.join(root, 'main.py'), 'utf8')).toBe('print("hi")');
@@ -80,7 +80,7 @@ describe('TerminalSandboxService', () => {
       { type: DocumentType.FILE, path: '../escape.txt', content: 'pwned' },
     ]);
 
-    await service.materialize(wsId, userId);
+    await service.materialize('sock-unsafe-path', wsId, userId);
 
     expect(fs.existsSync(path.join(root, 'safe.txt'))).toBe(true);
     // The traversal target outside the root must not have been written.
@@ -88,8 +88,8 @@ describe('TerminalSandboxService', () => {
   });
 
   it('rebuilds the sandbox from the database and removes stale runtime files', async () => {
-    setDocs([{ type: DocumentType.FILE, path: 'main.py', content: 'old database content' }]);
-    await service.materialize(wsId, userId);
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'main.py'), 'old database content');
     const outside = path.join(path.dirname(root), `${userId}-outside`);
     fs.mkdirSync(outside);
     fs.writeFileSync(path.join(outside, 'sentinel.txt'), 'untouched');
@@ -99,7 +99,7 @@ describe('TerminalSandboxService', () => {
     fs.symlinkSync(outside, path.join(root, 'outside-link'), 'dir');
 
     setDocs([{ type: DocumentType.FILE, path: 'main.py', content: 'current database content' }]);
-    await service.materialize(wsId, userId);
+    await service.materialize('sock-rebuild', wsId, userId);
 
     expect(fs.readFileSync(path.join(root, 'main.py'), 'utf8')).toBe('current database content');
     expect(fs.existsSync(path.join(root, 'terminal-created.txt'))).toBe(false);
@@ -116,7 +116,7 @@ describe('TerminalSandboxService', () => {
     fs.symlinkSync(outside, root, 'dir');
     setDocs([{ type: DocumentType.FILE, path: 'main.py', content: 'inside' }]);
 
-    await service.materialize(wsId, userId);
+    await service.materialize('sock-symlink', wsId, userId);
 
     expect(fs.lstatSync(root).isSymbolicLink()).toBe(false);
     expect(fs.readFileSync(path.join(root, 'main.py'), 'utf8')).toBe('inside');
@@ -136,7 +136,7 @@ describe('TerminalSandboxService', () => {
 
     beforeEach(async () => {
       setDocs([]);
-      await service.materialize(wsId, userId);
+      await service.materialize('sock-1', wsId, userId);
       const s = makeSocket();
       emitted = s.emitted;
       service.registerActive('sock-1', wsId, userId, root, s.socket);
@@ -244,7 +244,7 @@ describe('TerminalSandboxService', () => {
     });
 
     it('stops syncing after unregister', async () => {
-      service.unregister('sock-1');
+      await service.unregister('sock-1');
       await service.syncWriteFile(wsId, 'after.py', 'nope');
       expect(fs.existsSync(path.join(root, 'after.py'))).toBe(false);
     });
@@ -264,7 +264,7 @@ describe('TerminalSandboxService', () => {
 
     beforeEach(async () => {
       setDocs([]);
-      await service.materialize(wsId, userId);
+      await service.materialize('sock-1', wsId, userId);
       service.registerActive('sock-1', wsId, userId, root, makeSocket().socket);
     });
 

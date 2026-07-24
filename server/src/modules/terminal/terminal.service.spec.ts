@@ -27,7 +27,7 @@ function makeSandbox() {
   return {
     materialize: jest.fn(async () => SANDBOX_DIR),
     registerActive: jest.fn(),
-    unregister: jest.fn(),
+    unregister: jest.fn(async () => undefined),
   };
 }
 
@@ -118,7 +118,7 @@ describe('TerminalService', () => {
       const { socket, emitted } = makeSocket('s1');
       await service.createSession('s1', 'user-1', 'ws-1', socket);
 
-      expect(sandbox.materialize).toHaveBeenCalledWith('ws-1', 'user-1');
+      expect(sandbox.materialize).toHaveBeenCalledWith('s1', 'ws-1', 'user-1');
       expect(spawnMock).toHaveBeenCalledTimes(1);
       const [, , options] = spawnMock.mock.calls[0] as [string, string[], { cwd: string }];
       expect(options.cwd).toBe(SANDBOX_DIR);
@@ -182,7 +182,7 @@ describe('TerminalService', () => {
       fake.emitExit({ exitCode: 0 });
 
       expect(service.hasSession('s5')).toBe(false);
-      expect(sandbox.unregister).toHaveBeenCalledWith('s5');
+      expect(sandbox.unregister).toHaveBeenCalledWith('s5', 0);
       const exit = emitted.find(([e]) => e === 'terminal:exit');
       expect((exit![1] as { code: number }).code).toBe(0);
     });
@@ -255,7 +255,7 @@ describe('TerminalService', () => {
       service.killSession('s8');
 
       expect(fake.killed.length).toBeGreaterThan(0);
-      expect(sandbox.unregister).toHaveBeenCalledWith('s8');
+      expect(sandbox.unregister).toHaveBeenCalledWith('s8', 3100);
       expect(service.hasSession('s8')).toBe(false);
     });
   });

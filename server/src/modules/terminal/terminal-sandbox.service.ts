@@ -34,6 +34,8 @@ interface ActiveSandbox {
   socket: Socket;
 }
 
+type SandboxLease = Omit<ActiveSandbox, 'socket'>;
+
 type SandboxOp = 'write' | 'mkdir' | 'delete' | 'rename';
 
 interface SandboxSyncMessage {
@@ -69,6 +71,12 @@ interface SandboxSyncMessage {
 export class TerminalSandboxService implements OnModuleInit {
   // socketId → active sandbox (one terminal session per socket).
   private readonly active = new Map<string, ActiveSandbox>();
+  // A reservation spans materialization through PTY spawn/registration. It
+  // prevents teardown from deleting a root during that asynchronous gap.
+  private readonly reservations = new Map<string, SandboxLease>();
+  private readonly preparations = new Map<string, Promise<void>>();
+  private readonly rootOperations = new Map<string, Promise<unknown>>();
+  private readonly cleanupTimers = new Map<string, NodeJS.Timeout>();
   private readonly enableTerminal: boolean;
 
   constructor(
@@ -105,10 +113,52 @@ export class TerminalSandboxService implements OnModuleInit {
 
   /**
    * Rebuilds the sandbox dir and writes every document in the workspace into
-   * it, preserving folder structure. Returns the sandbox root.
+   * it, preserving folder structure. A socket reservation protects the root
+   * until registerActive consumes it. Concurrent sessions sharing the same
+   * workspace/user root await one materialization instead of deleting each
+   * other's live projection.
    */
-  async materialize(workspaceId: string, userId: string): Promise<string> {
+  async materialize(socketId: string, workspaceId: string, userId: string): Promise<string> {
     const root = this.getSandboxDir(workspaceId, userId);
+    if (this.active.has(socketId) || this.reservations.has(socketId)) {
+      throw new Error(`Terminal sandbox already reserved for socket ${socketId}`);
+    }
+
+    const lease = { workspaceId, userId, root };
+    this.reservations.set(socketId, lease);
+    this.cancelCleanup(root);
+
+    let preparation = this.preparations.get(root);
+    if (!preparation && !this.hasActiveRoot(root)) {
+      preparation = this.runRootOperation(root, () =>
+        this.materializeRoot(root, workspaceId, userId),
+      );
+      this.preparations.set(root, preparation);
+      const forgetPreparation = (): void => {
+        if (this.preparations.get(root) === preparation) {
+          this.preparations.delete(root);
+        }
+      };
+      void preparation.then(forgetPreparation, forgetPreparation);
+    }
+
+    try {
+      if (preparation) await preparation;
+      return root;
+    } catch (err) {
+      if (this.reservations.get(socketId) === lease) {
+        this.reservations.delete(socketId);
+      }
+      await this.cleanupRoot(root);
+      throw err;
+    }
+  }
+
+  private async materializeRoot(
+    root: string,
+    workspaceId: string,
+    userId: string,
+  ): Promise<void> {
     await this.recreateSandboxRoot(root);
 
     const docs = await this.prisma.document.findMany({
@@ -137,7 +187,6 @@ export class TerminalSandboxService implements OnModuleInit {
     }
 
     this.logger.info({ workspaceId, userId, root, count: docs.length }, 'Sandbox materialized');
-    return root;
   }
 
   /**
@@ -208,15 +257,96 @@ export class TerminalSandboxService implements OnModuleInit {
 
   /** Registers an active sandbox so document edits can be synced into it. */
   registerActive(socketId: string, workspaceId: string, userId: string, root: string, socket: Socket): void {
+    const reservation = this.reservations.get(socketId);
+    if (
+      !reservation ||
+      reservation.workspaceId !== workspaceId ||
+      reservation.userId !== userId ||
+      reservation.root !== root
+    ) {
+      throw new Error(`Terminal sandbox is not reserved for socket ${socketId}`);
+    }
+    this.reservations.delete(socketId);
+    this.cancelCleanup(root);
     this.active.set(socketId, { workspaceId, userId, root, socket });
   }
 
-  unregister(socketId: string): void {
+  async unregister(socketId: string, cleanupDelayMs = 0): Promise<void> {
+    const lease = this.active.get(socketId) ?? this.reservations.get(socketId);
     this.active.delete(socketId);
+    this.reservations.delete(socketId);
+    if (!lease || this.hasRootLease(lease.root)) return;
+
+    if (cleanupDelayMs > 0) {
+      this.scheduleCleanup(lease.root, cleanupDelayMs);
+      return;
+    }
+    await this.cleanupRoot(lease.root);
   }
 
   private sandboxesFor(workspaceId: string): ActiveSandbox[] {
     return [...this.active.values()].filter((s) => s.workspaceId === workspaceId);
+  }
+
+  private sandboxRootsFor(workspaceId: string): string[] {
+    return [...new Set(this.sandboxesFor(workspaceId).map((sandbox) => sandbox.root))];
+  }
+
+  private sandboxesAtRoot(workspaceId: string, root: string): ActiveSandbox[] {
+    return this.sandboxesFor(workspaceId).filter((sandbox) => sandbox.root === root);
+  }
+
+  private hasActiveRoot(root: string): boolean {
+    return [...this.active.values()].some((sandbox) => sandbox.root === root);
+  }
+
+  private hasRootLease(root: string): boolean {
+    return (
+      this.hasActiveRoot(root) ||
+      [...this.reservations.values()].some((reservation) => reservation.root === root)
+    );
+  }
+
+  private runRootOperation<T>(root: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.rootOperations.get(root) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    this.rootOperations.set(root, current);
+
+    const forgetOperation = (): void => {
+      if (this.rootOperations.get(root) === current) {
+        this.rootOperations.delete(root);
+      }
+    };
+    void current.then(forgetOperation, forgetOperation);
+    return current;
+  }
+
+  private cancelCleanup(root: string): void {
+    const timer = this.cleanupTimers.get(root);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.cleanupTimers.delete(root);
+  }
+
+  private scheduleCleanup(root: string, delayMs: number): void {
+    this.cancelCleanup(root);
+    const timer = setTimeout(() => {
+      this.cleanupTimers.delete(root);
+      void this.cleanupRoot(root).catch((err) => {
+        this.logger.warn({ root, err }, 'Terminal sandbox cleanup failed');
+      });
+    }, delayMs);
+    timer.unref();
+    this.cleanupTimers.set(root, timer);
+  }
+
+  private async cleanupRoot(root: string): Promise<void> {
+    await this.runRootOperation(root, async () => {
+      // A new session may have reserved the root while cleanup was queued.
+      if (this.hasRootLease(root)) return;
+      await fs.rm(root, { recursive: true, force: true });
+      this.logger.info({ root }, 'Terminal sandbox removed');
+    });
   }
 
   private warn(sandbox: ActiveSandbox): void {
@@ -306,55 +436,95 @@ export class TerminalSandboxService implements OnModuleInit {
   // ---------------------------------------------------------------------------
 
   private async applyWriteFile(workspaceId: string, relPath: string, content: string): Promise<void> {
-    for (const sandbox of this.sandboxesFor(workspaceId)) {
+    for (const root of this.sandboxRootsFor(workspaceId)) {
       try {
-        const target = safeJoin(sandbox.root, relPath);
-        await fs.mkdir(path.dirname(target), { recursive: true });
-        await this.writeFileNoFollow(target, content);
-        sandbox.socket.emit('terminal:sync', { status: 'synced' });
+        const applied = await this.runRootOperation(root, async () => {
+          if (!this.hasRootLease(root)) return false;
+          const target = safeJoin(root, relPath);
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await this.writeFileNoFollow(target, content);
+          return true;
+        });
+        if (applied) {
+          for (const sandbox of this.sandboxesAtRoot(workspaceId, root)) {
+            sandbox.socket.emit('terminal:sync', { status: 'synced' });
+          }
+        }
       } catch (err) {
         this.logger.warn({ workspaceId, relPath, err }, 'Sandbox file write sync failed');
-        this.warn(sandbox);
+        for (const sandbox of this.sandboxesAtRoot(workspaceId, root)) {
+          this.warn(sandbox);
+        }
       }
     }
   }
 
   private async applyMkdir(workspaceId: string, relPath: string): Promise<void> {
-    for (const sandbox of this.sandboxesFor(workspaceId)) {
+    for (const root of this.sandboxRootsFor(workspaceId)) {
       try {
-        await fs.mkdir(safeJoin(sandbox.root, relPath), { recursive: true });
-        sandbox.socket.emit('terminal:sync', { status: 'synced' });
+        const applied = await this.runRootOperation(root, async () => {
+          if (!this.hasRootLease(root)) return false;
+          await fs.mkdir(safeJoin(root, relPath), { recursive: true });
+          return true;
+        });
+        if (applied) {
+          for (const sandbox of this.sandboxesAtRoot(workspaceId, root)) {
+            sandbox.socket.emit('terminal:sync', { status: 'synced' });
+          }
+        }
       } catch (err) {
         this.logger.warn({ workspaceId, relPath, err }, 'Sandbox mkdir sync failed');
-        this.warn(sandbox);
+        for (const sandbox of this.sandboxesAtRoot(workspaceId, root)) {
+          this.warn(sandbox);
+        }
       }
     }
   }
 
   private async applyDelete(workspaceId: string, relPath: string): Promise<void> {
-    for (const sandbox of this.sandboxesFor(workspaceId)) {
+    for (const root of this.sandboxRootsFor(workspaceId)) {
       try {
-        const target = safeJoin(sandbox.root, relPath);
-        await fs.rm(target, { recursive: true, force: true });
-        sandbox.socket.emit('terminal:sync', { status: 'synced' });
+        const applied = await this.runRootOperation(root, async () => {
+          if (!this.hasRootLease(root)) return false;
+          const target = safeJoin(root, relPath);
+          await fs.rm(target, { recursive: true, force: true });
+          return true;
+        });
+        if (applied) {
+          for (const sandbox of this.sandboxesAtRoot(workspaceId, root)) {
+            sandbox.socket.emit('terminal:sync', { status: 'synced' });
+          }
+        }
       } catch (err) {
         this.logger.warn({ workspaceId, relPath, err }, 'Sandbox delete sync failed');
-        this.warn(sandbox);
+        for (const sandbox of this.sandboxesAtRoot(workspaceId, root)) {
+          this.warn(sandbox);
+        }
       }
     }
   }
 
   private async applyRename(workspaceId: string, oldPath: string, newPath: string): Promise<void> {
-    for (const sandbox of this.sandboxesFor(workspaceId)) {
+    for (const root of this.sandboxRootsFor(workspaceId)) {
       try {
-        const from = safeJoin(sandbox.root, oldPath);
-        const to = safeJoin(sandbox.root, newPath);
-        await fs.mkdir(path.dirname(to), { recursive: true });
-        await fs.rename(from, to);
-        sandbox.socket.emit('terminal:sync', { status: 'synced' });
+        const applied = await this.runRootOperation(root, async () => {
+          if (!this.hasRootLease(root)) return false;
+          const from = safeJoin(root, oldPath);
+          const to = safeJoin(root, newPath);
+          await fs.mkdir(path.dirname(to), { recursive: true });
+          await fs.rename(from, to);
+          return true;
+        });
+        if (applied) {
+          for (const sandbox of this.sandboxesAtRoot(workspaceId, root)) {
+            sandbox.socket.emit('terminal:sync', { status: 'synced' });
+          }
+        }
       } catch (err) {
         this.logger.warn({ workspaceId, oldPath, newPath, err }, 'Sandbox rename sync failed');
-        this.warn(sandbox);
+        for (const sandbox of this.sandboxesAtRoot(workspaceId, root)) {
+          this.warn(sandbox);
+        }
       }
     }
   }

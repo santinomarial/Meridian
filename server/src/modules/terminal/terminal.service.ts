@@ -9,6 +9,8 @@ import { TerminalSandboxService } from './terminal-sandbox.service';
 // 30-minute idle timeout; 4-hour absolute lifetime
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_LIFETIME_MS = 4 * 60 * 60 * 1000;
+const FORCE_KILL_DELAY_MS = 3000;
+const KILL_CLEANUP_DELAY_MS = FORCE_KILL_DELAY_MS + 100;
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
@@ -100,18 +102,24 @@ export class TerminalService implements OnModuleDestroy {
 
     // Project the workspace's DB-backed documents onto disk before spawning so
     // `ls`/`pwd` immediately reflect the editor's files.
-    const sandboxDir = await this.sandbox.materialize(workspaceId, userId);
+    const sandboxDir = await this.sandbox.materialize(socketId, workspaceId, userId);
 
     const shell = this.resolveShell();
     // No explicit args: attached to a PTY, the shell detects a TTY and starts
     // interactively on its own (prompt + echo + line editing).
-    const child = pty.spawn(shell, [], {
-      name: 'xterm-256color',
-      cols: options.cols ?? DEFAULT_COLS,
-      rows: options.rows ?? DEFAULT_ROWS,
-      cwd: sandboxDir,
-      env: this.safeEnv(sandboxDir),
-    });
+    let child: IPty;
+    try {
+      child = pty.spawn(shell, [], {
+        name: 'xterm-256color',
+        cols: options.cols ?? DEFAULT_COLS,
+        rows: options.rows ?? DEFAULT_ROWS,
+        cwd: sandboxDir,
+        env: this.safeEnv(sandboxDir),
+      });
+    } catch (err) {
+      await this.sandbox.unregister(socketId);
+      throw err;
+    }
 
     const resetIdle = (): void => {
       clearTimeout(session.idleTimer);
@@ -159,7 +167,14 @@ export class TerminalService implements OnModuleDestroy {
     resetIdle(); // start the real idle timer
 
     // Register the sandbox so subsequent editor edits sync into it.
-    this.sandbox.registerActive(socketId, workspaceId, userId, sandboxDir, socket);
+    try {
+      this.sandbox.registerActive(socketId, workspaceId, userId, sandboxDir, socket);
+    } catch (err) {
+      const released = this.releaseSession(socketId);
+      try { child.kill('SIGKILL'); } catch { /* already exited */ }
+      if (released) await released.cleanup;
+      throw err;
+    }
     socket.emit('terminal:sync', { status: 'synced' });
 
     this.logger.info({ socketId, userId, workspaceId, sandboxDir }, 'Terminal session started');
@@ -196,7 +211,10 @@ export class TerminalService implements OnModuleDestroy {
    * This is shared by explicit kills and natural PTY exits so an exited shell
    * cannot continue receiving document-to-sandbox sync operations.
    */
-  private releaseSession(socketId: string): TerminalSession | undefined {
+  private releaseSession(
+    socketId: string,
+    cleanupDelayMs = 0,
+  ): { session: TerminalSession; cleanup: Promise<void> } | undefined {
     const session = this.sessions.get(socketId);
     if (!session) return undefined;
     clearTimeout(session.idleTimer);
@@ -205,13 +223,16 @@ export class TerminalService implements OnModuleDestroy {
       try { disposable.dispose(); } catch { /* already disposed */ }
     }
     this.sessions.delete(socketId);
-    this.sandbox.unregister(socketId);
-    return session;
+    const cleanup = this.sandbox.unregister(socketId, cleanupDelayMs).catch((err) => {
+      this.logger.warn({ socketId, sandboxDir: session.sandboxDir, err }, 'Terminal sandbox cleanup failed');
+    });
+    return { session, cleanup };
   }
 
   killSession(socketId: string): void {
-    const session = this.releaseSession(socketId);
-    if (!session) return;
+    const released = this.releaseSession(socketId, KILL_CLEANUP_DELAY_MS);
+    if (!released) return;
+    const { session } = released;
 
     try {
       session.pty.kill();
@@ -219,7 +240,7 @@ export class TerminalService implements OnModuleDestroy {
       const child = session.pty;
       setTimeout(() => {
         try { child.kill('SIGKILL'); } catch { /* already dead */ }
-      }, 3000).unref();
+      }, FORCE_KILL_DELAY_MS).unref();
     } catch {
       // Already exited
     }
@@ -227,9 +248,14 @@ export class TerminalService implements OnModuleDestroy {
     this.logger.info({ socketId }, 'Terminal session killed');
   }
 
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
+    const cleanups: Promise<void>[] = [];
     for (const socketId of this.sessions.keys()) {
-      this.killSession(socketId);
+      const released = this.releaseSession(socketId);
+      if (!released) continue;
+      try { released.session.pty.kill('SIGKILL'); } catch { /* already exited */ }
+      cleanups.push(released.cleanup);
     }
+    await Promise.all(cleanups);
   }
 }
