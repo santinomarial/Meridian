@@ -274,10 +274,9 @@ password, invalidates sibling reset tokens, and revokes every user session.
 The forgot-password response is intentionally the same whether the account
 exists or not.
 
-There is no email verification flow. There is also no scheduled deletion of
-expired or revoked sessions, expired or used reset tokens, or expired invites.
-Those rows remain until related users or workspaces are deleted or an operator
-adds a maintenance process.
+There is no email verification flow. `RetentionService` runs hourly to delete
+expired or revoked sessions, expired or used reset tokens, and expired or
+accepted invites.
 
 ### Mail behavior
 
@@ -287,9 +286,8 @@ action URL. In other environments without a key, sending throws internally.
 Password-reset requests still return the generic response, and invite creation
 still returns the shareable link; the delivery failure is logged.
 
-The actual reset-token lifetime uses `FORGOT_PASSWORD_TTL_MINUTES`, but the
-email copy currently says 30 minutes through a separate hard-coded constant.
-Changing the environment value does not update that message.
+`FORGOT_PASSWORD_TTL_MINUTES` controls both reset-token validity and the expiry
+stated in the text and HTML email templates.
 
 The cookie policy is suitable for a same-site frontend/API deployment. A
 cross-site deployment requires a deliberate cookie and CSRF design change.
@@ -780,7 +778,8 @@ non-members are rejected. Session and membership checks use the same
 one-second active-event cache and ten-second passive sweep used by the realtime
 authorization layer. Revocation kills the PTY.
 
-One terminal session is allowed per socket. Starting a session:
+One terminal session is allowed per socket. Starting the first session for a
+workspace/user projection:
 
 1. Recreates a temporary directory under
    `os.tmpdir()/meridian-terminal-sandboxes/<workspace>/<user>`.
@@ -790,9 +789,9 @@ One terminal session is allowed per socket. Starting a session:
 4. Passes a reduced environment containing HOME, PATH, terminal/locale values,
    shell, and optional USER/LOGNAME, rather than application secrets.
 
-The directory path is keyed by workspace and user, not socket. Two concurrent
-sockets for the same user and workspace can therefore share and recreate the
-same projection even though each socket has its own PTY session.
+The directory path is keyed by workspace and user, not socket. Concurrent
+sockets for the same user and workspace await one materialization and then
+share that projection even though each socket has its own PTY session.
 
 REST file creates, updates, renames, deletes, and restores are projected into
 active terminal directories locally and over Redis on a best-effort basis.
@@ -830,9 +829,11 @@ units per frame.
 
 Natural PTY exit, explicit stop, disconnect, timeout, and process shutdown all
 release the `TerminalSandboxService` registration, so an exited shell cannot
-receive later document projection operations. Terminal teardown does not delete
-the temporary directory; it remains until a later materialization recreates it
-or an external cleanup removes it.
+receive later document projection operations. Per-root reservations and a
+serialized filesystem-operation queue prevent cleanup from racing sync or
+replacement-session materialization. Normal teardown removes the directory
+after the final session using it exits; abrupt process or host termination can
+still leave temporary data behind.
 
 ## 13. Operations and configuration
 
@@ -1024,9 +1025,10 @@ guarantees:
    audit eventually evicts stale in-memory documents. Inbound pub/sub events
    trust Redis, and environment separation depends on correct
    `REDIS_KEY_PREFIX` configuration.
-4. The terminal is host command execution, not a security sandbox, and does
-   not delete temporary projection directories on teardown. `ENABLE_TERMINAL`
-   is refused when `NODE_ENV=production`.
+4. The terminal is host command execution, not a security sandbox. Normal
+   final-session teardown deletes its temporary projection, but abrupt process
+   or host termination can leave files behind. `ENABLE_TERMINAL` is refused
+   when `NODE_ENV=production`.
 5. HTTP request parsing precedes Nest authentication/throttling; HTTP
    throttling is process-local. Set `TRUST_PROXY` when behind a reverse proxy
    so client IP keying is accurate; deployment-wide throttle budgets remain an

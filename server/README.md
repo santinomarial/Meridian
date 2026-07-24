@@ -127,7 +127,8 @@ In development, HTTP and Socket.IO CORS accept only `localhost` and `127.0.0.1` 
 
 When `RESEND_API_KEY` is absent in development, invite and reset URLs are printed to the process console. Outside development, delivery fails internally and is logged. Password-reset requests keep their generic success response, and invite creation still returns the shareable URL.
 
-`FORGOT_PASSWORD_TTL_MINUTES` controls token validity, but the current email templates always state that the link expires in 30 minutes. Keep the variable at 30 until the template is wired to configuration, or the email text will be inaccurate.
+`FORGOT_PASSWORD_TTL_MINUTES` controls both token validity and the expiry stated
+in the text and HTML reset-email templates.
 
 ## Commands
 
@@ -392,9 +393,11 @@ Cross-process file operations use Redis Pub/Sub with no replay, acknowledgement,
 
 Natural PTY exit, explicit stop, disconnect, timeout, and process shutdown all
 release the active sandbox registration, so an exited shell no longer receives
-document projection operations. Sandbox directories themselves are still not
-deleted; they remain until a later materialization recreates them or an external
-cleanup process removes them.
+document projection operations. The directory is removed after the final
+session using that workspace/user projection exits. Cleanup is serialized with
+materialization and sync operations; a concurrent replacement session reserves
+the root and prevents deletion. Abrupt process or host termination can still
+leave a temporary directory behind.
 
 The sandbox is not an operating-system security boundary. The shell runs as the server's OS user and can access whatever that account can access. A changed working directory, minimal child environment, path validation, and symlink checks do not provide container, namespace, syscall, network, CPU, or memory isolation. Do not enable the terminal for untrusted or multi-tenant workloads without an external isolation system. At minimum, run the server as a dedicated unprivileged account with no host secrets or infrastructure credentials accessible to that account.
 
@@ -409,7 +412,11 @@ The Prisma schema is in `prisma/schema.prisma`; committed migrations are in `pri
 
 The primary models are `User`, `Session`, `PasswordResetToken`, `Workspace`, `WorkspaceMember`, `Invite`, `Document`, `DocumentVersion`, `DocumentUpdate`, and `Snapshot`. Workspace paths are unique per workspace. Cascades remove dependent workspace and user data as defined in the Prisma schema.
 
-There is no scheduled retention job for expired or revoked `Session` rows, used or expired `PasswordResetToken` rows, or expired invite rows. These records remain until their parent is deleted or an operator-provided cleanup process removes them. Add a reviewed retention job if storage, privacy, or regulatory requirements demand bounded history.
+`RetentionService` runs hourly and deletes expired or revoked `Session` rows,
+used or expired `PasswordResetToken` rows, and accepted or expired `Invite`
+rows. This bounds operational token retention; operators must still define
+retention for logs, backups, document history, and any temporary directories
+left by an abrupt process or host failure.
 
 ## Testing
 
@@ -457,8 +464,10 @@ The helper routes have no separate caller authentication. Prefix and domain vali
 5. Restrict or disable public Swagger. Restrict PostgreSQL, Redis, logs, backups, and temporary storage according to their sensitivity.
 6. Keep `E2E_TEST=false`. Keep `ENABLE_TERMINAL=false` unless an external isolation boundary and resource controls are in place.
 7. Give the process enough termination grace to flush pending Yjs writes. Alert on PostgreSQL readiness, Redis state, persistence and compaction errors, mail failures, export memory pressure, and terminal resource use.
-8. Keep `FORGOT_PASSWORD_TTL_MINUTES=30` until email template text is configuration-driven.
-9. Define retention and cleanup procedures for sessions, reset tokens, invites, terminal files, and logs.
+8. Set `FORGOT_PASSWORD_TTL_MINUTES` to the intended reset policy; token
+   validity and email copy use the same value.
+9. Review the hourly auth/invite purge and define retention procedures for
+   logs, backups, document history, and crash-left terminal files.
 10. Back up PostgreSQL and test restoration procedures.
 
 Invite and password-reset URLs are bearer credentials. They can appear in browser history, referrer data, and request logs. Limit access and retention, avoid forwarding full sensitive URLs to analytics, and expire or replace exposed links where the implementation permits it.

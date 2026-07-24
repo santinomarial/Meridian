@@ -347,10 +347,12 @@ an independent, namespaced per-socket `WsRateLimiter` budget; `terminal:stop`
 is unmetered. Use ingress controls and OS-level resource limits as well.
 
 There is one PTY per socket but no global PTY, process, CPU, or memory quota. A
-single user can open multiple sockets. Sandbox directories use local temporary
-storage and may outlive a PTY. Natural PTY exit releases its active sandbox
-projection, so later sync messages do not target the exited session; the
-directory remains until re-materialization or external cleanup.
+single user can open multiple sockets. Concurrent sockets for one
+workspace/user share a reference-counted local projection. Natural PTY exit
+releases its registration, and normal final-session teardown removes the
+directory through the same per-root operation queue used by materialization and
+sync. A replacement-session reservation cancels pending cleanup. Abrupt process
+or host termination can still leave temporary data behind.
 
 The sandbox changes the shell's working directory and reduces its environment,
 but it is not an OS isolation boundary. The shell runs as the API server's OS

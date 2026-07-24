@@ -129,6 +129,88 @@ describe('TerminalSandboxService', () => {
     expect(() => service.getSandboxDir(wsId, '../../etc')).toThrow();
   });
 
+  it('removes a reserved sandbox when session startup is abandoned', async () => {
+    setDocs([{ type: DocumentType.FILE, path: 'main.ts', content: 'export {}' }]);
+    await service.materialize('sock-abandoned', wsId, userId);
+
+    expect(fs.existsSync(root)).toBe(true);
+    await service.unregister('sock-abandoned');
+    expect(fs.existsSync(root)).toBe(false);
+  });
+
+  it('keeps a shared projection until its final active session unregisters', async () => {
+    setDocs([{ type: DocumentType.FILE, path: 'main.ts', content: 'export {}' }]);
+    const first = makeSocket();
+    await service.materialize('sock-shared-1', wsId, userId);
+    service.registerActive('sock-shared-1', wsId, userId, root, first.socket);
+    fs.writeFileSync(path.join(root, 'terminal-created.txt'), 'keep while shared');
+
+    const second = makeSocket();
+    await service.materialize('sock-shared-2', wsId, userId);
+    service.registerActive('sock-shared-2', wsId, userId, root, second.socket);
+
+    expect(prisma.document.findMany).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(path.join(root, 'terminal-created.txt'), 'utf8')).toBe(
+      'keep while shared',
+    );
+
+    await service.unregister('sock-shared-1');
+    expect(fs.existsSync(root)).toBe(true);
+
+    await service.unregister('sock-shared-2');
+    expect(fs.existsSync(root)).toBe(false);
+  });
+
+  it('coalesces concurrent materialization for the same root', async () => {
+    setDocs([{ type: DocumentType.FILE, path: 'main.ts', content: 'export {}' }]);
+
+    const [firstRoot, secondRoot] = await Promise.all([
+      service.materialize('sock-concurrent-1', wsId, userId),
+      service.materialize('sock-concurrent-2', wsId, userId),
+    ]);
+
+    expect(firstRoot).toBe(root);
+    expect(secondRoot).toBe(root);
+    expect(prisma.document.findMany).toHaveBeenCalledTimes(1);
+
+    service.registerActive(
+      'sock-concurrent-1',
+      wsId,
+      userId,
+      root,
+      makeSocket().socket,
+    );
+    service.registerActive(
+      'sock-concurrent-2',
+      wsId,
+      userId,
+      root,
+      makeSocket().socket,
+    );
+    await service.unregister('sock-concurrent-1');
+    await service.unregister('sock-concurrent-2');
+  });
+
+  it('cancels delayed cleanup when a replacement session reserves the root', async () => {
+    jest.useFakeTimers();
+    try {
+      setDocs([{ type: DocumentType.FILE, path: 'main.ts', content: 'export {}' }]);
+      await service.materialize('sock-old', wsId, userId);
+      service.registerActive('sock-old', wsId, userId, root, makeSocket().socket);
+      await service.unregister('sock-old', 3100);
+
+      await service.materialize('sock-new', wsId, userId);
+      service.registerActive('sock-new', wsId, userId, root, makeSocket().socket);
+      await jest.advanceTimersByTimeAsync(3200);
+
+      expect(fs.existsSync(root)).toBe(true);
+      await service.unregister('sock-new');
+      expect(fs.existsSync(root)).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   // ── live sync ──────────────────────────────────────────────────────────────
 
   describe('with an active sandbox', () => {

@@ -199,6 +199,35 @@ describe('TerminalService', () => {
       expect(fake1.killed.length).toBeGreaterThan(0);
       expect(service.getSession('s6')).toMatchObject({ workspaceId: 'ws-2' });
     });
+
+    it('releases the sandbox reservation when PTY spawn fails', async () => {
+      spawnMock.mockImplementation(() => {
+        throw new Error('spawn failed');
+      });
+
+      await expect(
+        service.createSession('s-spawn-fail', 'user-1', 'ws-1', makeSocket().socket),
+      ).rejects.toThrow('spawn failed');
+
+      expect(sandbox.unregister).toHaveBeenCalledWith('s-spawn-fail');
+      expect(service.hasSession('s-spawn-fail')).toBe(false);
+    });
+
+    it('kills the PTY and cleans up when sandbox registration fails', async () => {
+      const fake = makeFakePty();
+      spawnMock.mockReturnValue(fake.pty);
+      sandbox.registerActive.mockImplementation(() => {
+        throw new Error('registration failed');
+      });
+
+      await expect(
+        service.createSession('s-register-fail', 'user-1', 'ws-1', makeSocket().socket),
+      ).rejects.toThrow('registration failed');
+
+      expect(fake.killed).toContain('SIGKILL');
+      expect(sandbox.unregister).toHaveBeenCalledWith('s-register-fail', 0);
+      expect(service.hasSession('s-register-fail')).toBe(false);
+    });
   });
 
   // ── writeToSession ─────────────────────────────────────────────────────────
@@ -295,10 +324,12 @@ describe('TerminalService', () => {
       await service.createSession('sa', 'user-1', 'ws-1', s1);
       await service.createSession('sb', 'user-2', 'ws-1', s2);
 
-      service.onModuleDestroy();
+      await service.onModuleDestroy();
 
       expect(fake1.killed.length).toBeGreaterThan(0);
       expect(fake2.killed.length).toBeGreaterThan(0);
+      expect(fake1.killed).toContain('SIGKILL');
+      expect(fake2.killed).toContain('SIGKILL');
       expect(service.hasSession('sa')).toBe(false);
       expect(service.hasSession('sb')).toBe(false);
     });
