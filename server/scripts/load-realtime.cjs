@@ -307,13 +307,14 @@ function closeClient(client) {
 }
 
 async function runStage(owner, users, workspaceId, concurrency) {
+  const filename = `load-${concurrency}-${randomUUID()}.txt`;
   const document = await api(`/workspaces/${workspaceId}/documents`, {
     method: 'POST',
     token: owner.token,
     body: {
       type: 'FILE',
-      path: `load-${concurrency}-${randomUUID()}.txt`,
-      name: `load-${concurrency}.txt`,
+      path: filename,
+      name: filename,
       language: 'plaintext',
       content: '',
     },
