@@ -8,27 +8,22 @@ const Y = require('yjs');
 const BASE_URL = process.env.LOAD_BASE_URL ?? 'http://127.0.0.1:3100';
 const CONCURRENCY_STAGES = (process.env.LOAD_CONCURRENCY ?? '10,25,50,100')
   .split(',')
-  .map((value) => Number.parseInt(value.trim(), 10));
-const UPDATES_PER_USER = Number.parseInt(
-  process.env.LOAD_UPDATES_PER_USER ?? '5',
-  10,
-);
-const ACK_TIMEOUT_MS = Number.parseInt(
-  process.env.LOAD_ACK_TIMEOUT_MS ?? '30000',
-  10,
-);
-const PROVISION_BATCH_SIZE = Number.parseInt(
+  .map((value) => Number(value.trim()));
+const UPDATES_PER_USER = Number(process.env.LOAD_UPDATES_PER_USER ?? '5');
+const ACK_TIMEOUT_MS = Number(process.env.LOAD_ACK_TIMEOUT_MS ?? '30000');
+const PROVISION_BATCH_SIZE = Number(
   process.env.LOAD_PROVISION_BATCH_SIZE ?? '5',
-  10,
 );
-const USERS_PER_DOCUMENT = Number.parseInt(
+const USERS_PER_DOCUMENT = Number(
   process.env.LOAD_USERS_PER_DOCUMENT ?? '0',
-  10,
 );
 const PASSWORD = 'LoadTest@1234!';
 
 function assertConfiguration() {
   const url = new URL(BASE_URL);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('LOAD_BASE_URL must use http or https');
+  }
   const loopbackHosts = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
   if (
     !loopbackHosts.has(url.hostname) &&
@@ -52,6 +47,15 @@ function assertConfiguration() {
   }
   if (!Number.isInteger(ACK_TIMEOUT_MS) || ACK_TIMEOUT_MS < 1000) {
     throw new Error('LOAD_ACK_TIMEOUT_MS must be at least 1000');
+  }
+  if (
+    !Number.isInteger(PROVISION_BATCH_SIZE) ||
+    PROVISION_BATCH_SIZE < 1 ||
+    PROVISION_BATCH_SIZE > 1000
+  ) {
+    throw new Error(
+      'LOAD_PROVISION_BATCH_SIZE must be an integer from 1 through 1000',
+    );
   }
   if (!Number.isInteger(USERS_PER_DOCUMENT) || USERS_PER_DOCUMENT < 0) {
     throw new Error('LOAD_USERS_PER_DOCUMENT must be zero or a positive integer');
@@ -163,8 +167,7 @@ async function registerUser(runId, index) {
   };
 }
 
-async function provisionUsers(owner, workspaceId, runId, count) {
-  const users = [owner];
+async function provisionUsers(users, owner, workspaceId, runId, count) {
   for (let offset = 1; offset < count; offset += PROVISION_BATCH_SIZE) {
     const indexes = Array.from(
       { length: Math.min(PROVISION_BATCH_SIZE, count - offset) },
@@ -173,6 +176,9 @@ async function provisionUsers(owner, workspaceId, runId, count) {
     const batch = await Promise.all(
       indexes.map((index) => registerUser(runId, index)),
     );
+    // Retain every successfully registered account before adding memberships
+    // so cleanup can still remove the batch if a later membership call fails.
+    users.push(...batch);
     await Promise.all(
       batch.map((user) =>
         api(`/workspaces/${workspaceId}/members`, {
@@ -182,13 +188,44 @@ async function provisionUsers(owner, workspaceId, runId, count) {
         }),
       ),
     );
-    users.push(...batch);
     process.stdout.write(
       `\rProvisioned ${users.length}/${count} authenticated users`,
     );
   }
   process.stdout.write('\n');
-  return users;
+}
+
+async function cleanupUsers(users) {
+  const cleanupFailures = [];
+  const deleteBatch = async (batch) => {
+    const results = await Promise.allSettled(
+      batch.map((user) =>
+        api(`/users/${user.id}`, {
+          method: 'DELETE',
+          token: user.token,
+        }),
+      ),
+    );
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        cleanupFailures.push(
+          `${batch[index].id}: ${
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason)
+          }`,
+        );
+      }
+    });
+  };
+
+  const members = users.slice(1);
+  for (let offset = 0; offset < members.length; offset += PROVISION_BATCH_SIZE) {
+    await deleteBatch(members.slice(offset, offset + PROVISION_BATCH_SIZE));
+  }
+  // The owner is last because deleting it also removes the synthetic workspace.
+  await deleteBatch([users[0]]);
+  return cleanupFailures;
 }
 
 function waitForSocketEvent(socket, event, timeoutMs) {
@@ -581,16 +618,19 @@ async function main() {
       }`,
   );
 
-  const owner = await registerUser(runId, 0);
-  const workspace = await api('/workspaces', {
-    method: 'POST',
-    token: owner.token,
-    body: { name: `Realtime load ${runId}` },
-  });
-
   const results = [];
+  const users = [];
   try {
-    const users = await provisionUsers(
+    const owner = await registerUser(runId, 0);
+    users.push(owner);
+    const workspace = await api('/workspaces', {
+      method: 'POST',
+      token: owner.token,
+      body: { name: `Realtime load ${runId}` },
+    });
+
+    await provisionUsers(
+      users,
       owner,
       workspace.id,
       runId,
@@ -611,12 +651,16 @@ async function main() {
       }
     }
   } finally {
-    await api(`/workspaces/${workspace.id}`, {
-      method: 'DELETE',
-      token: owner.token,
-    }).catch((err) => {
-      console.error(`Workspace cleanup failed: ${err.message}`);
-    });
+    if (users.length > 0) {
+      const cleanupFailures = await cleanupUsers(users);
+      if (cleanupFailures.length > 0) {
+        console.error(
+          `Account cleanup failed for ${cleanupFailures.length} user(s): ` +
+            cleanupFailures.slice(0, 5).join(' | '),
+        );
+        process.exitCode = 1;
+      }
+    }
   }
 
   console.log(`\nLOAD_RESULT_JSON=${JSON.stringify(results)}`);

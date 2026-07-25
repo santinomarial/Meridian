@@ -56,7 +56,9 @@ fan-out. See [Horizontal scaling](docs/scaling.md).
 
 Detailed diagrams and runtime sequences are available in
 [Architecture](docs/architecture.md). Multi-instance requirements and failure
-behavior are documented in [Horizontal scaling](docs/scaling.md).
+behavior are documented in [Horizontal scaling](docs/scaling.md). Measured
+single-process collaboration results and the repeatable load harness are
+documented in [Realtime performance](docs/performance.md).
 
 ## Repository layout
 
@@ -64,7 +66,7 @@ behavior are documented in [Horizontal scaling](docs/scaling.md).
 |---|---|
 | [`client/`](client/) | React application, unit tests, and Playwright end-to-end tests |
 | [`server/`](server/) | NestJS application, Prisma schema and migrations, unit tests, and HTTP integration tests |
-| [`docs/`](docs/) | Architecture and scaling documentation |
+| [`docs/`](docs/) | Architecture, scaling, performance, and operations documentation |
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Build, lint, unit, integration, and end-to-end CI jobs |
 
 ## Prerequisites

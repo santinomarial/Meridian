@@ -396,6 +396,45 @@ describe('DocumentPersistenceService', () => {
     it('resolves immediately when no writes are pending', async () => {
       await expect(service.flushAll()).resolves.toBeUndefined();
     });
+
+    it('counts only documents whose local write chains are still in flight', async () => {
+      let releaseFirstWrite!: () => void;
+      prisma.documentUpdate.create.mockImplementationOnce(
+        (() =>
+          new Promise<never>((resolve) => {
+            releaseFirstWrite = () => resolve(NOOP_CREATE);
+          })) as never,
+      );
+
+      service.persistUpdate(
+        'doc-1',
+        new Uint8Array([1]),
+        DEFAULT_GENERATION,
+        'upd-depth-1',
+      );
+      service.persistUpdate(
+        'doc-1',
+        new Uint8Array([2]),
+        DEFAULT_GENERATION,
+        'upd-depth-2',
+      );
+      service.persistUpdate(
+        'doc-2',
+        new Uint8Array([3]),
+        DEFAULT_GENERATION,
+        'upd-depth-3',
+      );
+
+      while (releaseFirstWrite === undefined) await Promise.resolve();
+      await service.flushDocument('doc-2');
+      expect(service.writeChainDepth()).toBe(1);
+
+      releaseFirstWrite();
+      await service.flushAll();
+
+      expect(service.writeChainDepth()).toBe(0);
+      expect(service.trackedDocumentCount()).toBe(2);
+    });
   });
 
   describe('releaseDocument', () => {

@@ -10,7 +10,10 @@ PostgreSQL. Redis remains a live fan-out and acceleration layer, so awareness,
 chat, terminal projection, and Pub/Sub delivery still carry the operational
 limits described in [Deployment topology and Redis](#deployment-topology-and-redis).
 
-For system-wide context, see [architecture.md](../docs/architecture.md). For capacity and failure-mode analysis, see [scaling.md](../docs/scaling.md).
+For system-wide context, see [architecture.md](../docs/architecture.md). For
+capacity and failure-mode analysis, see [scaling.md](../docs/scaling.md). For
+the measured local collaboration baseline, see
+[performance.md](../docs/performance.md).
 
 ## Runtime components
 
@@ -443,6 +446,28 @@ post-commit Yjs fan-out, sequence-gap catch-up, durable acknowledgements, and
 restore fencing. Unit tests still cover most Redis and persistence service
 branches with mocks. CI does not exercise a real sticky load balancer, Redis
 outage under sustained load, or terminal Pub/Sub ordering.
+
+### Realtime load test
+
+With a built server running against disposable, migrated PostgreSQL and Redis
+services, run:
+
+```bash
+npm run load:realtime
+```
+
+The harness provisions distinct authenticated users, joins real Socket.IO
+document rooms over WebSocket, sends incremental Yjs updates, waits for
+post-commit `yjs:ack` events, measures peer fan-out, and removes its synthetic
+accounts. It refuses non-loopback targets unless `LOAD_ALLOW_REMOTE=true` is
+set explicitly.
+
+The default stages are 10, 25, 50, and 100 users sharing one document. Use
+`LOAD_CONCURRENCY`, `LOAD_UPDATES_PER_USER`, and `LOAD_USERS_PER_DOCUMENT` to
+change the workload. The complete variable reference, methodology, recorded
+baseline, and safety boundary are in
+[the realtime performance report](../docs/performance.md). This is a manual
+capacity tool and is not part of CI.
 
 ### E2E-only server mode
 

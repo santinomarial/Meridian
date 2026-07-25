@@ -5,7 +5,8 @@ server. It covers the coordination paths that use PostgreSQL and Redis, the
 state that remains local to each process, and the failure modes an operator must
 account for. For component setup and configuration, see the
 [server guide](../server/README.md). For the logical component layout, see the
-[architecture overview](architecture.md).
+[architecture overview](architecture.md). For measured single-process realtime
+results, see the [performance baseline](performance.md).
 
 ## Current support boundary
 
@@ -40,6 +41,28 @@ projection is best effort, and rate limiting remains per process.
 | HTTP rate limiting | In-memory and per process |
 | Editor/chat gateway rate limiting | In-memory and per socket; selected `EditorGateway` events only |
 | Terminal gateway rate limiting | In-memory and per socket for start, run-file, input, and resize; stop is unmetered |
+
+## Capacity evidence
+
+The committed realtime load harness measures authenticated Socket.IO
+connection, join, peer-delivery, and post-PostgreSQL-commit acknowledgement
+latency. The July 24, 2026 local baseline completed with:
+
+- 100 users editing one document, including a sustained 2,000-update stage; and
+- 250 users distributed across 25 documents, producing 1,250 durable updates.
+
+All expected acknowledgements and peer deliveries completed in those profiles.
+The result also demonstrates the workload boundary: one hot document is
+serialized by its local persistence chain and PostgreSQL advisory lock, while
+updates spread across documents execute concurrently. Peer delivery happens
+before the durable commit and must be monitored separately from durable ack
+latency.
+
+These are single-process loopback measurements, not a production capacity
+claim. They do not validate a load balancer, WAN, cross-replica traffic,
+failure recovery under load, or a remote database. Exact methodology, metrics,
+limitations, and reproduction commands are in
+[performance.md](performance.md).
 
 ## Required topology
 

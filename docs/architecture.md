@@ -1054,3 +1054,9 @@ guarantees:
     [operations.md](operations.md). Sticky LB, managed TLS, and terminal
     isolation remain platform concerns; `ENABLE_TERMINAL` stays refused in
     production.
+13. The measured collaboration baseline covers one local API process. It
+    demonstrates low-latency peer relay and correct durable acknowledgements
+    for the recorded profiles, but it is not a production capacity guarantee.
+    TLS, WAN, sticky load balancing, multi-replica traffic, dependency failure
+    under load, and long-running soak behavior remain unmeasured. See
+    [performance.md](performance.md).
