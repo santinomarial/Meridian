@@ -69,13 +69,20 @@ function summarize(values) {
   if (values.length === 0) {
     return { min: null, p50: null, p95: null, p99: null, max: null, mean: null };
   }
-  const total = values.reduce((sum, value) => sum + value, 0);
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  let total = 0;
+  for (const value of values) {
+    min = Math.min(min, value);
+    max = Math.max(max, value);
+    total += value;
+  }
   return {
-    min: Math.min(...values),
+    min,
     p50: percentile(values, 0.5),
     p95: percentile(values, 0.95),
     p99: percentile(values, 0.99),
-    max: Math.max(...values),
+    max,
     mean: total / values.length,
   };
 }
