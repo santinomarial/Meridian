@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { io } = require('socket.io-client');
 const Y = require('yjs');
 
@@ -19,6 +19,10 @@ const ACK_TIMEOUT_MS = Number.parseInt(
 );
 const PROVISION_BATCH_SIZE = Number.parseInt(
   process.env.LOAD_PROVISION_BATCH_SIZE ?? '5',
+  10,
+);
+const USERS_PER_DOCUMENT = Number.parseInt(
+  process.env.LOAD_USERS_PER_DOCUMENT ?? '0',
   10,
 );
 const PASSWORD = 'LoadTest@1234!';
@@ -48,6 +52,9 @@ function assertConfiguration() {
   }
   if (!Number.isInteger(ACK_TIMEOUT_MS) || ACK_TIMEOUT_MS < 1000) {
     throw new Error('LOAD_ACK_TIMEOUT_MS must be at least 1000');
+  }
+  if (!Number.isInteger(USERS_PER_DOCUMENT) || USERS_PER_DOCUMENT < 0) {
+    throw new Error('LOAD_USERS_PER_DOCUMENT must be zero or a positive integer');
   }
 }
 
@@ -227,8 +234,21 @@ async function connectUser(user, documentId, stageState) {
   });
   const connectLatencyMs = performance.now() - connectedAt;
 
-  socket.on('yjs:update', () => {
+  socket.on('yjs:update', (payload) => {
     stageState.fanoutEvents += 1;
+    try {
+      const key = updateKey(payload.update);
+      const sent = stageState.sentUpdates.get(key);
+      if (!sent) return;
+      stageState.fanoutLatencyMs.push(performance.now() - sent.startedAt);
+      sent.seen += 1;
+      if (sent.seen >= sent.expectedPeers) {
+        stageState.sentUpdates.delete(key);
+      }
+    } catch {
+      // Delivery counting remains useful if an unexpected transport shape
+      // prevents latency correlation.
+    }
   });
   socket.on('error', (payload) => {
     stageState.serverErrors.push(
@@ -245,11 +265,16 @@ async function connectUser(user, documentId, stageState) {
 
   return {
     socket,
+    documentId,
     ydoc: new Y.Doc(),
     pending: new Map(),
     connectLatencyMs,
     joinLatencyMs: performance.now() - joinedAt,
   };
+}
+
+function updateKey(update) {
+  return createHash('sha256').update(Buffer.from(update)).digest('base64url');
 }
 
 function installAckHandlers(client) {
@@ -282,17 +307,28 @@ function createIncrementalUpdate(client, userIndex, updateIndex) {
   return update;
 }
 
-function sendUpdate(client, documentId, userIndex, updateIndex) {
+function sendUpdate(client, stageState, expectedPeers, userIndex, updateIndex) {
   const updateId = randomUUID();
   const update = createIncrementalUpdate(client, userIndex, updateIndex);
   return new Promise((resolve, reject) => {
     const startedAt = performance.now();
+    if (expectedPeers > 0) {
+      stageState.sentUpdates.set(updateKey(update), {
+        startedAt,
+        expectedPeers,
+        seen: 0,
+      });
+    }
     const timeout = setTimeout(() => {
       client.pending.delete(updateId);
       reject(new Error(`Ack timed out after ${ACK_TIMEOUT_MS}ms`));
     }, ACK_TIMEOUT_MS);
     client.pending.set(updateId, { startedAt, timeout, resolve, reject });
-    client.socket.emit('yjs:update', { documentId, updateId, update });
+    client.socket.emit('yjs:update', {
+      documentId: client.documentId,
+      updateId,
+      update,
+    });
   });
 }
 
@@ -307,25 +343,46 @@ function closeClient(client) {
 }
 
 async function runStage(owner, users, workspaceId, concurrency) {
-  const filename = `load-${concurrency}-${randomUUID()}.txt`;
-  const document = await api(`/workspaces/${workspaceId}/documents`, {
-    method: 'POST',
-    token: owner.token,
-    body: {
-      type: 'FILE',
-      path: filename,
-      name: filename,
-      language: 'plaintext',
-      content: '',
-    },
-  });
+  const usersPerDocument =
+    USERS_PER_DOCUMENT === 0
+      ? concurrency
+      : Math.min(USERS_PER_DOCUMENT, concurrency);
+  const documentCount = Math.ceil(concurrency / usersPerDocument);
+  const documents = await Promise.all(
+    Array.from({ length: documentCount }, async (_, documentIndex) => {
+      const filename =
+        `load-${concurrency}-${documentIndex}-${randomUUID()}.txt`;
+      return api(`/workspaces/${workspaceId}/documents`, {
+        method: 'POST',
+        token: owner.token,
+        body: {
+          type: 'FILE',
+          path: filename,
+          name: filename,
+          language: 'plaintext',
+          content: '',
+        },
+      });
+    }),
+  );
 
-  const stageState = { fanoutEvents: 0, serverErrors: [] };
+  const stageState = {
+    fanoutEvents: 0,
+    fanoutLatencyMs: [],
+    sentUpdates: new Map(),
+    serverErrors: [],
+  };
   const metricsBefore = await metrics();
   const connectionResults = await Promise.allSettled(
     users
       .slice(0, concurrency)
-      .map((user) => connectUser(user, document.id, stageState)),
+      .map((user, index) =>
+        connectUser(
+          user,
+          documents[Math.floor(index / usersPerDocument)].id,
+          stageState,
+        ),
+      ),
   );
   const clients = connectionResults
     .filter((result) => result.status === 'fulfilled')
@@ -362,7 +419,12 @@ async function runStage(owner, users, workspaceId, concurrency) {
           try {
             const latency = await sendUpdate(
               client,
-              document.id,
+              stageState,
+              Math.min(
+                usersPerDocument,
+                concurrency -
+                  Math.floor(userIndex / usersPerDocument) * usersPerDocument,
+              ) - 1,
               userIndex,
               updateIndex,
             );
@@ -380,9 +442,18 @@ async function runStage(owner, users, workspaceId, concurrency) {
     const metricsAtPeak = await metrics();
 
     const expectedUpdates = concurrency * UPDATES_PER_USER;
-    const expectedFanout = ackLatency.length * Math.max(0, concurrency - 1);
+    const fullGroups = Math.floor(concurrency / usersPerDocument);
+    const remainder = concurrency % usersPerDocument;
+    const expectedFanout =
+      fullGroups *
+        usersPerDocument *
+        UPDATES_PER_USER *
+        (usersPerDocument - 1) +
+      remainder * UPDATES_PER_USER * Math.max(0, remainder - 1);
     return {
       concurrency,
+      usersPerDocument,
+      documentCount,
       expectedUpdates,
       successfulUpdates: ackLatency.length,
       failedUsers: failures.length,
@@ -393,6 +464,7 @@ async function runStage(owner, users, workspaceId, concurrency) {
       connectLatencyMs: rounded(summarize(connectLatency)),
       joinLatencyMs: rounded(summarize(joinLatency)),
       ackLatencyMs: rounded(summarize(ackLatency)),
+      fanoutLatencyMs: rounded(summarize(stageState.fanoutLatencyMs)),
       fanoutEvents: stageState.fanoutEvents,
       expectedFanout,
       fanoutDeliveryRatio:
@@ -445,7 +517,10 @@ async function runStage(owner, users, workspaceId, concurrency) {
 
 function printStage(result) {
   const ack = result.ackLatencyMs;
-  console.log(`\n${result.concurrency} concurrent users`);
+  console.log(
+    `\n${result.concurrency} concurrent users across ${result.documentCount} ` +
+      `document(s), up to ${result.usersPerDocument} users/document`,
+  );
   console.log(
     `  updates: ${result.successfulUpdates}/${result.expectedUpdates} ` +
       `(${result.throughputPerSecond}/s), failed users: ${result.failedUsers}`,
@@ -461,6 +536,12 @@ function printStage(result) {
     `  fan-out: ${result.fanoutEvents}/${result.expectedFanout} ` +
       `(${(result.fanoutDeliveryRatio * 100).toFixed(2)}%)`,
   );
+  if (result.fanoutLatencyMs.p95 !== null) {
+    console.log(
+      `  peer delivery ms: p50 ${result.fanoutLatencyMs.p50}, ` +
+        `p95 ${result.fanoutLatencyMs.p95}, p99 ${result.fanoutLatencyMs.p99}`,
+    );
+  }
   console.log(
     `  process: ${result.resources.residentMemoryMiB} MiB RSS, ` +
       `${result.resources.eventLoopLagP99Ms} ms event-loop p99, ` +
@@ -485,7 +566,12 @@ async function main() {
   const maxConcurrency = Math.max(...CONCURRENCY_STAGES);
   console.log(
     `Target: ${BASE_URL}\nStages: ${CONCURRENCY_STAGES.join(', ')} users; ` +
-      `${UPDATES_PER_USER} acknowledged updates per user`,
+      `${UPDATES_PER_USER} acknowledged updates per user; ` +
+      `${
+        USERS_PER_DOCUMENT === 0
+          ? 'one shared document'
+          : `up to ${USERS_PER_DOCUMENT} users per document`
+      }`,
   );
 
   const owner = await registerUser(runId, 0);
