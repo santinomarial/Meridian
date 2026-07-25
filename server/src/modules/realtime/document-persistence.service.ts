@@ -62,6 +62,7 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   //   1. Writes for the same document are serialised (preserving seq order).
   //   2. flushDocument / flushAll can simply await the tail promise.
   private readonly writeChain = new Map<string, Promise<void>>();
+  private readonly inFlightWrites = new Map<string, number>();
 
   // Tracks how many updates have been persisted since the last snapshot for
   // each document.  Resets to 0 after each successful compaction.
@@ -112,6 +113,10 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     updateId: string,
   ): Promise<PersistUpdateResult> {
     const previous = this.writeChain.get(documentId) ?? Promise.resolve();
+    this.inFlightWrites.set(
+      documentId,
+      (this.inFlightWrites.get(documentId) ?? 0) + 1,
+    );
     let settle!: (result: PersistUpdateResult) => void;
     const resultPromise = new Promise<PersistUpdateResult>((resolve) => {
       settle = resolve;
@@ -149,13 +154,23 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
         this.metrics.recordPersistResult('failed');
         settle({ status: 'failed', error: err });
       });
-    this.writeChain.set(documentId, next.then(() => undefined, () => undefined));
+    const trackedNext = next.then(
+      () => this.decrementInFlight(documentId),
+      () => this.decrementInFlight(documentId),
+    );
+    this.writeChain.set(documentId, trackedNext);
     return resultPromise;
   }
 
   /** Number of documents with an in-flight local write chain (gauge source). */
   writeChainDepth(): number {
-    return this.writeChain.size;
+    return this.inFlightWrites.size;
+  }
+
+  private decrementInFlight(documentId: string): void {
+    const remaining = (this.inFlightWrites.get(documentId) ?? 1) - 1;
+    if (remaining <= 0) this.inFlightWrites.delete(documentId);
+    else this.inFlightWrites.set(documentId, remaining);
   }
 
   /** Waits until all pending writes for one document have settled. */
@@ -185,6 +200,7 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     }
 
     this.writeChain.delete(documentId);
+    this.inFlightWrites.delete(documentId);
     this.clearSeededFlags(documentId);
     this.updateCountSinceSnapshot.delete(documentId);
     this.lastPersistedSeq.delete(documentId);
@@ -195,6 +211,7 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   trackedDocumentCount(): number {
     return new Set([
       ...this.writeChain.keys(),
+      ...this.inFlightWrites.keys(),
       ...[...this.redisSeeded].map((key) => key.slice(0, key.lastIndexOf(':'))),
       ...this.updateCountSinceSnapshot.keys(),
       ...this.lastPersistedSeq.keys(),
