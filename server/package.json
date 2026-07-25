@@ -12,6 +12,7 @@
     "start:prod": "node dist/main.js",
     "test": "jest",
     "test:integration": "jest --config ./test/jest-integration.json --runInBand",
+    "load:realtime": "node scripts/load-realtime.cjs",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
