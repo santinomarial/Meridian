@@ -200,7 +200,7 @@ A real-time collaborative browser IDE built on Monaco Editor, Yjs, and NestJS.
 
 | Layer | Tech |
 |-------|------|
-| Frontend | React 18, Vite, Monaco Editor, Zustand |
+| Frontend | React 19, Vite, Monaco Editor, Zustand |
 | Backend | NestJS 11, Socket.IO, Yjs |
 | Database | PostgreSQL (Prisma ORM) |
 | Cache / Pub-Sub | Redis (ioredis) |

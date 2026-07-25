@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type HTMLAttributes } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { MeridianWordmark } from "../ui/MeridianWordmark";
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { toast } from "../ui/Toast";
@@ -209,7 +209,7 @@ export function Header() {
   useEffect(() => {
     if (openPanel === null) return;
 
-    let activeRef: React.RefObject<HTMLDivElement> | null = null;
+    let activeRef: React.RefObject<HTMLDivElement | null> | null = null;
     switch (openPanel) {
       case "file-menu":
       case "edit-menu":

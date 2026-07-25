@@ -13,7 +13,7 @@ setup information, see the [main README](../README.md).
 
 | Concern | Implementation |
 |---|---|
-| Application shell | React 18, React Router, and route-level lazy loading |
+| Application shell | React 19, React Router 8, and route-level lazy loading |
 | Build system | TypeScript project references and Vite 8 |
 | Styling | Tailwind CSS with shared component primitives |
 | Workspace state | Zustand |
@@ -29,7 +29,7 @@ the application. The editor does not depend on a public CDN at runtime.
 
 ## Prerequisites
 
-- Node.js `^20.19.0` or `>=22.12.0`, as required by Vite 8
+- Node.js 22.22 or later, as required by React Router 8
 - npm
 - A running Meridian server for authentication, persistence, collaboration,
   invitations, version history, export, and terminal features

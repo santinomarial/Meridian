@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { MeridianWordmark } from "../ui/MeridianWordmark";
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";

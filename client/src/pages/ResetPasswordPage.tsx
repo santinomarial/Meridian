@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { PasswordStrength } from "../components/ui/PasswordStrength";
 import { resetPassword } from "../lib/api";

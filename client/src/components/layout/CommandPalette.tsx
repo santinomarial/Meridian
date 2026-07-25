@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { toast } from "../ui/Toast";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";

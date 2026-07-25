@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { CodeEditor } from "../components/editor/CodeEditor";
 import { EditorTabs } from "../components/editor/EditorTabs";
 import { ActivityBar } from "../components/layout/ActivityBar";

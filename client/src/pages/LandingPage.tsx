@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { PasswordStrength } from "../components/ui/PasswordStrength";
 import { login, register, forgotPassword } from "../lib/api";

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { acceptInvite, getCurrentUser, getInvite } from "../lib/api";
 import type { ApiInviteDetails, ApiUser } from "../lib/apiTypes";

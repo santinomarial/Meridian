@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 import { ApiError, createWorkspace, getCurrentUser, getDocumentTree, getWorkspaces, getWorkspaceMembers } from "../lib/api";
 import { getLanguageFromFilename, toLanguageMode } from "../lib/language";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";

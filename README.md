@@ -33,7 +33,7 @@ There is no root package manifest; run package commands from `client/` or
 
 | Component | Implementation | Responsibility |
 |---|---|---|
-| Web client | React 18, TypeScript, Vite, Monaco, Zustand | Workspace UI, editor state, REST calls, and realtime bindings |
+| Web client | React 19, TypeScript, Vite, Monaco, Zustand | Workspace UI, editor state, REST calls, and realtime bindings |
 | API server | NestJS 11, TypeScript, Socket.IO | Authentication, authorization, workspace and document APIs, realtime rooms, and terminal sessions |
 | Primary datastore | PostgreSQL 16, Prisma | Users, sessions, memberships, documents, invitations, versions, Yjs updates, and snapshots |
 | Coordination | Redis 7, ioredis | Cross-process realtime fan-out, authorization invalidation, accelerated sequence allocation, chat, and terminal projection events |
@@ -71,7 +71,8 @@ documented in [Realtime performance](docs/performance.md).
 
 ## Prerequisites
 
-- Node.js 22.12 or later and npm, satisfying the Vite 8 runtime requirement.
+- Node.js 22.22 or later and npm, satisfying the React Router 8 runtime
+  requirement.
 - Docker with Docker Compose for the provided PostgreSQL and Redis services.
 - A native C/C++ build toolchain and Python when `node-pty` must compile from
   source on the host platform.

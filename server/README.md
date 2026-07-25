@@ -37,7 +37,8 @@ These representations are related but are not continuously synchronized. The bou
 
 ## Requirements
 
-- Node.js 22.12 or later; CI uses Node.js 22, and the repository's Vite 8 client requires 22.12 or later
+- Node.js 22.12 or later for the server; repository-wide workflows require
+  Node.js 22.22 or later for the React Router 8 client
 - npm and the committed `package-lock.json`
 - PostgreSQL; the development Compose file and CI use PostgreSQL 16
 - Redis only when its coordination features are required; the development Compose file and CI use Redis 7
