@@ -18,7 +18,28 @@
 	# Nest API + Socket.IO (must win over SPA fallback).
 	@api path /auth /auth/* /users /users/* /workspaces /workspaces/* /documents /documents/* /invites /invites/* /health /ready /socket.io /socket.io/*
 	handle @api {
-		reverse_proxy api:3000
+		reverse_proxy {$API_UPSTREAMS} {
+			# Caddy signs the selected upstream into an HttpOnly affinity
+			# cookie. This keeps Engine.IO polling, WebSocket upgrade, and the
+			# remaining Socket.IO session on the same API process.
+			lb_policy cookie meridian_affinity {$LB_COOKIE_SECRET}
+
+			# Do not send new sessions to a replica whose shared dependencies
+			# are unavailable. Passive checks cover connection failures between
+			# active probes.
+			health_uri /ready
+			health_interval 5s
+			health_timeout 2s
+			health_status 2xx
+			fail_duration 10s
+			max_fails 2
+
+			# Retry connection failures briefly. Caddy's default retry matcher
+			# does not replay non-idempotent requests after an upstream response
+			# has started.
+			lb_try_duration 3s
+			lb_try_interval 250ms
+		}
 	}
 
 	# Static SPA (nginx on web:8080)

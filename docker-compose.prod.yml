@@ -118,6 +118,8 @@ services:
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN to your public hostname}
       ACME_EMAIL: ${ACME_EMAIL:-}
+      API_UPSTREAMS: ${API_UPSTREAMS:-api:3000}
+      LB_COOKIE_SECRET: ${LB_COOKIE_SECRET:?set LB_COOKIE_SECRET}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
