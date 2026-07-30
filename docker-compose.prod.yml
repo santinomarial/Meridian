@@ -7,7 +7,7 @@
 #
 # Only Caddy publishes 80/443. Postgres, Redis, API, and SPA stay on the
 # internal Compose network. Prefer one API replica for Socket.IO simplicity.
-# See docs/operations.md § Public deploy.
+# See docs/how-to/deploy-with-docker-compose.md.
 
 services:
   postgres:
@@ -117,7 +117,7 @@ services:
       - "443:443/udp"
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN to your public hostname}
-      ACME_EMAIL: ${ACME_EMAIL:-}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL for Caddy ACME registration}
       API_UPSTREAMS: ${API_UPSTREAMS:-api:3000}
       LB_COOKIE_SECRET: ${LB_COOKIE_SECRET:?set LB_COOKIE_SECRET}
     volumes:
