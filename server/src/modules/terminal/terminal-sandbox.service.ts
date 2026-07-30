@@ -61,11 +61,12 @@ interface SandboxSyncMessage {
  * a document edit can be handled by any instance. So each sync op is applied to
  * local sandboxes AND published over Redis; the instance hosting the sandbox
  * applies the change to disk. The op carries the new content so the receiving
- * instance doesn't need a DB read. See docs/scaling.md. This fan-out only runs
- * when the terminal feature is enabled (otherwise no sandboxes exist anywhere).
+ * instance doesn't need a DB read. See
+ * docs/explanation/scaling-and-failure-model.md. This fan-out only runs when the
+ * terminal feature is enabled (otherwise no sandboxes exist anywhere).
  *
  * Sandboxes live under the OS temp dir (not the server project tree). This is
- * NOT container isolation — see the README's "known limitations".
+ * NOT container isolation — see docs/explanation/terminal-execution.md.
  */
 @Injectable()
 export class TerminalSandboxService implements OnModuleInit {

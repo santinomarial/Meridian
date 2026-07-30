@@ -1,5 +1,5 @@
 # Meridian public edge — TLS termination + reverse proxy.
-# Set DOMAIN (and optionally ACME_EMAIL) in the Compose environment.
+# Set DOMAIN and ACME_EMAIL in the Compose environment.
 #
 # Same-origin model: SPA + API + Socket.IO share https://{$DOMAIN}.
 # Do not publish api:3000 or web:8080 on the host — only this service's 80/443.
