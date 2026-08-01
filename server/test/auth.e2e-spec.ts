@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { createHash } from 'node:crypto';
 import {
   createTestApp,
   cleanupByEmailPrefix,
@@ -196,5 +197,54 @@ describe('Auth (HTTP integration)', () => {
     ) as { exp: number; iat: number };
     const tokenLifetime = payload.exp - payload.iat;
     expect(Math.abs(tokenLifetime - maxAgeSeconds)).toBeLessThanOrEqual(5);
+  });
+
+  it('verifies email with a single-use token before issuing an authenticated session', async () => {
+    const email = uniqueEmail(PREFIX);
+    const registered = await request(ctx.server)
+      .post('/auth/register')
+      .send({ email, password: STRONG_PASSWORD, displayName: 'Verify Me' })
+      .expect(201);
+    const userId = registered.body.user.id as string;
+    await ctx.prisma.user.update({
+      where: { id: userId },
+      data: { emailVerifiedAt: null },
+    });
+
+    await request(ctx.server)
+      .post('/auth/login')
+      .send({ email, password: STRONG_PASSWORD })
+      .expect(403);
+
+    const rawToken = 'integration-email-verification-token';
+    await ctx.prisma.emailVerificationToken.create({
+      data: {
+        userId,
+        tokenHash: createHash('sha256').update(rawToken).digest('hex'),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+
+    const agent = request.agent(ctx.server);
+    const verified = await agent
+      .post('/auth/verify-email')
+      .send({ token: rawToken })
+      .expect(200);
+    expect(verified.body.user).toMatchObject({
+      id: userId,
+      email,
+    });
+    expect(verified.body.user.emailVerifiedAt).not.toBeNull();
+    expect(
+      ((verified.headers['set-cookie'] as unknown as string[]) ?? []).some(
+        (cookie) => cookie.startsWith('auth_token='),
+      ),
+    ).toBe(true);
+
+    await agent.get('/auth/me').expect(200);
+    await request(ctx.server)
+      .post('/auth/verify-email')
+      .send({ token: rawToken })
+      .expect(400);
   });
 });

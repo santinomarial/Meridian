@@ -265,6 +265,21 @@ describe('EditorGateway.authenticateSocket', () => {
     await expect(gateway.authenticateSocket(socket)).rejects.toThrow('Session revoked');
   });
 
+  it('throws when the account email is unverified', async () => {
+    const { gateway, jwtService, prisma } = makeGateway();
+    const socket = makeSocket({ auth: { token: 'tok' } });
+
+    jwtService.verify.mockReturnValue(VALID_PAYLOAD as never);
+    prisma.session.findUnique.mockResolvedValue({
+      ...VALID_SESSION,
+      user: { ...BASE_USER, emailVerifiedAt: null },
+    } as never);
+
+    await expect(gateway.authenticateSocket(socket)).rejects.toThrow(
+      'Email verification required',
+    );
+  });
+
   it('attaches user to socket.data on success', async () => {
     const { gateway, jwtService, prisma } = makeGateway();
     const socket = makeSocket({ auth: { token: 'tok' } });

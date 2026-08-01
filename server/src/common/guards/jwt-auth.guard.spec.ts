@@ -152,6 +152,23 @@ describe('JwtAuthGuard', () => {
     });
   });
 
+  describe('unverified email', () => {
+    it('rejects a session whose user has not verified the account email', async () => {
+      const { guard, jwtService, prisma } = makeGuard();
+      const ctx = makeContext({
+        cookies: { auth_token: 'good-token' },
+        headers: {},
+      });
+      jwtService.verify.mockReturnValue(VALID_PAYLOAD as never);
+      prisma.session.findUnique.mockResolvedValue({
+        ...makeSession(),
+        user: { ...BASE_USER, emailVerifiedAt: null },
+      } as never);
+
+      await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
   describe('valid token', () => {
     it('returns true and attaches user + jti to request', async () => {
       const { guard, jwtService, prisma } = makeGuard();

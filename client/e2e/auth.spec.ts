@@ -100,6 +100,69 @@ test("password requirements list is visible in sign-up mode", async ({ page }) =
   await expect(page.getByLabel("Password requirements")).toBeVisible();
 });
 
+test("production sign-up waits for email verification instead of creating a session", async ({
+  page,
+}) => {
+  const email = "verify-me@example.com";
+  await page.route("**/auth/register", (route) =>
+    route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        user: {
+          id: "user-verify",
+          email,
+          emailVerifiedAt: null,
+          displayName: "Verify Me",
+          avatarUrl: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        verificationRequired: true,
+        emailDelivered: false,
+        previewVerificationUrl: "http://localhost:5173/verify-email/test-token",
+      }),
+    }),
+  );
+
+  await page.goto("/");
+  await signUpViaUI(page, email, STRONG_PASSWORD, "Verify Me");
+  await expect(page.getByTestId("verification-pending")).toContainText(
+    "Verify your email",
+  );
+  await expect(page.getByTestId("verification-preview-link")).toHaveAttribute(
+    "href",
+    "http://localhost:5173/verify-email/test-token",
+  );
+  await expect(page).toHaveURL("/");
+});
+
+test("email verification consumes the token before opening the workspace", async ({ page }) => {
+  await page.route("**/auth/verify-email", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ token: "test-token" });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        user: {
+          id: "user-verify",
+          email: "verify-me@example.com",
+          emailVerifiedAt: new Date().toISOString(),
+          displayName: "Verify Me",
+          avatarUrl: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        token: "session-token",
+      }),
+    });
+  });
+
+  await page.goto("/verify-email/test-token");
+  await page.getByTestId("verify-email-submit").click();
+  await expect(page.getByTestId("verify-email-success")).toBeVisible();
+});
+
 // ── 7. Forgot password flow (no backend needed) ────────────────────────────────
 
 test("forgot password flow shows professional success message", async ({ page }) => {

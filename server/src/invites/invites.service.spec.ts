@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto';
-import { ForbiddenException, GoneException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  GoneException,
+  NotFoundException,
+} from '@nestjs/common';
 import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
-import type { Invite, WorkspaceMember } from '@prisma/client';
+import type { Invite, Prisma, WorkspaceMember } from '@prisma/client';
 import { WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { InvitesService, type InviteWithContext } from './invites.service';
@@ -37,9 +42,15 @@ const BASE_MEMBER: WorkspaceMember = {
 describe('InvitesService', () => {
   let service: InvitesService;
   let prisma: DeepMockProxy<PrismaService>;
+  let transaction: DeepMockProxy<Prisma.TransactionClient>;
 
   beforeEach(() => {
     prisma = mockDeep<PrismaService>();
+    transaction = mockDeep<Prisma.TransactionClient>();
+    (prisma.$transaction as unknown as jest.Mock).mockImplementation(
+      async (callback: (tx: DeepMockProxy<Prisma.TransactionClient>) => Promise<unknown>) =>
+        callback(transaction),
+    );
     service = new InvitesService(prisma);
   });
 
@@ -67,6 +78,17 @@ describe('InvitesService', () => {
         arg.data.tokenHash,
       );
     });
+
+    it('never permits an invite to grant canonical ownership', async () => {
+      await expect(
+        service.createInvite({
+          workspaceId: 'ws-1',
+          invitedById: 'user-owner',
+          role: WorkspaceRole.OWNER,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.invite.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('acceptInvite', () => {
@@ -74,7 +96,7 @@ describe('InvitesService', () => {
       prisma.invite.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.acceptInvite('missing', 'user-2', 'user2@example.com'),
+        service.acceptInvite('missing', 'user-2', 'user2@example.com', FUTURE),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -84,7 +106,7 @@ describe('InvitesService', () => {
       );
 
       await expect(
-        service.acceptInvite('tok-abc', 'user-2', 'user2@example.com'),
+        service.acceptInvite('tok-abc', 'user-2', 'user2@example.com', FUTURE),
       ).rejects.toBeInstanceOf(GoneException);
       expect(prisma.workspaceMember.create).not.toHaveBeenCalled();
     });
@@ -95,7 +117,7 @@ describe('InvitesService', () => {
       );
 
       await expect(
-        service.acceptInvite('tok-abc', 'user-2', 'user2@example.com'),
+        service.acceptInvite('tok-abc', 'user-2', 'user2@example.com', FUTURE),
       ).rejects.toBeInstanceOf(GoneException);
     });
 
@@ -105,28 +127,52 @@ describe('InvitesService', () => {
       );
 
       await expect(
-        service.acceptInvite('tok-abc', 'user-2', 'other@example.com'),
+        service.acceptInvite('tok-abc', 'user-2', 'other@example.com', FUTURE),
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('requires verified identity for an email-bound invite', async () => {
+      prisma.invite.findUnique.mockResolvedValue(
+        makeInvite({ email: 'user2@example.com' }) as never,
+      );
+
+      await expect(
+        service.acceptInvite('tok-abc', 'user-2', 'user2@example.com', null),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('adds the user as a member with the invite role and marks accepted', async () => {
       prisma.invite.findUnique.mockResolvedValue(makeInvite() as never);
-      prisma.workspaceMember.findUnique.mockResolvedValue(null);
-      prisma.workspaceMember.create.mockResolvedValue(BASE_MEMBER);
-      prisma.invite.update.mockResolvedValue(makeInvite() as never);
+      transaction.invite.updateMany.mockResolvedValue({ count: 1 });
+      transaction.workspaceMember.findUnique.mockResolvedValue(null);
+      transaction.workspaceMember.upsert.mockResolvedValue(BASE_MEMBER);
 
       const result = await service.acceptInvite(
         'tok-abc',
         'user-2',
         'user2@example.com',
+        FUTURE,
       );
 
-      expect(prisma.workspaceMember.create).toHaveBeenCalledWith({
-        data: { workspaceId: 'ws-1', userId: 'user-2', role: WorkspaceRole.EDITOR },
-      });
-      expect(prisma.invite.update).toHaveBeenCalledWith({
-        where: { id: 'invite-1' },
+      expect(transaction.invite.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'invite-1',
+          acceptedAt: null,
+          expiresAt: { gt: expect.any(Date) as Date },
+        },
         data: { acceptedAt: expect.any(Date) },
+      });
+      expect(transaction.workspaceMember.upsert).toHaveBeenCalledWith({
+        where: {
+          workspaceId_userId: { workspaceId: 'ws-1', userId: 'user-2' },
+        },
+        update: {},
+        create: {
+          workspaceId: 'ws-1',
+          userId: 'user-2',
+          role: WorkspaceRole.EDITOR,
+        },
       });
       expect(result.alreadyMember).toBe(false);
       expect(result.role).toBe(WorkspaceRole.EDITOR);
@@ -135,17 +181,33 @@ describe('InvitesService', () => {
 
     it('succeeds when the matching user is already a member', async () => {
       prisma.invite.findUnique.mockResolvedValue(makeInvite() as never);
-      prisma.workspaceMember.findUnique.mockResolvedValue(BASE_MEMBER);
-      prisma.invite.update.mockResolvedValue(makeInvite() as never);
+      transaction.invite.updateMany.mockResolvedValue({ count: 1 });
+      transaction.workspaceMember.findUnique.mockResolvedValue(BASE_MEMBER);
+      transaction.workspaceMember.upsert.mockResolvedValue(BASE_MEMBER);
 
       const result = await service.acceptInvite(
         'tok-abc',
         'user-2',
         'user2@example.com',
+        FUTURE,
       );
 
-      expect(prisma.workspaceMember.create).not.toHaveBeenCalled();
       expect(result.alreadyMember).toBe(true);
+    });
+
+    it('rejects the transaction when another request already claimed the invite', async () => {
+      prisma.invite.findUnique.mockResolvedValue(makeInvite() as never);
+      transaction.invite.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.acceptInvite(
+          'tok-abc',
+          'user-2',
+          'user2@example.com',
+          FUTURE,
+        ),
+      ).rejects.toBeInstanceOf(GoneException);
+      expect(transaction.workspaceMember.upsert).not.toHaveBeenCalled();
     });
   });
 });

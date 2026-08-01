@@ -115,6 +115,11 @@ describe('Workspace ownership invariants (HTTP integration)', () => {
       .patch(`/workspaces/${workspaceId}`)
       .send({ name: 'Hijacked' })
       .expect(403);
+    await editor
+      .post(`/workspaces/${workspaceId}/invites`)
+      .send({ role: 'EDITOR' })
+      .expect(403);
+    await editor.get(`/workspaces/${workspaceId}/invites`).expect(403);
 
     const workspace = await ctx.prisma.workspace.findUnique({
       where: { id: workspaceId },

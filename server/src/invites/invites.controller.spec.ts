@@ -60,7 +60,8 @@ describe('InvitesController.listInvites', () => {
 
   it('hides the workspace from a non-member', async () => {
     const { controller, invitesService, workspacesService } = makeController();
-    workspacesService.getMemberRole.mockResolvedValue(null);
+    workspacesService.findById.mockResolvedValue({ id: 'ws-1' } as never);
+    workspacesService.canUserAccessWorkspace.mockResolvedValue(false);
 
     await expect(controller.listInvites(AUTH_USER, 'ws-1')).rejects.toBeInstanceOf(
       NotFoundException,
@@ -70,9 +71,11 @@ describe('InvitesController.listInvites', () => {
 
   it.each([WorkspaceRole.VIEWER, WorkspaceRole.EDITOR])(
     'does not expose invite metadata to a %s',
-    async (role) => {
+    async () => {
       const { controller, invitesService, workspacesService } = makeController();
-      workspacesService.getMemberRole.mockResolvedValue(role);
+      workspacesService.findById.mockResolvedValue({ id: 'ws-1' } as never);
+      workspacesService.canUserAccessWorkspace.mockResolvedValue(true);
+      workspacesService.canManageWorkspace.mockResolvedValue(false);
 
       await expect(controller.listInvites(AUTH_USER, 'ws-1')).rejects.toBeInstanceOf(
         ForbiddenException,
@@ -83,7 +86,9 @@ describe('InvitesController.listInvites', () => {
 
   it('lets an owner list invite metadata without raw tokens', async () => {
     const { controller, invitesService, workspacesService } = makeController();
-    workspacesService.getMemberRole.mockResolvedValue(WorkspaceRole.OWNER);
+    workspacesService.findById.mockResolvedValue({ id: 'ws-1' } as never);
+    workspacesService.canUserAccessWorkspace.mockResolvedValue(true);
+    workspacesService.canManageWorkspace.mockResolvedValue(true);
     invitesService.listForWorkspace.mockResolvedValue([INVITE]);
 
     await expect(controller.listInvites(AUTH_USER, 'ws-1')).resolves.toEqual([

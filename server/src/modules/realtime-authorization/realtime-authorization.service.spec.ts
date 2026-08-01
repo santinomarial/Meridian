@@ -12,6 +12,7 @@ import {
 const USER = {
   id: 'user-1',
   email: 'user@example.com',
+  emailVerifiedAt: new Date('2024-01-01'),
   displayName: 'Alice',
   avatarUrl: null,
   createdAt: new Date('2024-01-01'),
@@ -49,6 +50,7 @@ describe('RealtimeAuthorizationService', () => {
       userId: USER.id,
       expiresAt: new Date(Date.now() + 60_000),
       revokedAt: null,
+      user: { emailVerifiedAt: USER.emailVerifiedAt },
     } as never);
 
     await expect(
@@ -58,7 +60,12 @@ describe('RealtimeAuthorizationService', () => {
     ).resolves.toBe(true);
     expect(prisma.session.findUnique).toHaveBeenCalledWith({
       where: { jti: 'jti-1' },
-      select: { userId: true, expiresAt: true, revokedAt: true },
+      select: {
+        userId: true,
+        expiresAt: true,
+        revokedAt: true,
+        user: { select: { emailVerifiedAt: true } },
+      },
     });
   });
 
@@ -67,6 +74,7 @@ describe('RealtimeAuthorizationService', () => {
       userId: USER.id,
       expiresAt: new Date(Date.now() + 60_000),
       revokedAt: null,
+      user: { emailVerifiedAt: USER.emailVerifiedAt },
     } as never);
     const client = socket({ user: USER, [SOCKET_SESSION_JTI]: 'jti-hot' });
 
@@ -84,11 +92,13 @@ describe('RealtimeAuthorizationService', () => {
         userId: USER.id,
         expiresAt: new Date(Date.now() + 60_000),
         revokedAt: null,
+        user: { emailVerifiedAt: USER.emailVerifiedAt },
       } as never)
       .mockResolvedValueOnce({
         userId: USER.id,
         expiresAt: new Date(Date.now() + 60_000),
         revokedAt: new Date(),
+        user: { emailVerifiedAt: USER.emailVerifiedAt },
       } as never);
     const client = socket({ user: USER, [SOCKET_SESSION_JTI]: 'jti-logout' });
 
@@ -100,9 +110,30 @@ describe('RealtimeAuthorizationService', () => {
 
   it.each([
     null,
-    { userId: 'other-user', expiresAt: new Date(Date.now() + 60_000), revokedAt: null },
-    { userId: USER.id, expiresAt: new Date(Date.now() - 1), revokedAt: null },
-    { userId: USER.id, expiresAt: new Date(Date.now() + 60_000), revokedAt: new Date() },
+    {
+      userId: 'other-user',
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+      user: { emailVerifiedAt: USER.emailVerifiedAt },
+    },
+    {
+      userId: USER.id,
+      expiresAt: new Date(Date.now() - 1),
+      revokedAt: null,
+      user: { emailVerifiedAt: USER.emailVerifiedAt },
+    },
+    {
+      userId: USER.id,
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: new Date(),
+      user: { emailVerifiedAt: USER.emailVerifiedAt },
+    },
+    {
+      userId: USER.id,
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+      user: { emailVerifiedAt: null },
+    },
   ])('rejects missing, mismatched, expired, or revoked sessions', async (row) => {
     prisma.session.findUnique.mockResolvedValue(row as never);
     await expect(
