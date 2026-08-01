@@ -16,15 +16,20 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ResendEmailVerificationDto } from './dto/resend-email-verification.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from './types/auth-user.type';
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request.type';
 import { E2eResetTokenDto } from '../../e2e/e2e.dto';
 import { assertTestEmail, E2eOnlyGuard } from '../../e2e/e2e-safety';
+import type { RegisterResult } from './auth.service';
 
 const FORGOT_SUCCESS =
   'If an account exists for this email, a reset link has been sent.';
+const VERIFICATION_SUCCESS =
+  'If an unverified account exists for this email, a verification link has been sent.';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -37,7 +42,7 @@ export class AuthController {
   async register(
     @Body() dto: RegisterDto,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<{ user: AuthUser; token: string }> {
+  ): Promise<RegisterResult> {
     return this.authService.register(dto, res);
   }
 
@@ -67,6 +72,33 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<void> {
     await this.authService.logout(req.sessionJti, res);
+  }
+
+  // ── Email verification ─────────────────────────────────────────────────────
+
+  @ApiOperation({ summary: 'Verify an email address and create a session' })
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  async verifyEmail(
+    @Body() dto: VerifyEmailDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ user: AuthUser; token: string }> {
+    return this.authService.verifyEmail(dto, res);
+  }
+
+  @ApiOperation({ summary: 'Request a new email-verification link' })
+  @Post('email-verification')
+  @HttpCode(HttpStatus.OK)
+  async resendEmailVerification(
+    @Body() dto: ResendEmailVerificationDto,
+  ): Promise<{ message: string; previewVerificationUrl?: string }> {
+    const result = await this.authService.resendEmailVerification(dto);
+    return {
+      message: VERIFICATION_SUCCESS,
+      ...(result.previewVerificationUrl !== undefined
+        ? { previewVerificationUrl: result.previewVerificationUrl }
+        : {}),
+    };
   }
 
   // ── Password reset ──────────────────────────────────────────────────────────

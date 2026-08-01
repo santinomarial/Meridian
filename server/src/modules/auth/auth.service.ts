@@ -311,7 +311,7 @@ export class AuthService {
         user.email,
         resetUrl,
       );
-      if (!mail.delivered) {
+      if (!mail.delivered && !this.isProduction) {
         return { previewResetUrl: mail.previewUrl };
       }
       return {};
