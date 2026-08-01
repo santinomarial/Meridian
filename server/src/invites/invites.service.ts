@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  BadRequestException,
   ForbiddenException,
   GoneException,
   Injectable,
@@ -46,6 +47,11 @@ export class InvitesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createInvite(data: CreateInviteData): Promise<CreatedInvite> {
+    if (data.role === WorkspaceRole.OWNER) {
+      throw new BadRequestException(
+        'OWNER cannot be granted through workspace invitations',
+      );
+    }
     const token = randomBytes(24).toString('base64url');
     const expiresAt = new Date(Date.now() + INVITE_TTL_DAYS * 86_400_000);
     const invite = await this.prisma.invite.create({
@@ -80,6 +86,7 @@ export class InvitesService {
     token: string,
     userId: string,
     userEmail: string,
+    emailVerifiedAt: Date | null,
   ): Promise<AcceptInviteResult> {
     const invite = await this.findByToken(token);
     if (invite === null) {
@@ -99,34 +106,61 @@ export class InvitesService {
         'This invite was sent to a different email address',
       );
     }
+    if (invite.email !== null && emailVerifiedAt === null) {
+      throw new ForbiddenException(
+        'Verify your email address before accepting an email-bound invite',
+      );
+    }
+    if (invite.role === WorkspaceRole.OWNER) {
+      throw new BadRequestException(
+        'Workspace ownership cannot be granted through an invite',
+      );
+    }
 
-    const existing = await this.prisma.workspaceMember.findUnique({
-      where: {
-        workspaceId_userId: { workspaceId: invite.workspaceId, userId },
+    const acceptedAt = new Date();
+    const { membership, alreadyMember } = await this.prisma.$transaction(
+      async (tx) => {
+        // This conditional write is the single-use claim. Exactly one
+        // concurrent transaction can change acceptedAt from null; every other
+        // contender rolls back without creating a membership.
+        const claimed = await tx.invite.updateMany({
+          where: {
+            id: invite.id,
+            acceptedAt: null,
+            expiresAt: { gt: acceptedAt },
+          },
+          data: { acceptedAt },
+        });
+        if (claimed.count !== 1) {
+          throw new GoneException('This invite has expired or already been used');
+        }
+
+        const existing = await tx.workspaceMember.findUnique({
+          where: {
+            workspaceId_userId: { workspaceId: invite.workspaceId, userId },
+          },
+        });
+        const membership = await tx.workspaceMember.upsert({
+          where: {
+            workspaceId_userId: { workspaceId: invite.workspaceId, userId },
+          },
+          update: {},
+          create: {
+            workspaceId: invite.workspaceId,
+            userId,
+            role: invite.role,
+          },
+        });
+        return { membership, alreadyMember: existing !== null };
       },
-    });
-
-    const membership =
-      existing ??
-      (await this.prisma.workspaceMember.create({
-        data: {
-          workspaceId: invite.workspaceId,
-          userId,
-          role: invite.role,
-        },
-      }));
-
-    await this.prisma.invite.update({
-      where: { id: invite.id },
-      data: { acceptedAt: new Date() },
-    });
+    );
 
     return {
       workspaceId: invite.workspaceId,
       workspaceName: invite.workspace.name,
       role: membership.role,
       membership,
-      alreadyMember: existing !== null,
+      alreadyMember,
     };
   }
 

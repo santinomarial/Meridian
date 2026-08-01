@@ -10,7 +10,6 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { WorkspaceRole } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import {
   ApiCreatedResponse,
@@ -91,12 +90,7 @@ export class InvitesController {
     @Param('workspaceId') workspaceId: string,
     @Body() dto: CreateInviteDto,
   ): Promise<InviteCreateResponse> {
-    const ws = await this.workspacesService.findById(workspaceId);
-    if (ws === null) throw new NotFoundException(`Workspace ${workspaceId} not found`);
-    const role = await this.workspacesService.getMemberRole(user.id, workspaceId);
-    if (role === null) throw new NotFoundException(`Workspace ${workspaceId} not found`);
-    if (role !== WorkspaceRole.OWNER)
-      throw new ForbiddenException('Only workspace owners can create invites');
+    const ws = await this.requireWorkspaceOwner(user.id, workspaceId);
 
     const { invite, token } = await this.invitesService.createInvite({
       workspaceId,
@@ -167,19 +161,7 @@ export class InvitesController {
     @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
   ): Promise<InviteListItem[]> {
-    const role = await this.workspacesService.getMemberRole(
-      user.id,
-      workspaceId,
-    );
-    if (role === null) {
-      throw new NotFoundException(`Workspace ${workspaceId} not found`);
-    }
-    // Invite tokens are bearer credentials. Returning them to editors/viewers
-    // lets a low-privilege member share a higher-privilege invite with another
-    // account, effectively escalating access. Only owners may enumerate them.
-    if (role !== WorkspaceRole.OWNER) {
-      throw new ForbiddenException('Only workspace owners can list invites');
-    }
+    await this.requireWorkspaceOwner(user.id, workspaceId);
     const invites = await this.invitesService.listForWorkspace(workspaceId);
     return invites.map((invite) => this.toListItem(invite));
   }
@@ -222,6 +204,7 @@ export class InvitesController {
       token,
       user.id,
       user.email,
+      user.emailVerifiedAt,
     );
     this.logger.info(
       { userId: user.id, workspaceId: result.workspaceId },
@@ -237,6 +220,24 @@ export class InvitesController {
 
   private buildInviteUrl(token: string): string {
     return `${this.clientOrigin}/invite/${token}`;
+  }
+
+  private async requireWorkspaceOwner(userId: string, workspaceId: string) {
+    const workspace = await this.workspacesService.findById(workspaceId);
+    if (workspace === null) {
+      throw new NotFoundException(`Workspace ${workspaceId} not found`);
+    }
+    if (
+      !(await this.workspacesService.canUserAccessWorkspace(userId, workspaceId))
+    ) {
+      // Preserve tenant privacy: non-members cannot distinguish a real
+      // workspace identifier from a missing one.
+      throw new NotFoundException(`Workspace ${workspaceId} not found`);
+    }
+    if (!(await this.workspacesService.canManageWorkspace(userId, workspaceId))) {
+      throw new ForbiddenException('Only workspace owners can manage invites');
+    }
+    return workspace;
   }
 
   private toListItem(invite: Invite): InviteListItem {
