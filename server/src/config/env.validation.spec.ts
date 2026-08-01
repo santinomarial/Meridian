@@ -21,8 +21,37 @@ describe('environment validation', () => {
       ...REQUIRED_ENV,
       NODE_ENV: 'production',
       E2E_TEST: 'false',
+      RESEND_API_KEY: 're_production_key',
+      MAIL_FROM: 'Meridian <accounts@example.com>',
     });
     expect(env.E2E_TEST).toBe('false');
+  });
+
+  it('requires email verification and a verified mail sender in production', () => {
+    expect(() =>
+      validateEnv({
+        ...REQUIRED_ENV,
+        NODE_ENV: 'production',
+        EMAIL_VERIFICATION_REQUIRED: 'false',
+      }),
+    ).toThrow(/EMAIL_VERIFICATION_REQUIRED cannot be disabled/);
+
+    expect(() =>
+      validateEnv({
+        ...REQUIRED_ENV,
+        NODE_ENV: 'production',
+        MAIL_FROM: 'Meridian <accounts@example.com>',
+      }),
+    ).toThrow(/RESEND_API_KEY is required/);
+
+    expect(() =>
+      validateEnv({
+        ...REQUIRED_ENV,
+        NODE_ENV: 'production',
+        RESEND_API_KEY: 're_production_key',
+        MAIL_FROM: 'Meridian <onboarding@resend.dev>',
+      }),
+    ).toThrow(/MAIL_FROM must use a verified production mail domain/);
   });
 
   it('rejects ENABLE_TERMINAL=true in production', () => {

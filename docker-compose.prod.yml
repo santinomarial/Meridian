@@ -70,8 +70,10 @@ services:
       TRUST_PROXY: "1"
       METRICS_ENABLED: "true"
       ENABLE_TERMINAL: "false"
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      MAIL_FROM: ${MAIL_FROM:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:?set RESEND_API_KEY for account verification}
+      MAIL_FROM: ${MAIL_FROM:?set MAIL_FROM to a sender on a verified domain}
+      EMAIL_VERIFICATION_REQUIRED: "true"
+      EMAIL_VERIFICATION_TTL_MINUTES: ${EMAIL_VERIFICATION_TTL_MINUTES:-1440}
     depends_on:
       migrate:
         condition: service_completed_successfully
