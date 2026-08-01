@@ -46,50 +46,38 @@ explanation documents own the rationale so it is not repeated here.
    final archive size are bounded, but ZIP construction is not streamed. See
    [Document model and save](../explanation/document-model-and-save.md).
 
-8. **Email identity is unverified.** Registration does not verify mailbox
-   control. Email-bound invites compare against the authenticated account's
-   stored email, so that binding is not proof of independently verified
-   identity. See
-   [Authentication and sessions](../explanation/authentication-and-sessions.md).
-
-9. **Invite URLs remain bearer credentials.** Tokens are hashed at rest,
-   single-use after accepted state is recorded, and email-bound when an email
-   is supplied. The raw token still appears in the creation response, URL, and
-   optional mail. The acceptance claim is not a conditional transaction, so
-   simultaneous redemption attempts are not strongly serialized. See
+8. **Invite URLs remain bearer credentials.** Tokens are hashed at rest and
+   conditionally claimed in the same transaction as membership creation, so
+   exactly one concurrent redemption can succeed. Email-bound acceptance also
+   requires a verified matching account. The raw token must still appear in
+   the creation response, URL, and optional mail, so those surfaces remain
+   sensitive. See
    [Authorization and roles](../explanation/authorization-and-roles.md).
 
-10. **The browser cookie model is same-site.** There is no separate CSRF token,
+9. **The browser cookie model is same-site.** There is no separate CSRF token,
     and a genuinely cross-site frontend/API deployment requires code and policy
     changes, not only CORS configuration. See
     [Authentication and sessions](../explanation/authentication-and-sessions.md).
 
-11. **Terminal projection is not replica-consistent storage.** Cross-replica
+10. **Terminal projection is not replica-consistent storage.** Cross-replica
     projection operations have no durable replay, acknowledgement, or global
     ordering. Re-materialization from the saved PostgreSQL checkpoint is the
     repair boundary. See
     [Terminal execution](../explanation/terminal-execution.md).
 
-12. **Operational cleanup is periodic and incomplete by design.** Expired or
-    revoked sessions, used or expired reset tokens, and accepted or expired
-    invites are purged hourly. Application retention does not define retention
-    for logs, backups, version history, or crash-left temporary files.
+11. **Operational cleanup is periodic and incomplete by design.** Expired or
+    revoked sessions, used or expired verification/reset tokens, and accepted
+    or expired invites are purged hourly. Application retention does not define
+    retention for logs, backups, version history, or crash-left temporary files.
 
-13. **Capacity evidence is narrow and historical.** The retained July 24, 2026
+12. **Capacity evidence is narrow and historical.** The retained July 24, 2026
     numbers cover one local API process and were not reverified during this
     rewrite. They omit WAN, TLS, load balancers, multi-replica load, failure
     injection, and soak behavior. See
     [Performance baseline](../explanation/performance-baseline.md).
 
-14. **Production API documentation is intentionally absent.** Swagger is
+13. **Production API documentation is intentionally absent.** Swagger is
     mounted only outside production. Consumers need a separately generated or
     controlled reference artifact if production API discoverability is a
     requirement. See
     [Server architecture](../explanation/server-architecture.md).
-
-15. **Owner authorization is not represented uniformly.** Workspace and
-    member-management operations require both `Workspace.ownerId` and an
-    `OWNER` membership, while invite creation/listing check only membership
-    role. Generic member operations reject owner-role and canonical-owner
-    memberships; ownership cannot be transferred through the API. See
-    [Authorization and roles](../explanation/authorization-and-roles.md).

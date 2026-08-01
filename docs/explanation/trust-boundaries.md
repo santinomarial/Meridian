@@ -36,9 +36,10 @@ channel can be namespaced with `REDIS_KEY_PREFIX`; logical Redis database
 numbers do not isolate Pub/Sub.
 
 **Mail provider.** Resend receives recipient addresses and bearer-action URLs.
-Invite and reset URLs must therefore be treated as secrets in mail, browser
-history, analytics, and logs. The application redacts invite and reset token
-path segments from its request/error logging.
+Verification, invite, and reset URLs must therefore be treated as secrets in
+mail, browser history, analytics, and logs. The application redacts their token
+path segments from its request/error logging. Production startup requires a
+provider key and a sender on a verified custom domain.
 
 **Terminal host boundary.** The temporary projection and reduced child
 environment are not a sandbox. A PTY runs as the API's operating-system user

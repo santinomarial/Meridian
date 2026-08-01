@@ -1,10 +1,10 @@
 # Server configuration
 
-`server/src/config/env.validation.ts` validates the following 25 application
+`server/src/config/env.validation.ts` validates the following 27 application
 variables at startup. Numeric values marked positive must be integers greater
 than zero.
 
-## Application environment (25)
+## Application environment (27)
 
 | Variable | Default / requirement | Valid values and use |
 |---|---|---|
@@ -29,8 +29,10 @@ than zero.
 | `REDIS_REQUIRED` | `false` | Exactly `true` makes Redis a readiness requirement |
 | `REDIS_KEY_PREFIX` | empty | Trimmed; a non-empty value is normalized to end in `:` |
 | `METRICS_ENABLED` | `true` | Exactly `true` exposes `/metrics`; other strings disable it |
-| `RESEND_API_KEY` | Unset | Trimmed; blank becomes unset |
-| `MAIL_FROM` | `Meridian <no-reply@meridian.local>` | Sender used by Resend |
+| `RESEND_API_KEY` | Unset outside production; required in production | Trimmed; blank becomes unset |
+| `MAIL_FROM` | `Meridian <no-reply@meridian.local>` outside production; required in production | Sender used by Resend; production requires a verified custom domain rather than `@resend.dev` or `@meridian.local` |
+| `EMAIL_VERIFICATION_REQUIRED` | `true` in production; `false` otherwise | `true` or `false`; production explicitly rejects `false` |
+| `EMAIL_VERIFICATION_TTL_MINUTES` | `1440` | Positive email-verification-token lifetime |
 | `FORGOT_PASSWORD_TTL_MINUTES` | `30` | Positive reset-token lifetime |
 | `E2E_TEST` | `false` | `true` or `false`; `true` is rejected in production |
 
@@ -38,6 +40,10 @@ than zero.
 value directly from `process.env`. In development, CORS is the fixed allowlist
 for `localhost` and `127.0.0.1` ports 5173–5175. In test and production, the
 allowed origin is exactly `CLIENT_ORIGIN`.
+
+Production startup fails when verification is disabled, mail credentials are
+missing, or the sender is not on a custom domain. This makes mailbox ownership
+verification a deployment invariant rather than an optional runtime feature.
 
 ## Seed scope
 

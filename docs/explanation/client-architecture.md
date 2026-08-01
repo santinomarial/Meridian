@@ -28,10 +28,11 @@ flowchart TD
 
 ## Routing and startup
 
-The application has landing, forgot-password, workspace, compatibility session,
-invite, and reset-password routes. Workspace, invite, and reset pages are
-lazy-loaded. Unknown client routes return to the landing page, while direct
-deep links depend on the static host returning `index.html`.
+The application has landing, forgot-password, email-verification, workspace,
+compatibility session, invite, and reset-password routes. Workspace,
+verification, invite, and reset pages are lazy-loaded. Unknown client routes
+return to the landing page, while direct deep links depend on the static host
+returning `index.html`.
 
 Workspace startup checks the current session, lists the user's workspaces,
 selects the requested or default workspace, loads membership roles, and then

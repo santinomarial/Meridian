@@ -17,7 +17,7 @@ client/
 |   |-- data/                  Legacy mock data (not activated by runtime loading failures)
 |   |-- hooks/                 Workspace, file, save, realtime, and terminal flows
 |   |-- lib/                   HTTP, Socket.IO, Yjs, Monaco, import/export helpers
-|   |-- pages/                 Landing, workspace, invite, reset-password routes
+|   |-- pages/                 Landing, workspace, invite, verify/reset-password routes
 |   |-- store/                 Zustand workspace store
 |   |-- types/                 Client domain types
 |   |-- App.tsx                Browser routes and lazy page boundaries

@@ -75,21 +75,23 @@ Required Compose inputs:
 | `DOMAIN` | Caddy public hostname |
 | `ACME_EMAIL` | Caddy ACME contact; the committed Caddyfile always emits this directive |
 | `LB_COOKIE_SECRET` | Caddy affinity-cookie signing |
+| `RESEND_API_KEY` | Production email provider credential |
+| `MAIL_FROM` | Sender on a verified custom domain |
 
 Optional/defaulted Compose inputs:
 
 | Variable | Default |
 |---|---|
 | `REDIS_KEY_PREFIX` | `prod:` |
-| `RESEND_API_KEY` | empty |
-| `MAIL_FROM` | empty (passed as an explicit empty string) |
+| `EMAIL_VERIFICATION_TTL_MINUTES` | `1440` |
 | `VITE_API_URL`, `VITE_SOCKET_URL` | empty |
 | `CSP_CONNECT_SRC_EXTRA` | empty |
 | `API_UPSTREAMS` | `api:3000` |
 
 The API service fixes `NODE_ENV=production`, `PORT=3000`,
 `REDIS_REQUIRED=true`, `TRUST_PROXY=1`, `METRICS_ENABLED=true`, and
-`ENABLE_TERMINAL=false`.
+`ENABLE_TERMINAL=false`. It also fixes `EMAIL_VERIFICATION_REQUIRED=true`;
+production configuration validation rejects attempts to disable it.
 
 ## Caddy routing
 

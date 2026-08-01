@@ -35,12 +35,13 @@ Pino replaces these structured paths with `[REDACTED]`:
 The request serializer also redacts bearer values in:
 
 - `/invites/:token`
+- `/verify-email/:token`
 - `/reset-password/:token`
 - `token` and `inviteToken` query parameters
 
 Redaction covers the configured request fields and URL patterns, not arbitrary
-application log arguments. Do not log DTOs, secrets, invitation URLs, reset
-URLs, cookies, or tokens directly.
+application log arguments. Do not log DTOs, secrets, invitation, verification,
+or reset URLs, cookies, or tokens directly.
 
 For HTTP error fields, see the [HTTP API](http-api.md#error-envelope). For the
 deployment trust boundary, see
