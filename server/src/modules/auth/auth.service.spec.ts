@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { mockDeep, type DeepMockProxy } from 'jest-mock-extended';
@@ -10,6 +15,7 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { RealtimeAuthorizationService } from '../realtime-authorization/realtime-authorization.service';
+import type { AppConfig } from '../../config/configuration.type';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -35,7 +41,7 @@ function makeRes(): DeepMockProxy<Response> {
   return mockDeep<Response>();
 }
 
-function makeService() {
+function makeService(configOverrides: Partial<AppConfig> = {}) {
   const prisma = mockDeep<PrismaService>();
   const transaction = mockDeep<Prisma.TransactionClient>();
   const jwtService = mockDeep<JwtService>();
@@ -58,8 +64,12 @@ function makeService() {
   } as never);
 
   configService.getOrThrow.mockReturnValue({
+    nodeEnv: 'test',
     clientOrigin: 'http://localhost:5173',
     forgotPasswordTtlMinutes: 30,
+    emailVerificationTtlMinutes: 1440,
+    requireEmailVerification: false,
+    ...configOverrides,
   } as never);
 
   prisma.session.create.mockResolvedValue({} as never);
@@ -167,6 +177,48 @@ describe('AuthService', () => {
         expect.objectContaining({ httpOnly: true }),
       );
     });
+
+    it('creates a one-time verification token and withholds the session when verification is required', async () => {
+      const { service, prisma, transaction, mailService } = makeService({
+        nodeEnv: 'production',
+        requireEmailVerification: true,
+      });
+      const res = makeRes();
+      const unverifiedUser = { ...BASE_USER, emailVerifiedAt: null };
+
+      prisma.user.findUnique.mockResolvedValue(null);
+      transaction.user.create.mockResolvedValue(unverifiedUser);
+      transaction.emailVerificationToken.create.mockResolvedValue({} as never);
+      mailService.sendEmailVerificationEmail.mockResolvedValue({ delivered: true });
+
+      const result = await service.register(
+        { email: ' Alice@Example.com ', password: STRONG_PASSWORD, displayName: 'Alice' },
+        res as never,
+      );
+
+      expect(result).toMatchObject({
+        user: { email: 'alice@example.com', emailVerifiedAt: null },
+        verificationRequired: true,
+        emailDelivered: true,
+      });
+      expect(transaction.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          email: 'alice@example.com',
+          emailVerifiedAt: null,
+        }),
+      });
+      const verificationUrl = mailService.sendEmailVerificationEmail.mock.calls[0]![2];
+      const rawToken = verificationUrl.split('/').pop()!;
+      expect(transaction.emailVerificationToken.create).toHaveBeenCalledWith({
+        data: {
+          userId: BASE_USER.id,
+          tokenHash: createHash('sha256').update(rawToken).digest('hex'),
+          expiresAt: expect.any(Date) as Date,
+        },
+      });
+      expect(prisma.session.create).not.toHaveBeenCalled();
+      expect(res.cookie).not.toHaveBeenCalled();
+    });
   });
 
   describe('login', () => {
@@ -208,6 +260,104 @@ describe('AuthService', () => {
       await expect(
         service.login({ email: 'alice@example.com', password: 'wrongpassword' }, res as never),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('rejects correct credentials until the email has been verified', async () => {
+      const { service, prisma } = makeService();
+      const res = makeRes();
+      const realHash = await argon2.hash(STRONG_PASSWORD, {
+        type: argon2.argon2id,
+      });
+      prisma.user.findUnique.mockResolvedValue({
+        ...BASE_USER,
+        passwordHash: realHash,
+        emailVerifiedAt: null,
+      });
+
+      await expect(
+        service.login(
+          { email: 'alice@example.com', password: STRONG_PASSWORD },
+          res as never,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.session.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('email verification', () => {
+    it('atomically consumes the token, verifies the user, and creates a session', async () => {
+      const { service, prisma, transaction } = makeService();
+      const res = makeRes();
+      const rawToken = 'verify-raw-token';
+      const unverifiedUser = { ...BASE_USER, emailVerifiedAt: null };
+      prisma.emailVerificationToken.findUnique.mockResolvedValue({
+        id: 'verify-1',
+        userId: BASE_USER.id,
+        tokenHash: createHash('sha256').update(rawToken).digest('hex'),
+        expiresAt: new Date(Date.now() + 60_000),
+        usedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        user: unverifiedUser,
+      } as never);
+      transaction.emailVerificationToken.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 2 });
+      transaction.user.update.mockResolvedValue(BASE_USER);
+
+      const result = await service.verifyEmail({ token: rawToken }, res as never);
+
+      expect(transaction.emailVerificationToken.updateMany).toHaveBeenNthCalledWith(
+        1,
+        {
+          where: {
+            id: 'verify-1',
+            userId: BASE_USER.id,
+            usedAt: null,
+            expiresAt: { gt: expect.any(Date) as Date },
+          },
+          data: { usedAt: expect.any(Date) as Date },
+        },
+      );
+      expect(transaction.user.update).toHaveBeenCalledWith({
+        where: { id: BASE_USER.id },
+        data: { emailVerifiedAt: expect.any(Date) as Date },
+      });
+      expect(result.user.emailVerifiedAt).not.toBeNull();
+      expect(prisma.session.create).toHaveBeenCalledTimes(1);
+      expect(res.cookie).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a verification token lost to a concurrent claim', async () => {
+      const { service, prisma, transaction } = makeService();
+      const res = makeRes();
+      prisma.emailVerificationToken.findUnique.mockResolvedValue({
+        id: 'verify-1',
+        userId: BASE_USER.id,
+        tokenHash: 'hash',
+        expiresAt: new Date(Date.now() + 60_000),
+        usedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        user: { ...BASE_USER, emailVerifiedAt: null },
+      } as never);
+      transaction.emailVerificationToken.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.verifyEmail({ token: 'verify-raw-token' }, res as never),
+      ).rejects.toThrow(BadRequestException);
+      expect(transaction.user.update).not.toHaveBeenCalled();
+      expect(prisma.session.create).not.toHaveBeenCalled();
+    });
+
+    it('does not reveal whether a resend target exists', async () => {
+      const { service, prisma, mailService } = makeService();
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resendEmailVerification({ email: 'missing@example.com' }),
+      ).resolves.toEqual({});
+      expect(mailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
     });
   });
 
