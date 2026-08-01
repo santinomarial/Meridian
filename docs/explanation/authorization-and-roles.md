@@ -20,16 +20,11 @@ Workspace ownership is represented twice on purpose:
 - `Workspace.ownerId` names the canonical owner; and
 - the matching membership has role `OWNER`.
 
-Workspace rename, workspace deletion, and member-management checks require both
-facts. Generic membership APIs cannot assign, demote, or remove an `OWNER` or
-the canonical owner's membership. The canonical owner must use the workspace
-deletion endpoint; there is no leave-with-transfer operation.
-
-Invite creation and listing currently check the caller's membership role, not
-`Workspace.ownerId`. A malformed or legacy extra `OWNER` membership can
-therefore manage invites even though it cannot rename the workspace or manage
-members. This inconsistency is tracked in
-[Known limitations](../reference/known-limitations.md).
+Workspace rename, deletion, member management, and invite management all call
+the same canonical management check and require both facts. Generic membership
+APIs cannot assign, demote, or remove an `OWNER` or the canonical owner's
+membership. The canonical owner must use the workspace deletion endpoint;
+there is no leave-with-transfer operation.
 
 Private-resource lookups generally return 404 to non-members so workspace,
 document, version, and profile identifiers are not useful enumeration oracles.
@@ -42,22 +37,24 @@ audits remove passive room or terminal access if a message was missed.
 
 ## Invitation authority
 
-Members with role `OWNER` can create or list invitations. An invite can grant
+Only the canonical owner can create or list invitations. An invite can grant
 `EDITOR` or `VIEWER`, never `OWNER`. Its random raw token is a bearer credential
 returned only at creation; PostgreSQL stores a SHA-256 hash.
 
 Acceptance enforces three independent constraints:
 
 1. the invite has not expired;
-2. `acceptedAt` is still null, normally making the token single-use; and
+2. an atomic conditional update changes `acceptedAt` from null exactly once;
 3. when an invite email is present, it matches the authenticated account email
-   case-insensitively.
+   case-insensitively; and
+4. an email-bound invite requires that account email to be verified.
 
-The acceptance check and update are not conditionally serialized, so concurrent
-redemptions are not a strong single-use guarantee. An email-less invite is
-transferable until acceptance is recorded. An email-bound invite is still only
-as strong as Meridian's unverified account email model; see
-[Authentication and sessions](authentication-and-sessions.md).
+The claim and membership upsert run in one transaction. If two users submit the
+same token concurrently, one claim succeeds and the other returns Gone without
+creating a membership. An email-less invite remains transferable until the
+winning acceptance transaction records the claim. See
+[Authentication and sessions](authentication-and-sessions.md) for verified
+identity and session behavior.
 
 ## User data exposure
 
@@ -65,8 +62,8 @@ Authenticated users can read their own profile. A user who shares a workspace
 with the target can read the target's profile fields but not their email.
 Unrelated users receive 404. Account deletion removes owned workspaces before
 deleting the user because the owner relation is intentionally restrictive;
-dependent memberships, sessions, tokens, invites, documents, and versions then
-follow the schema's cascade or set-null rules.
+dependent memberships, sessions, verification/reset tokens, invites, documents,
+and versions then follow the schema's cascade or set-null rules.
 
 The underlying ownership and relation constraints are shown in
 [Data model](data-model.md). Realtime enforcement details are in

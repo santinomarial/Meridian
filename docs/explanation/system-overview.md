@@ -14,7 +14,7 @@ flowchart LR
     API["NestJS API<br/>REST + Socket.IO"]
     PG[("PostgreSQL<br/>durable application and CRDT state")]
     Redis[("Redis<br/>optional coordination")]
-    Mail["Resend<br/>optional mail"]
+    Mail["Resend<br/>required for production identity"]
     Host["Host PTY + temporary files<br/>optional terminal"]
 
     Browser -->|"static assets"| Static

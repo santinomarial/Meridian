@@ -10,6 +10,7 @@ erDiagram
     USER ||--o{ WORKSPACE_MEMBER : joins
     USER ||--o{ SESSION : authenticates
     USER ||--o{ PASSWORD_RESET_TOKEN : resets
+    USER ||--o{ EMAIL_VERIFICATION_TOKEN : verifies
     USER ||--o{ INVITE : sends
     USER o|--o{ DOCUMENT_VERSION : authors
     WORKSPACE ||--o{ WORKSPACE_MEMBER : contains
@@ -24,6 +25,7 @@ erDiagram
     USER {
         string id PK
         string email UK
+        datetime emailVerifiedAt
         string passwordHash
         string displayName
         string avatarUrl
@@ -98,12 +100,20 @@ erDiagram
         datetime expiresAt
         datetime usedAt
     }
+    EMAIL_VERIFICATION_TOKEN {
+        string id PK
+        string userId FK
+        string tokenHash UK
+        datetime expiresAt
+        datetime usedAt
+    }
 ```
 
-Mermaid does not express all nullability above. Password hashes and avatars can
-be absent; invite email and acceptance time are optional; document parent,
-language, and content can be null; version author/message, session revocation,
-reset usage, and legacy update IDs can also be null.
+Mermaid does not express all nullability above. Email verification time,
+password hashes, and avatars can be absent; invite email and acceptance time
+are optional; document parent, language, and content can be null; version
+author/message, session revocation, verification/reset usage, and legacy update
+IDs can also be null.
 
 ## Invariants
 
@@ -127,7 +137,7 @@ workspace-indexed versions. Deleting a document cascades through descendants,
 versions, updates, and snapshots. Deleting a version author preserves history
 by setting `createdById` to null. User-owned workspaces use restrictive owner
 semantics and are explicitly deleted as part of account deletion before the
-user row is removed.
+user row is removed. Verification and reset tokens cascade with their user.
 
 Why the three text-bearing model families exist is explained in
 [Document model and save](document-model-and-save.md). Their generation,

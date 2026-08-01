@@ -26,8 +26,10 @@ See [health and metrics](health-and-metrics.md) for exact fields and exposure.
 
 | Method and path | Auth | Body | Success |
 |---|---|---|---|
-| `POST /auth/register` | Public | `email` (email), `password` (policy), `displayName` (non-empty string) | 201; creates session, sets cookie, returns user + token |
-| `POST /auth/login` | Public | `email`, `password` | 200; creates session, sets cookie, returns user + token |
+| `POST /auth/register` | Public | `email` (email), `password` (policy), `displayName` (non-empty string) | 201; production returns a pending-verification result without a session; trusted development/test mode returns user + token |
+| `POST /auth/verify-email` | Public bearer token | `token` | 200; atomically verifies the email, creates a session, sets cookie, returns user + token |
+| `POST /auth/email-verification` | Public | `email` | Generic 200; development fallback may include `previewVerificationUrl` |
+| `POST /auth/login` | Public | `email`, `password` | 200 for a verified account; creates session, sets cookie, returns user + token |
 | `GET /auth/me` | Session | — | Current authenticated user |
 | `POST /auth/logout` | Session | — | 204; revokes current session and clears cookie |
 | `POST /auth/forgot-password` | Public | `email` | Generic 200 message; development fallback may include `previewResetUrl` |
@@ -35,6 +37,9 @@ See [health and metrics](health-and-metrics.md) for exact fields and exposure.
 
 Password policy: at least eight characters, one uppercase, one lowercase, one
 number, and one non-alphanumeric character.
+
+Production sessions require `User.emailVerifiedAt`. Verification and resend
+tokens are one-time bearer credentials stored only as SHA-256 hashes.
 
 ## Users
 
@@ -113,10 +118,14 @@ and is not configurable.
 
 | Method and path | Auth/role | Body | Result |
 |---|---|---|---|
-| `POST /workspaces/:workspaceId/invites` | Owner | `role` (`EDITOR` or `VIEWER`), optional email | 201 invite and raw share URL; delivery status fields may be present |
-| `GET /workspaces/:workspaceId/invites` | Owner | — | Invites without raw tokens |
+| `POST /workspaces/:workspaceId/invites` | Canonical owner | `role` (`EDITOR` or `VIEWER`), optional email | 201 invite and raw share URL; delivery status fields may be present |
+| `GET /workspaces/:workspaceId/invites` | Canonical owner | — | Invites without raw tokens |
 | `GET /invites/:token` | Public bearer token | — | Invite metadata |
 | `POST /invites/:token/accept` | Session | — | Resulting membership |
+
+Acceptance conditionally claims the token and upserts the membership in one
+transaction. Email-bound invites also require the authenticated account email
+to be verified.
 
 ## E2E-only endpoints
 
