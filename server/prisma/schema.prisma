@@ -36,13 +36,13 @@ model User {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  ownedWorkspaces         Workspace[]             @relation("WorkspaceOwner")
+  ownedWorkspaces         Workspace[]              @relation("WorkspaceOwner")
   memberships             WorkspaceMember[]
   sessions                Session[]
   passwordResetTokens     PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
-  sentInvites             Invite[]                @relation("InviteSender")
-  documentVersions        DocumentVersion[]       @relation("VersionAuthor")
+  sentInvites             Invite[]                 @relation("InviteSender")
+  documentVersions        DocumentVersion[]        @relation("VersionAuthor")
 }
 
 model Workspace {
@@ -92,24 +92,24 @@ model Invite {
 }
 
 model Document {
-  id          String       @id @default(cuid())
-  workspaceId String
-  parentId    String?
-  type        DocumentType
-  path        String
-  name        String
-  language    String?
-  content     String?
+  id             String       @id @default(cuid())
+  workspaceId    String
+  parentId       String?
+  type           DocumentType
+  path           String
+  name           String
+  language       String?
+  content        String?
   // CRDT lineage counter. A version restore replaces the Yjs history with a
   // brand-new lineage and increments this under the document advisory lock.
   // Persistence writes tagged with a different generation are rejected
   // (restore fencing), so a stale replica can never resurrect pre-restore
   // state.
-  crdtGeneration Int       @default(0)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  crdtGeneration Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
-  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   parent    Document?         @relation("DocumentTree", fields: [parentId], references: [id], onDelete: Cascade)
   children  Document[]        @relation("DocumentTree")
   updates   DocumentUpdate[]

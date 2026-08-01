@@ -140,7 +140,7 @@ describe('AuthService', () => {
 
       expect(result.user.id).toBe('user-1');
       expect(result.user.email).toBe('alice@example.com');
-      expect(result.token).toBe(MOCK_TOKEN);
+      expect(result).toHaveProperty('token', MOCK_TOKEN);
       expect(Object.keys(result.user)).not.toContain('passwordHash');
       expect(prisma.session.create).toHaveBeenCalledTimes(1);
     });
