@@ -25,6 +25,7 @@ export class MailService {
   private readonly mailFrom: string;
   private readonly isDev: boolean;
   private readonly resetTtlMinutes: number;
+  private readonly verificationTtlMinutes: number;
 
   constructor(
     configService: ConfigService,
@@ -36,6 +37,7 @@ export class MailService {
     this.mailFrom = config.mailFrom;
     this.isDev = config.nodeEnv === "development";
     this.resetTtlMinutes = config.forgotPasswordTtlMinutes;
+    this.verificationTtlMinutes = config.emailVerificationTtlMinutes ?? 1440;
 
     if (this.resendApiKey && isResendTestingFrom(this.mailFrom)) {
       this.logger.warn(
@@ -53,6 +55,29 @@ export class MailService {
       text: buildResetEmailText(resetUrl, this.resetTtlMinutes),
       previewUrl: resetUrl,
       action: "password-reset",
+    });
+  }
+
+  async sendEmailVerificationEmail(
+    to: string,
+    displayName: string,
+    verificationUrl: string,
+  ): Promise<MailSendResult> {
+    return this.send({
+      to,
+      subject: "Verify your Meridian email address",
+      html: buildVerificationEmailHtml(
+        displayName,
+        verificationUrl,
+        this.verificationTtlMinutes,
+      ),
+      text: buildVerificationEmailText(
+        displayName,
+        verificationUrl,
+        this.verificationTtlMinutes,
+      ),
+      previewUrl: verificationUrl,
+      action: "email-verification",
     });
   }
 
@@ -155,6 +180,26 @@ function buildResetEmailText(resetUrl: string, ttlMinutes: number): string {
   ].join('\n');
 }
 
+function buildVerificationEmailText(
+  displayName: string,
+  verificationUrl: string,
+  ttlMinutes: number,
+): string {
+  return [
+    `Hi ${displayName},`,
+    '',
+    'Verify this email address to activate your Meridian account.',
+    '',
+    `Verify your email here:\n${verificationUrl}`,
+    '',
+    `This link expires in ${formatDuration(ttlMinutes)}.`,
+    '',
+    'If you did not create this account, you can safely ignore this email.',
+    '',
+    '— The Meridian Team',
+  ].join('\n');
+}
+
 function buildInviteEmailText(
   inviterName: string,
   workspaceName: string,
@@ -202,6 +247,49 @@ function buildInviteEmailHtml(
   </table>
 </body>
 </html>`;
+}
+
+function buildVerificationEmailHtml(
+  displayName: string,
+  verificationUrl: string,
+  ttlMinutes: number,
+): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="font-family:system-ui,sans-serif;background:#0d0d0f;color:#e5e5ef;margin:0;padding:0">
+  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:40px auto">
+    <tr><td style="background:#1a1a24;border:1px solid #2e2e42;border-radius:12px;padding:40px">
+      <h1 style="font-size:20px;font-weight:600;margin:0 0 16px;color:#e5e5ef">Verify your email address</h1>
+      <p style="color:#9a9ab8;margin:0 0 24px;line-height:1.6">
+        Hi ${escapeHtml(displayName)}. Confirm that this email address belongs to you to activate your Meridian account.
+      </p>
+      <a href="${verificationUrl}"
+         style="display:inline-block;background:#6d59f0;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600">
+        Verify Email
+      </a>
+      <p style="color:#6b6b8a;font-size:13px;margin:24px 0 0;line-height:1.5">
+        This link expires in <strong style="color:#9a9ab8">${formatDuration(ttlMinutes)}</strong>.<br>
+        If you did not create this account, you can safely ignore this email.
+      </p>
+      <hr style="border:none;border-top:1px solid #2e2e42;margin:24px 0">
+      <p style="color:#6b6b8a;font-size:12px;margin:0">The Meridian Team</p>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+function formatDuration(minutes: number): string {
+  if (minutes % 1440 === 0) {
+    const days = minutes / 1440;
+    return `${days} ${days === 1 ? 'day' : 'days'}`;
+  }
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  }
+  return `${minutes} minutes`;
 }
 
 function escapeHtml(value: string): string {
