@@ -31,8 +31,10 @@ export interface AppConfig {
   redisKeyPrefix: string;
   /** Expose Prometheus scrape endpoint at GET /metrics. */
   metricsEnabled: boolean;
-  // Mail / password-reset
+  // Mail / account recovery and verification
   resendApiKey: string | undefined;
   mailFrom: string;
   forgotPasswordTtlMinutes: number;
+  requireEmailVerification: boolean;
+  emailVerificationTtlMinutes: number;
 }

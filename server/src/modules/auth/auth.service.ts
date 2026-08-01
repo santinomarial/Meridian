@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -11,13 +12,15 @@ import * as argon2 from 'argon2';
 import { randomBytes, createHash } from 'crypto';
 import { randomUUID } from 'crypto';
 import type { Response } from 'express';
-import type { User } from '@prisma/client';
+import { Prisma, type User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthUser, JwtPayload } from './types/auth-user.type';
 import type { RegisterDto } from './dto/register.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { ForgotPasswordDto } from './dto/forgot-password.dto';
 import type { ResetPasswordDto } from './dto/reset-password.dto';
+import type { VerifyEmailDto } from './dto/verify-email.dto';
+import type { ResendEmailVerificationDto } from './dto/resend-email-verification.dto';
 import { MailService } from '../mail/mail.service';
 import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
@@ -29,6 +32,9 @@ import { assertTestEmail } from '../../e2e/e2e-safety';
 export class AuthService {
   private readonly clientOrigin: string;
   private readonly resetTokenTtlMs: number;
+  private readonly verificationTokenTtlMs: number;
+  private readonly requireEmailVerification: boolean;
+  private readonly isProduction: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -42,14 +48,19 @@ export class AuthService {
     const config = this.configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
     this.clientOrigin = config.clientOrigin;
     this.resetTokenTtlMs = config.forgotPasswordTtlMinutes * 60 * 1_000;
+    this.verificationTokenTtlMs =
+      (config.emailVerificationTtlMinutes ?? 1440) * 60 * 1_000;
+    this.requireEmailVerification = config.requireEmailVerification ?? false;
+    this.isProduction = config.nodeEnv === 'production';
   }
 
   async register(
     dto: RegisterDto,
     res: Response,
-  ): Promise<{ user: AuthUser; token: string }> {
+  ): Promise<RegisterResult> {
+    const email = normalizeEmail(dto.email);
     const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+      where: { email },
     });
     if (existing !== null) {
       throw new ConflictException('Email already in use');
@@ -59,9 +70,68 @@ export class AuthService {
       type: argon2.argon2id,
     });
 
-    const user = await this.prisma.user.create({
-      data: { email: dto.email, displayName: dto.displayName, passwordHash },
-    });
+    if (this.requireEmailVerification) {
+      const { rawToken, tokenHash, expiresAt } = this.makeVerificationToken();
+      let user: User;
+      try {
+        user = await this.prisma.$transaction(async (tx) => {
+          const created = await tx.user.create({
+            data: {
+              email,
+              displayName: dto.displayName.trim(),
+              passwordHash,
+              emailVerifiedAt: null,
+            },
+          });
+          await tx.emailVerificationToken.create({
+            data: { userId: created.id, tokenHash, expiresAt },
+          });
+          return created;
+        });
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002'
+        ) {
+          throw new ConflictException('Email already in use');
+        }
+        throw err;
+      }
+
+      const verificationUrl = this.buildVerificationUrl(rawToken);
+      const delivery = await this.deliverVerificationEmail(user, verificationUrl);
+      this.logger.info({ userId: user.id }, 'Unverified user registered');
+      return {
+        user: toAuthUser(user),
+        verificationRequired: true,
+        emailDelivered: delivery.delivered,
+        ...(delivery.previewVerificationUrl !== undefined
+          ? { previewVerificationUrl: delivery.previewVerificationUrl }
+          : {}),
+      };
+    }
+
+    let user: User;
+    try {
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          displayName: dto.displayName.trim(),
+          passwordHash,
+          // Development and test environments can explicitly trust addresses
+          // so local workflows do not depend on an external mail provider.
+          emailVerifiedAt: new Date(),
+        },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new ConflictException('Email already in use');
+      }
+      throw err;
+    }
 
     const token = await this.createSession(user, res);
     this.logger.info({ userId: user.id }, 'User registered');
@@ -73,7 +143,7 @@ export class AuthService {
     res: Response,
   ): Promise<{ user: AuthUser; token: string }> {
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+      where: { email: normalizeEmail(dto.email) },
     });
 
     // Constant-time path: always run hash verification even when user is null
@@ -86,6 +156,11 @@ export class AuthService {
 
     if (user === null || user.passwordHash === null || !valid) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+    if (user.emailVerifiedAt === null) {
+      throw new ForbiddenException(
+        'Email verification required. Request a new verification link if needed.',
+      );
     }
 
     const token = await this.createSession(user, res);
@@ -104,6 +179,96 @@ export class AuthService {
   }
 
   // ---------------------------------------------------------------------------
+  // Email verification
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Sends a fresh verification link without exposing whether the account
+   * exists or is already verified.
+   */
+  async resendEmailVerification(
+    dto: ResendEmailVerificationDto,
+  ): Promise<{ previewVerificationUrl?: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizeEmail(dto.email) },
+    });
+    if (user === null || user.emailVerifiedAt !== null) return {};
+
+    const { rawToken, tokenHash, expiresAt } = this.makeVerificationToken();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.emailVerificationToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      await tx.emailVerificationToken.create({
+        data: { userId: user.id, tokenHash, expiresAt },
+      });
+    });
+
+    const delivery = await this.deliverVerificationEmail(
+      user,
+      this.buildVerificationUrl(rawToken),
+    );
+    return delivery.previewVerificationUrl === undefined
+      ? {}
+      : { previewVerificationUrl: delivery.previewVerificationUrl };
+  }
+
+  /** Atomically consumes a verification token before issuing a session. */
+  async verifyEmail(
+    dto: VerifyEmailDto,
+    res: Response,
+  ): Promise<{ user: AuthUser; token: string }> {
+    const tokenHash = hashToken(dto.token);
+    const tokenRecord = await this.prisma.emailVerificationToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+    const verifiedAt = new Date();
+
+    if (
+      tokenRecord === null ||
+      tokenRecord.usedAt !== null ||
+      tokenRecord.expiresAt <= verifiedAt
+    ) {
+      throw new BadRequestException('Verification link is invalid or expired.');
+    }
+
+    const user = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.emailVerificationToken.updateMany({
+        where: {
+          id: tokenRecord.id,
+          userId: tokenRecord.userId,
+          usedAt: null,
+          expiresAt: { gt: verifiedAt },
+        },
+        data: { usedAt: verifiedAt },
+      });
+      if (claimed.count !== 1) {
+        throw new BadRequestException('Verification link is invalid or expired.');
+      }
+
+      const verifiedUser = await tx.user.update({
+        where: { id: tokenRecord.userId },
+        data: { emailVerifiedAt: verifiedAt },
+      });
+      await tx.emailVerificationToken.updateMany({
+        where: {
+          userId: tokenRecord.userId,
+          id: { not: tokenRecord.id },
+          usedAt: null,
+        },
+        data: { usedAt: verifiedAt },
+      });
+      return verifiedUser;
+    });
+
+    const token = await this.createSession(user, res);
+    this.logger.info({ userId: user.id }, 'Email verified');
+    return { user: toAuthUser(user), token };
+  }
+
+  // ---------------------------------------------------------------------------
   // Password reset
   // ---------------------------------------------------------------------------
 
@@ -117,7 +282,7 @@ export class AuthService {
     dto: ForgotPasswordDto,
   ): Promise<{ previewResetUrl?: string }> {
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+      where: { email: normalizeEmail(dto.email) },
     });
 
     if (user === null) {
@@ -132,7 +297,7 @@ export class AuthService {
     });
 
     const rawToken = randomBytes(32).toString('hex');
-    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const tokenHash = hashToken(rawToken);
     const expiresAt = new Date(Date.now() + this.resetTokenTtlMs);
 
     await this.prisma.passwordResetToken.create({
@@ -167,7 +332,7 @@ export class AuthService {
    * beyond the generic message is returned to the caller.
    */
   async resetPassword(dto: ResetPasswordDto): Promise<void> {
-    const tokenHash = createHash('sha256').update(dto.token).digest('hex');
+    const tokenHash = hashToken(dto.token);
 
     const tokenRecord = await this.prisma.passwordResetToken.findUnique({
       where: { tokenHash },
@@ -245,7 +410,7 @@ export class AuthService {
     }
 
     const rawToken = randomBytes(32).toString('hex');
-    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const tokenHash = hashToken(rawToken);
     const expiresAt = new Date(Date.now() + this.resetTokenTtlMs);
 
     await this.prisma.$transaction(async (tx) => {
@@ -263,6 +428,49 @@ export class AuthService {
   }
 
   // ---------------------------------------------------------------------------
+
+  private makeVerificationToken(): {
+    rawToken: string;
+    tokenHash: string;
+    expiresAt: Date;
+  } {
+    const rawToken = randomBytes(32).toString('hex');
+    return {
+      rawToken,
+      tokenHash: hashToken(rawToken),
+      expiresAt: new Date(Date.now() + this.verificationTokenTtlMs),
+    };
+  }
+
+  private buildVerificationUrl(rawToken: string): string {
+    return `${this.clientOrigin}/verify-email/${rawToken}`;
+  }
+
+  private async deliverVerificationEmail(
+    user: Pick<User, 'id' | 'email' | 'displayName'>,
+    verificationUrl: string,
+  ): Promise<{ delivered: boolean; previewVerificationUrl?: string }> {
+    try {
+      const mail = await this.mailService.sendEmailVerificationEmail(
+        user.email,
+        user.displayName,
+        verificationUrl,
+      );
+      if (mail.delivered) return { delivered: true };
+      return {
+        delivered: false,
+        ...(!this.isProduction
+          ? { previewVerificationUrl: mail.previewUrl }
+          : {}),
+      };
+    } catch (err) {
+      this.logger.error(
+        { userId: user.id, err: (err as Error).message },
+        'Failed to send email verification',
+      );
+      return { delivered: false };
+    }
+  }
 
   private async createSession(user: User, res: Response): Promise<string> {
     const jti = randomUUID();
@@ -299,9 +507,27 @@ export function toAuthUser(user: User): AuthUser {
   return {
     id: user.id,
     email: user.email,
+    emailVerifiedAt: user.emailVerifiedAt,
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
+}
+
+export type RegisterResult =
+  | { user: AuthUser; token: string; verificationRequired?: false }
+  | {
+      user: AuthUser;
+      verificationRequired: true;
+      emailDelivered: boolean;
+      previewVerificationUrl?: string;
+    };
+
+function hashToken(rawToken: string): string {
+  return createHash('sha256').update(rawToken).digest('hex');
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }

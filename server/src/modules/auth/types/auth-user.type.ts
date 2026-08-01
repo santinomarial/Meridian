@@ -1,6 +1,7 @@
 export interface AuthUser {
   id: string;
   email: string;
+  emailVerifiedAt: Date | null;
   displayName: string;
   avatarUrl: string | null;
   createdAt: Date;

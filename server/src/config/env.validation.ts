@@ -71,6 +71,12 @@ const envSchema = z.object({
     }),
   MAIL_FROM: z.string().default('Meridian <no-reply@meridian.local>'),
   FORGOT_PASSWORD_TTL_MINUTES: z.coerce.number().int().positive().default(30),
+  EMAIL_VERIFICATION_REQUIRED: z.enum(['true', 'false']).optional(),
+  EMAIL_VERIFICATION_TTL_MINUTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(1440),
   E2E_TEST: z.enum(['true', 'false']).default('false'),
 }).superRefine((env, ctx) => {
   if (env.NODE_ENV === 'production' && env.E2E_TEST === 'true') {
@@ -86,6 +92,34 @@ const envSchema = z.object({
       path: ['ENABLE_TERMINAL'],
       message:
         'ENABLE_TERMINAL cannot be enabled in production without an isolated runner (see docs)',
+    });
+  }
+  if (
+    env.NODE_ENV === 'production' &&
+    env.EMAIL_VERIFICATION_REQUIRED === 'false'
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['EMAIL_VERIFICATION_REQUIRED'],
+      message: 'EMAIL_VERIFICATION_REQUIRED cannot be disabled in production',
+    });
+  }
+  if (env.NODE_ENV === 'production' && env.RESEND_API_KEY === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['RESEND_API_KEY'],
+      message: 'RESEND_API_KEY is required for production email verification',
+    });
+  }
+  if (
+    env.NODE_ENV === 'production' &&
+    (/@(?:resend\.dev|meridian\.local)>?$/i.test(env.MAIL_FROM.trim()) ||
+      !env.MAIL_FROM.includes('@'))
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['MAIL_FROM'],
+      message: 'MAIL_FROM must use a verified production mail domain',
     });
   }
 });

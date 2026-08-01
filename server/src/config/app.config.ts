@@ -32,5 +32,8 @@ export const appConfig = registerAs(APP_CONFIG_KEY, (): AppConfig => {
     resendApiKey: env.RESEND_API_KEY,
     mailFrom: env.MAIL_FROM,
     forgotPasswordTtlMinutes: env.FORGOT_PASSWORD_TTL_MINUTES,
+    requireEmailVerification:
+      env.NODE_ENV === 'production' || env.EMAIL_VERIFICATION_REQUIRED === 'true',
+    emailVerificationTtlMinutes: env.EMAIL_VERIFICATION_TTL_MINUTES,
   };
 });
