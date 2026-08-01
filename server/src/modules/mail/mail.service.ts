@@ -11,7 +11,7 @@ export type MailSendResult =
   | {
       delivered: false;
       previewUrl: string;
-      reason: "no_provider" | "testing_domain" | "provider_rejected";
+      reason: 'no_provider' | 'testing_domain' | 'provider_rejected';
       detail?: string;
     };
 
@@ -35,14 +35,14 @@ export class MailService {
     const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
     this.resendApiKey = config.resendApiKey;
     this.mailFrom = config.mailFrom;
-    this.isDev = config.nodeEnv === "development";
+    this.isDev = config.nodeEnv === 'development';
     this.resetTtlMinutes = config.forgotPasswordTtlMinutes;
     this.verificationTtlMinutes = config.emailVerificationTtlMinutes ?? 1440;
 
     if (this.resendApiKey && isResendTestingFrom(this.mailFrom)) {
       this.logger.warn(
-        "MAIL_FROM uses @resend.dev — Resend will only deliver to your Resend account email. " +
-          "Verify a domain at https://resend.com/domains and set MAIL_FROM to an address on that domain to invite other people.",
+        'MAIL_FROM uses @resend.dev — Resend will only deliver to your Resend account email. ' +
+          'Verify a domain at https://resend.com/domains and set MAIL_FROM to an address on that domain to invite other people.',
       );
     }
   }
@@ -50,11 +50,11 @@ export class MailService {
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<MailSendResult> {
     return this.send({
       to,
-      subject: "Reset your Meridian password",
+      subject: 'Reset your Meridian password',
       html: buildResetEmailHtml(resetUrl, this.resetTtlMinutes),
       text: buildResetEmailText(resetUrl, this.resetTtlMinutes),
       previewUrl: resetUrl,
-      action: "password-reset",
+      action: 'password-reset',
     });
   }
 
@@ -65,7 +65,7 @@ export class MailService {
   ): Promise<MailSendResult> {
     return this.send({
       to,
-      subject: "Verify your Meridian email address",
+      subject: 'Verify your Meridian email address',
       html: buildVerificationEmailHtml(
         displayName,
         verificationUrl,
@@ -77,7 +77,7 @@ export class MailService {
         this.verificationTtlMinutes,
       ),
       previewUrl: verificationUrl,
-      action: "email-verification",
+      action: 'email-verification',
     });
   }
 
@@ -93,7 +93,7 @@ export class MailService {
       html: buildInviteEmailHtml(inviterName, workspaceName, inviteUrl),
       text: buildInviteEmailText(inviterName, workspaceName, inviteUrl),
       previewUrl: inviteUrl,
-      action: "invite",
+      action: 'invite',
     });
   }
 
@@ -106,11 +106,11 @@ export class MailService {
     action: string;
   }): Promise<MailSendResult> {
     if (this.resendApiKey) {
-      const response = await fetch("https://api.resend.com/emails", {
-        method: "POST",
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
         headers: {
           Authorization: `Bearer ${this.resendApiKey}`,
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           from: this.mailFrom,
@@ -133,7 +133,7 @@ export class MailService {
         return {
           delivered: false,
           previewUrl: message.previewUrl,
-          reason: testingDomain ? "testing_domain" : "provider_rejected",
+          reason: testingDomain ? 'testing_domain' : 'provider_rejected',
           detail: body.slice(0, 300),
         };
       }
@@ -147,17 +147,17 @@ export class MailService {
       );
       // eslint-disable-next-line no-console
       console.log(
-        `\n${"─".repeat(60)}\nDEV ${message.action.toUpperCase()} URL: ${message.previewUrl}\n${"─".repeat(60)}\n`,
+        `\n${'─'.repeat(60)}\nDEV ${message.action.toUpperCase()} URL: ${message.previewUrl}\n${'─'.repeat(60)}\n`,
       );
       return {
         delivered: false,
         previewUrl: message.previewUrl,
-        reason: "no_provider",
+        reason: 'no_provider',
       };
     }
 
     throw new Error(
-      "No mail provider configured. Set RESEND_API_KEY in your production environment.",
+      'No mail provider configured. Set RESEND_API_KEY in your production environment.',
     );
   }
 }

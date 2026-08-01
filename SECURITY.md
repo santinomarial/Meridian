@@ -60,8 +60,8 @@ server publicly merely because production disables these routes.
   `HttpOnly`, `SameSite=Lax`, and `Secure`.
 - Keep PostgreSQL and Redis private. Redis messages are trusted internal input,
   and Redis Pub/Sub is coordination rather than durable storage.
-- Treat invitation and password-reset URLs as bearer credentials and keep them
-  out of analytics and logs where possible.
+- Treat email-verification, invitation, and password-reset URLs as bearer
+  credentials and keep them out of analytics and logs where possible.
 - Configure trusted-proxy handling and enforce authoritative request-size,
   connection, timeout, and abuse limits at the ingress. Application HTTP
   throttling is process-local.

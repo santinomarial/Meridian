@@ -32,7 +32,10 @@ function terminalRows(page: Page) {
 /** Clicks into the terminal and types a command followed by Enter. */
 async function runInTerminal(page: Page, command: string): Promise<void> {
   await page.getByTestId("terminal-xterm").click();
-  await page.keyboard.type(command);
+  // Insert the command as one browser input event. Character-by-character
+  // typing can interleave with an asynchronous terminal projection refresh,
+  // producing a split shell command even though the application is healthy.
+  await page.keyboard.insertText(command);
   await page.keyboard.press("Enter");
 }
 

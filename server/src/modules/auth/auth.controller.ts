@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { AuthService } from './auth.service';
+import { AuthService, type RegisterResult } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -24,7 +24,6 @@ import type { AuthUser } from './types/auth-user.type';
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request.type';
 import { E2eResetTokenDto } from '../../e2e/e2e.dto';
 import { assertTestEmail, E2eOnlyGuard } from '../../e2e/e2e-safety';
-import type { RegisterResult } from './auth.service';
 
 const FORGOT_SUCCESS =
   'If an account exists for this email, a reset link has been sent.';

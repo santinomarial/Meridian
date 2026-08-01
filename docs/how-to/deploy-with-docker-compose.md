@@ -31,11 +31,16 @@ Set these required values:
 - `JWT_SECRET`: at least 16 characters; use the generated 48-byte value.
 - `POSTGRES_PASSWORD`: strong generated database password.
 - `LB_COOKIE_SECRET`: stable secret used to sign Caddy's affinity cookie.
+- `RESEND_API_KEY`: restricted production Resend credential.
+- `MAIL_FROM`: sender on a verified custom domain, such as
+  `Meridian <accounts@example.com>`.
 
 Leave `API_UPSTREAMS=api:3000`, `VITE_API_URL`, and `VITE_SOCKET_URL` at their
 same-origin defaults. Production must keep `ENABLE_TERMINAL=false` and
 `E2E_TEST=false`; the former is forced by Compose and either true value is
-rejected by production validation. Swagger is not mounted in production.
+rejected by production validation. Compose also forces email verification on;
+the API refuses to start without working mail configuration. Swagger is not
+mounted in production.
 
 ## 2. Validate and start
 
@@ -76,8 +81,10 @@ Replace the hostname before running. `/health` and `/ready` must return HTTP
 readiness requires PostgreSQL and Redis. `/docs` must print `404`, confirming
 that Swagger is absent and blocked at the edge.
 
-Complete a browser smoke test: register, create and save a file, reconnect, and
-confirm the file remains. Then configure and test
+Complete a browser smoke test: register, verify the email address, create and
+save a file, reconnect, and confirm the file remains. Also verify that the
+registration session is not created before mailbox verification and that the
+same verification link cannot be reused. Then configure and test
 [database backups](backup-and-restore-database.md).
 
 ## 4. Establish operational readiness

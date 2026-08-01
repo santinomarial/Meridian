@@ -10,8 +10,8 @@ A collaborative browser IDE with Monaco, Yjs, React, NestJS, PostgreSQL, and Soc
   version history, and restore.
 - Collaborate through durable Yjs document updates, presence, workspace chat,
   and role-based access.
-- Authenticate with revocable sessions and manage workspaces, members, and
-  invitations.
+- Authenticate with verified email identities and revocable sessions; manage
+  workspaces, members, and transactionally single-use invitations.
 - Run a NestJS API backed by PostgreSQL, with optional Redis coordination and an
   optional non-production terminal.
 

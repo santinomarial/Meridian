@@ -31,12 +31,16 @@ REDIS_REQUIRED=true
 REDIS_KEY_PREFIX=prod:
 JWT_SECRET=...
 CLIENT_ORIGIN=https://app.example.com
+RESEND_API_KEY=...
+MAIL_FROM="Meridian <accounts@example.com>"
+EMAIL_VERIFICATION_REQUIRED=true
 TRUST_PROXY=1
 ```
 
 Use a unique Redis prefix per Meridian environment. Production rejects terminal
-and E2E modes, and does not mount Swagger. Give shutdown enough grace for local
-persistence queues to drain.
+and E2E modes, requires email verification and production mail delivery, and
+does not mount Swagger. Give shutdown enough grace for local persistence queues
+to drain.
 
 Start the replicas without public traffic. Check each replica's internal
 `GET /ready`: it must return HTTP 200 while PostgreSQL and Redis are healthy.
