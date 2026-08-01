@@ -27,6 +27,7 @@ import { RealtimeAuthorizationService } from '../realtime-authorization/realtime
 const BASE_USER: User = {
   id: 'user-1',
   email: 'alice@example.com',
+  emailVerifiedAt: new Date('2024-01-01'),
   displayName: 'Alice',
   passwordHash: null,
   avatarUrl: null,

@@ -12,6 +12,7 @@ import type { AuthUser } from '../modules/auth/types/auth-user.type';
 const AUTH_USER: AuthUser = {
   id: 'user-1',
   email: 'alice@example.com',
+  emailVerifiedAt: new Date('2024-01-01'),
   displayName: 'Alice',
   avatarUrl: null,
   createdAt: new Date('2024-01-01'),

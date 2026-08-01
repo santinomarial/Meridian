@@ -23,6 +23,7 @@ import { WsRateLimiter } from '../realtime/ws-rate-limiter.service';
 const AUTH_USER: AuthUser = {
   id: 'user-1',
   email: 'user@example.com',
+  emailVerifiedAt: new Date('2024-01-01'),
   displayName: 'Alice',
   avatarUrl: null,
   createdAt: new Date('2024-01-01'),

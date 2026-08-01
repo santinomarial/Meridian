@@ -7,6 +7,7 @@ import { UsersService, type CreateUserData } from './users.service';
 const BASE_USER: User = {
   id: 'user-1',
   email: 'alice@meridian.dev',
+  emailVerifiedAt: new Date('2024-01-01'),
   displayName: 'Alice Chen',
   passwordHash: null,
   avatarUrl: null,
