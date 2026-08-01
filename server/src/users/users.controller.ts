@@ -38,6 +38,7 @@ function toPublicUser(user: User, opts: { includeEmail: boolean }) {
   return {
     id: user.id,
     ...(opts.includeEmail ? { email: user.email } : {}),
+    ...(opts.includeEmail ? { emailVerifiedAt: user.emailVerifiedAt } : {}),
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
     createdAt: user.createdAt,

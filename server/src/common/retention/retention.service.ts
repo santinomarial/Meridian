@@ -34,16 +34,22 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
   async purgeExpired(): Promise<{
     sessions: number;
     resetTokens: number;
+    verificationTokens: number;
     invites: number;
   }> {
     const now = new Date();
-    const [sessions, resetTokens, invites] = await Promise.all([
+    const [sessions, resetTokens, verificationTokens, invites] = await Promise.all([
       this.prisma.session.deleteMany({
         where: {
           OR: [{ expiresAt: { lt: now } }, { revokedAt: { not: null } }],
         },
       }),
       this.prisma.passwordResetToken.deleteMany({
+        where: {
+          OR: [{ expiresAt: { lt: now } }, { usedAt: { not: null } }],
+        },
+      }),
+      this.prisma.emailVerificationToken.deleteMany({
         where: {
           OR: [{ expiresAt: { lt: now } }, { usedAt: { not: null } }],
         },
@@ -58,9 +64,16 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     const result = {
       sessions: sessions.count,
       resetTokens: resetTokens.count,
+      verificationTokens: verificationTokens.count,
       invites: invites.count,
     };
-    if (result.sessions + result.resetTokens + result.invites > 0) {
+    if (
+      result.sessions +
+        result.resetTokens +
+        result.verificationTokens +
+        result.invites >
+      0
+    ) {
       this.logger.info(result, 'Purged expired auth and invite records');
     }
     return result;

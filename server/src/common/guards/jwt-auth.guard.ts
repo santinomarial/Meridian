@@ -65,6 +65,9 @@ export class JwtAuthGuard implements CanActivate {
     if (session.revokedAt !== null) {
       return reject('Session has been revoked');
     }
+    if (session.user.emailVerifiedAt === null) {
+      return reject('Email verification required');
+    }
 
     const authReq = request as AuthenticatedRequest;
     authReq.user = toAuthUser(session.user);

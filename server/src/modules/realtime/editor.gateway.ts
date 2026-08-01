@@ -1073,6 +1073,9 @@ export class EditorGateway
     if (session.revokedAt !== null) {
       throw new Error('Session revoked');
     }
+    if (session.user.emailVerifiedAt === null) {
+      throw new Error('Email verification required');
+    }
 
     socket.data['user'] = toAuthUser(session.user);
     socket.data[SOCKET_SESSION_JTI] = payload.jti;

@@ -13,6 +13,12 @@ describe('redactSensitivePath', () => {
     );
   });
 
+  it('redacts email-verification tokens in the path', () => {
+    expect(redactSensitivePath('/verify-email/abc123?redirect=%2Fworkspace')).toBe(
+      '/verify-email/[REDACTED]?redirect=%2Fworkspace',
+    );
+  });
+
   it('redacts token query parameters', () => {
     expect(redactSensitivePath('/auth/reset?token=abc&other=1')).toBe(
       '/auth/reset?token=[REDACTED]&other=1',

@@ -92,13 +92,19 @@ export class RealtimeAuthorizationService
 
     const session = await this.prisma.session.findUnique({
       where: { jti },
-      select: { userId: true, expiresAt: true, revokedAt: true },
+      select: {
+        userId: true,
+        expiresAt: true,
+        revokedAt: true,
+        user: { select: { emailVerifiedAt: true } },
+      },
     });
 
     const active = (
       session !== null &&
       session.userId === user.id &&
       session.revokedAt === null &&
+      session.user.emailVerifiedAt !== null &&
       session.expiresAt > new Date()
     );
     const validUntil = active
