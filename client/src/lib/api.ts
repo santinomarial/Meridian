@@ -6,6 +6,7 @@ import type {
   ApiDocumentVersionSummary,
   ApiInvite,
   ApiInviteDetails,
+  ApiRegisterResponse,
   ApiUser,
   ApiWorkspace,
   ApiWorkspaceMember,
@@ -18,6 +19,7 @@ import type {
   LoginPayload,
   RegisterPayload,
   ResetPasswordPayload,
+  VerifyEmailPayload,
   RestoreVersionResponse,
   UpdateDocumentPayload,
   UpdateProfilePayload,
@@ -32,6 +34,7 @@ export type {
   ApiDocumentVersionSummary,
   ApiInvite,
   ApiInviteDetails,
+  ApiRegisterResponse,
   ApiUser,
   ApiWorkspace,
   ApiWorkspaceMember,
@@ -44,6 +47,7 @@ export type {
   LoginPayload,
   RegisterPayload,
   ResetPasswordPayload,
+  VerifyEmailPayload,
   RestoreVersionResponse,
   UpdateDocumentPayload,
   UpdateProfilePayload,
@@ -112,8 +116,8 @@ async function request<T>(
 export const login = (payload: LoginPayload): Promise<ApiAuthResponse> =>
   request<ApiAuthResponse>('POST', '/auth/login', payload);
 
-export const register = (payload: RegisterPayload): Promise<ApiAuthResponse> =>
-  request<ApiAuthResponse>('POST', '/auth/register', payload);
+export const register = (payload: RegisterPayload): Promise<ApiRegisterResponse> =>
+  request<ApiRegisterResponse>('POST', '/auth/register', payload);
 
 export const getCurrentUser = (): Promise<ApiUser> =>
   request<ApiUser>('GET', '/auth/me');
@@ -136,6 +140,18 @@ export const forgotPassword = (
 
 export const resetPassword = (payload: ResetPasswordPayload): Promise<{ message: string }> =>
   request<{ message: string }>('POST', '/auth/reset-password', payload);
+
+export const verifyEmail = (payload: VerifyEmailPayload): Promise<ApiAuthResponse> =>
+  request<ApiAuthResponse>('POST', '/auth/verify-email', payload);
+
+export const resendEmailVerification = (
+  email: string,
+): Promise<{ message: string; previewVerificationUrl?: string }> =>
+  request<{ message: string; previewVerificationUrl?: string }>(
+    'POST',
+    '/auth/email-verification',
+    { email },
+  );
 
 // ── Workspaces ────────────────────────────────────────────────────────────────
 

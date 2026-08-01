@@ -2,7 +2,13 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { PasswordStrength } from "../components/ui/PasswordStrength";
-import { login, register, forgotPassword } from "../lib/api";
+import {
+  ApiError,
+  forgotPassword,
+  login,
+  register,
+  resendEmailVerification,
+} from "../lib/api";
 import { getAuthErrorMessage } from "../lib/authErrors";
 import { getPasswordRequirements } from "../lib/passwordPolicy";
 
@@ -140,6 +146,11 @@ function AuthCard({
   const [error, setError] = useState<string | null>(null);
   const [forgotSuccess, setForgotSuccess] = useState(false);
   const [previewResetUrl, setPreviewResetUrl] = useState<string | null>(null);
+  const [verificationPendingEmail, setVerificationPendingEmail] = useState<string | null>(null);
+  const [previewVerificationUrl, setPreviewVerificationUrl] = useState<string | null>(null);
+  const [verificationDeliveryFailed, setVerificationDeliveryFailed] = useState(false);
+  const [resendingVerification, setResendingVerification] = useState(false);
+  const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
 
   // Keep email when switching signin ↔ forgot so the forgot-password form is pre-filled.
   // Clear email for all other transitions (entering/leaving signup).
@@ -156,6 +167,10 @@ function AuthCard({
     setConfirmPassword("");
     setError(null);
     setForgotSuccess(false);
+    setVerificationPendingEmail(null);
+    setPreviewVerificationUrl(null);
+    setVerificationDeliveryFailed(false);
+    setVerificationNotice(null);
     if (!keepEmail) {
       setEmail("");
     }
@@ -200,12 +215,28 @@ function AuthCard({
     setLoading(true);
     try {
       if (mode === "signup") {
-        await register({ email, password, displayName: name });
+        const result = await register({ email, password, displayName: name });
+        if (result.verificationRequired === true) {
+          setVerificationPendingEmail(result.user.email);
+          setPreviewVerificationUrl(result.previewVerificationUrl ?? null);
+          setVerificationDeliveryFailed(!result.emailDelivered);
+          return;
+        }
       } else {
         await login({ email, password });
       }
       navigate(getSafeRedirect());
     } catch (err) {
+      if (
+        mode === "signin" &&
+        err instanceof ApiError &&
+        err.status === 403 &&
+        /email verification required/i.test(err.message)
+      ) {
+        setVerificationPendingEmail(email.trim().toLowerCase());
+        setVerificationDeliveryFailed(false);
+        return;
+      }
       setError(getAuthErrorMessage(err, { invalidCredentialsFor401: mode === "signin" }));
     } finally {
       setLoading(false);
@@ -214,6 +245,22 @@ function AuthCard({
 
   const isSignUp = mode === "signup";
   const isForgot = mode === "forgot";
+
+  const handleResendVerification = async (): Promise<void> => {
+    if (verificationPendingEmail === null) return;
+    setResendingVerification(true);
+    setVerificationNotice(null);
+    try {
+      const result = await resendEmailVerification(verificationPendingEmail);
+      setPreviewVerificationUrl(result.previewVerificationUrl ?? null);
+      setVerificationDeliveryFailed(false);
+      setVerificationNotice("A fresh verification link has been issued.");
+    } catch (err) {
+      setVerificationNotice(getAuthErrorMessage(err));
+    } finally {
+      setResendingVerification(false);
+    }
+  };
 
   return (
     <div className="glass-panel inner-glow flex w-full max-w-[420px] flex-col gap-8 rounded-xl p-8" data-testid="auth-card">
@@ -233,7 +280,59 @@ function AuthCard({
         </p>
       </div>
 
-      {isForgot && forgotSuccess ? (
+      {verificationPendingEmail !== null ? (
+        <div
+          className="rounded-lg border border-outline-variant/40 bg-surface-container-low px-4 py-5 text-center"
+          data-testid="verification-pending"
+        >
+          <MaterialIcon name="mark_email_unread" className="mb-3 text-4xl text-primary" aria-hidden />
+          <h2 className="text-body-md font-semibold text-on-surface">Verify your email</h2>
+          <p className="mt-2 text-body-sm text-on-surface-variant">
+            {previewVerificationUrl !== null
+              ? "Email verification is enabled locally. Use the preview link below."
+              : verificationDeliveryFailed
+                ? "The account was created, but delivery could not be confirmed. Check the mail configuration or request a fresh link."
+                : `We sent a verification link to ${verificationPendingEmail}.`}
+          </p>
+          {previewVerificationUrl !== null ? (
+            <a
+              href={previewVerificationUrl}
+              className="mt-3 inline-block break-all text-body-sm text-accent underline underline-offset-2"
+              data-testid="verification-preview-link"
+            >
+              Open verification link
+            </a>
+          ) : null}
+          {verificationNotice !== null ? (
+            <p className="mt-3 text-xs text-on-surface-variant" role="status">
+              {verificationNotice}
+            </p>
+          ) : null}
+          <div className="mt-5 flex flex-col gap-2">
+            <button
+              type="button"
+              disabled={resendingVerification}
+              onClick={() => void handleResendVerification()}
+              className="rounded-lg btn-primary px-4 py-2.5 text-body-sm font-semibold disabled:opacity-60"
+              data-testid="resend-verification"
+            >
+              {resendingVerification ? "Sending…" : "Resend verification link"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setVerificationPendingEmail(null);
+                setPreviewVerificationUrl(null);
+                onModeChange("signin", verificationPendingEmail);
+              }}
+              className="text-body-sm text-accent hover:underline"
+              data-testid="verification-back-to-login"
+            >
+              Back to Log in
+            </button>
+          </div>
+        </div>
+      ) : isForgot && forgotSuccess ? (
         <div className="rounded-lg border border-outline-variant/40 bg-surface-container-low px-4 py-5 text-center" data-testid="forgot-success">
           <MaterialIcon name="mark_email_read" className="mb-3 text-4xl text-primary" aria-hidden />
           <p className="text-body-sm text-on-surface">

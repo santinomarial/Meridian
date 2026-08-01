@@ -16,6 +16,11 @@ const ResetPasswordPage = lazy(() =>
     default: module.ResetPasswordPage,
   })),
 );
+const VerifyEmailPage = lazy(() =>
+  import("./pages/VerifyEmailPage").then((module) => ({
+    default: module.VerifyEmailPage,
+  })),
+);
 
 function PageFallback() {
   return (
@@ -41,6 +46,7 @@ function App() {
           <Route path="/session/:id" element={<WorkspacePage />} />
           <Route path="/invite/:inviteId" element={<InvitePage />} />
           <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
+          <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

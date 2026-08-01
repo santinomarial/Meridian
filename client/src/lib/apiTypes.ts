@@ -1,6 +1,7 @@
 export interface ApiUser {
   id: string;
   email: string;
+  emailVerifiedAt: string | null;
   displayName: string;
   avatarUrl: string | null;
   createdAt: string;
@@ -37,6 +38,15 @@ export interface ApiAuthResponse {
   user: ApiUser;
   token: string;
 }
+
+export type ApiRegisterResponse =
+  | (ApiAuthResponse & { verificationRequired?: false })
+  | {
+      user: ApiUser;
+      verificationRequired: true;
+      emailDelivered: boolean;
+      previewVerificationUrl?: string;
+    };
 
 export interface CreateWorkspacePayload {
   name: string;
@@ -81,6 +91,10 @@ export interface ForgotPasswordPayload {
 export interface ResetPasswordPayload {
   token: string;
   password: string;
+}
+
+export interface VerifyEmailPayload {
+  token: string;
 }
 
 // ── Members ───────────────────────────────────────────────────────────────────

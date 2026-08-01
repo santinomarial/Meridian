@@ -477,44 +477,49 @@ async function main(): Promise<void> {
   const passwordHash = await argon2.hash(seedPassword, {
     type: argon2.argon2id,
   });
+  const emailVerifiedAt = new Date();
 
   const alice = await prisma.user.upsert({
     where: { email: 'alice@meridian.dev' },
-    update: { passwordHash },
+    update: { passwordHash, emailVerifiedAt },
     create: {
       email: 'alice@meridian.dev',
       displayName: 'Alice Chen',
       passwordHash,
+      emailVerifiedAt,
     },
   });
 
   const bob = await prisma.user.upsert({
     where: { email: 'bob@meridian.dev' },
-    update: { passwordHash },
+    update: { passwordHash, emailVerifiedAt },
     create: {
       email: 'bob@meridian.dev',
       displayName: 'Bob Martinez',
       passwordHash,
+      emailVerifiedAt,
     },
   });
 
   const carol = await prisma.user.upsert({
     where: { email: 'carol@meridian.dev' },
-    update: { passwordHash },
+    update: { passwordHash, emailVerifiedAt },
     create: {
       email: 'carol@meridian.dev',
       displayName: 'Carol Williams',
       passwordHash,
+      emailVerifiedAt,
     },
   });
 
   const dave = await prisma.user.upsert({
     where: { email: 'dave@meridian.dev' },
-    update: { passwordHash },
+    update: { passwordHash, emailVerifiedAt },
     create: {
       email: 'dave@meridian.dev',
       displayName: 'Dave Park',
       passwordHash,
+      emailVerifiedAt,
     },
   });
 
