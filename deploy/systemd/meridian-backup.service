@@ -6,7 +6,12 @@ After=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/meridian
+EnvironmentFile=/etc/meridian/backup.env
 Environment=BACKUP_DIR=/var/backups/meridian
 Environment=BACKUP_RETENTION_DAYS=14
+Environment=BACKUP_OFFSITE_REQUIRED=true
+Environment=BACKUP_OFFSITE_HOOK=/opt/meridian/scripts/backup-offsite-restic.sh
 ExecStart=/opt/meridian/scripts/backup-compose.sh
 UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

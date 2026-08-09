@@ -12,6 +12,9 @@ concurrency:
 
 env:
   NODE_VERSION: "22"
+  # Official main build at revision 8d7515af; immutable and Trivy-clean while
+  # the latest numbered release still bundles dependencies affected by Go CVEs.
+  ALERTMANAGER_IMAGE: prom/alertmanager@sha256:a42c3e2e8f7cd4fd3a0ce1bd593ca5abe965c97b993476007d6f69c4a2aa33b5
 
 permissions:
   contents: read
@@ -179,7 +182,7 @@ jobs:
         run: |
           node dist/main.js > /tmp/server.log 2>&1 &
           echo $! > /tmp/server.pid
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if curl -sf http://localhost:3000/health > /dev/null; then
               echo "Backend is up."
               exit 0
@@ -263,6 +266,16 @@ jobs:
         run: docker build -t meridian-web:ci ./client
       - name: Smoke production container runtimes
         run: bash scripts/smoke-containers.sh
+      - name: Validate monitoring configurations
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/deploy/monitoring:/etc/prometheus:ro" \
+            prom/prometheus:v3.13.2 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint amtool \
+            -v "$PWD/deploy/monitoring:/etc/alertmanager:ro" \
+            "${{ env.ALERTMANAGER_IMAGE }}" \
+            check-config /etc/alertmanager/alertmanager.yml
       - name: Trivy API image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -285,6 +298,12 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: prom/prometheus:v3.13.2
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Trivy Alertmanager image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.ALERTMANAGER_IMAGE }}
           severity: CRITICAL,HIGH
           exit-code: "1"
 
@@ -318,8 +337,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Validate operational shell scripts
-        run: bash -n scripts/backup-pg.sh ../scripts/backup-compose.sh
-      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: >-
+          bash -n scripts/backup-pg.sh ../scripts/backup-compose.sh
+          ../scripts/backup-offsite-restic.sh
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client shellcheck
+      - name: Lint operational shell scripts
+        run: >-
+          shellcheck scripts/backup-pg.sh ../scripts/backup-compose.sh
+          ../scripts/backup-offsite-restic.sh ../scripts/smoke-containers.sh
       - name: Build migration image
         run: docker build --target migrate -t meridian-migrate:ci .
       - name: Apply migrations with production image
@@ -346,9 +371,20 @@ jobs:
           MAIL_FROM: "Meridian <accounts@example.com>"
         run: |
           docker compose -f ../docker-compose.prod.yml up -d --wait postgres
-          BACKUP_DIR=/tmp/meridian-compose-backup ../scripts/backup-compose.sh
+          if BACKUP_DIR=/tmp/meridian-compose-backup \
+            BACKUP_OFFSITE_REQUIRED=true \
+            ../scripts/backup-compose.sh; then
+            echo "Required off-host hook unexpectedly passed without a hook" >&2
+            exit 1
+          fi
+          BACKUP_DIR=/tmp/meridian-compose-backup \
+            BACKUP_OFFSITE_REQUIRED=true \
+            BACKUP_OFFSITE_HOOK=/usr/bin/true \
+            ../scripts/backup-compose.sh
           cd /tmp/meridian-compose-backup
-          sha256sum --check *.sha256
+          sha256sum --check ./*.sha256
+          test -s last-success.unixtime
+          test -s last-offsite-success.unixtime
       - name: Stop Compose backup smoke services
         if: always()
         env:

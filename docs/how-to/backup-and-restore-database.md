@@ -15,9 +15,15 @@ the supported one-VPS topology. The script runs `pg_dump` inside the private
 PostgreSQL container, writes an atomic custom-format dump with a SHA-256 sidecar,
 and removes matching local dumps after the configured retention period.
 
-Install the repository at `/opt/meridian`, then install and enable the timer:
+The systemd service fails closed unless the encrypted off-host upload is
+configured. Install `restic`, initialize an approved remote repository, install
+the repository at `/opt/meridian`, and create its root-readable configuration:
 
 ```bash
+sudo install -d -m 700 /etc/meridian
+sudo install -m 600 deploy/systemd/meridian-backup.env.example /etc/meridian/backup.env
+sudo install -m 600 /dev/null /etc/meridian/restic-password
+sudoedit /etc/meridian/backup.env /etc/meridian/restic-password
 sudo install -d -m 700 /var/backups/meridian
 sudo install -m 644 deploy/systemd/meridian-backup.service /etc/systemd/system/
 sudo install -m 644 deploy/systemd/meridian-backup.timer /etc/systemd/system/
@@ -26,13 +32,22 @@ sudo systemctl enable --now meridian-backup.timer
 sudo systemctl start meridian-backup.service
 sudo systemctl status meridian-backup.service meridian-backup.timer
 sudo test -s /var/backups/meridian/last-success.unixtime
+sudo test -s /var/backups/meridian/last-offsite-success.unixtime
+sudo bash -c 'set -a; source /etc/meridian/backup.env; set +a; cd /opt/meridian; exec restic snapshots --tag meridian'
 ```
 
-The service defaults to 14 days of local retention. Local backups remain on the
-same failure domain as the VPS and are not sufficient by themselves. Configure
-an approved backup agent to copy `/var/backups/meridian` to encrypted off-host
-storage, monitor `last-success.unixtime`, and alert when it is more than 26 hours
-old. Do not put cloud credentials into this repository or the Compose file.
+Use provider-native workload identity instead of static access keys when
+available. `RESTIC_PASSWORD_FILE` must point to a strong, separately protected
+secret; losing it makes the encrypted repository unrecoverable. The service
+defaults to 14 days of local retention. Configure remote retention in the
+backup platform, monitor both success timestamp files, and page when either is
+more than 26 hours old. Do not put cloud credentials or restic passwords into
+this repository or the Compose file.
+
+`backup-compose.sh` calls the absolute executable in `BACKUP_OFFSITE_HOOK` with
+the dump and checksum paths. When `BACKUP_OFFSITE_REQUIRED=true`, a missing or
+failed hook prevents `last-success.unixtime` from advancing. The bundled
+`backup-offsite-restic.sh` uploads both files in one encrypted restic snapshot.
 
 Test an automated custom-format dump against a separate empty database with
 `pg_restore --no-owner --exit-on-error --dbname=DATABASE_URL FILE.dump` before

@@ -37,6 +37,19 @@ Set these required values:
 - `MAIL_TIMEOUT_MS`: maximum duration of one Resend request; keep the `10000`
   millisecond default unless measured provider latency requires a change.
 
+Create the paging webhook secret before enabling monitoring. The endpoint must
+accept Alertmanager's standard webhook payload and page the on-call responder:
+
+```bash
+install -d -m 700 secrets
+install -m 600 /dev/null secrets/alertmanager-webhook-url
+${EDITOR:-vi} secrets/alertmanager-webhook-url
+test "$(wc -l < secrets/alertmanager-webhook-url)" -eq 1
+```
+
+Keep `secrets/` out of backups and source control. The committed `.gitignore`
+excludes it. For a different host path, set `ALERTMANAGER_WEBHOOK_URL_FILE`.
+
 Leave `API_UPSTREAMS=api:3000`, `VITE_API_URL`, and `VITE_SOCKET_URL` at their
 same-origin defaults. Production must keep `ENABLE_TERMINAL=false` and
 `E2E_TEST=false`; the former is forced by Compose and either true value is
@@ -96,19 +109,20 @@ same verification link cannot be reused. Then configure and test
 
 ## 4. Establish operational readiness
 
-Start the repository-owned Prometheus configuration and alert rules:
+Start the repository-owned Prometheus, Alertmanager, and alert rules:
 
 ```bash
-docker compose --profile monitoring -f docker-compose.prod.yml up -d prometheus
+docker compose --profile monitoring -f docker-compose.prod.yml up -d alertmanager prometheus
 curl -fsS http://127.0.0.1:9090/-/ready
+curl -fsS http://127.0.0.1:9093/-/ready
 ```
 
-Prometheus is bound to host loopback only. Inspect it through an SSH tunnel or
-connect an approved monitoring system; do not expose port 9090 publicly. The
-committed rules cover API scrape loss, persistence failures, restore fencing,
-and sustained write chains. Configure an Alertmanager or remote monitoring
-receiver so critical alerts page a human—local rule evaluation alone is not
-paging.
+Both monitoring ports are bound to host loopback only. Inspect them through an
+SSH tunnel; do not expose either publicly. The committed rules cover API scrape
+loss, persistence failures, restore fencing, and sustained write chains.
+Alertmanager groups notifications, repeats critical alerts every 30 minutes,
+and sends resolved notifications. Trigger a controlled test alert and verify
+that the receiver pages a human before declaring monitoring ready.
 
 Caddy intentionally returns 404 for public `/metrics`. Add host/container CPU,
 memory, disk, backup-freshness, and restart alerts in the infrastructure

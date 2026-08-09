@@ -65,13 +65,14 @@ File: [`docker-compose.prod.yml`](../../../docker-compose.prod.yml).
 | `api` | Internal 3000 only | Waits for migration, PostgreSQL, Redis; `/ready` health check |
 | `web` | Internal 8080 only | Built with client arguments; waits for healthy API |
 | `caddy` | Publishes TCP 80/443 and UDP 443 | Waits for API health and web start |
-| `prometheus` | Optional `monitoring` profile; host loopback 9090 only | Waits for API health; scrapes internal `/metrics` and evaluates committed rules |
+| `prometheus` | Optional `monitoring` profile; host loopback 9090 only | Waits for API and Alertmanager; scrapes internal `/metrics` and evaluates committed rules |
+| `alertmanager` | Optional `monitoring` profile; host loopback 9093 only | Reads a Docker secret containing the paging webhook URL and routes alerts |
 
 Named volumes are `postgres_data`, `redis_data`, `caddy_data`, `caddy_config`,
-and `prometheus_data`. Caddy is the only publicly bound service; the optional
-Prometheus port is bound to `127.0.0.1` only. Every long-running production
-service uses `restart: unless-stopped`; the one-shot migration remains
-`restart: "no"`.
+`prometheus_data`, and `alertmanager_data`. Caddy is the only publicly bound
+service; both optional monitoring ports are bound to `127.0.0.1` only. Every
+long-running production service uses `restart: unless-stopped`; the one-shot
+migration remains `restart: "no"`.
 
 Required Compose inputs:
 
@@ -85,6 +86,7 @@ Required Compose inputs:
 | `LB_COOKIE_SECRET` | Caddy affinity-cookie signing |
 | `RESEND_API_KEY` | Production email provider credential |
 | `MAIL_FROM` | Sender on a verified custom domain |
+| `ALERTMANAGER_WEBHOOK_URL_FILE` | Host file containing one approved HTTPS paging webhook URL when the `monitoring` profile is enabled |
 
 Optional/defaulted Compose inputs:
 
@@ -98,6 +100,7 @@ Optional/defaulted Compose inputs:
 | `MAIL_TIMEOUT_MS` | `10000` milliseconds |
 | `PROMETHEUS_IMAGE` | `prom/prometheus:v3.13.2` |
 | `PROMETHEUS_RETENTION` | `15d` |
+| `ALERTMANAGER_IMAGE` | Immutable official `main` image at revision `8d7515af` (see Compose for digest) |
 
 The API service fixes `NODE_ENV=production`, `PORT=3000`,
 `REDIS_REQUIRED=true`, `TRUST_PROXY=1`, `METRICS_ENABLED=true`, and

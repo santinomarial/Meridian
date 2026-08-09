@@ -155,6 +155,31 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      alertmanager:
+        condition: service_healthy
+
+  alertmanager:
+    # Official main build at revision 8d7515af, pinned immutably until the next
+    # numbered release incorporates the same patched Go dependencies.
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager@sha256:a42c3e2e8f7cd4fd3a0ce1bd593ca5abe965c97b993476007d6f69c4a2aa33b5}
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./deploy/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    secrets:
+      - alertmanager_webhook_url
+    ports:
+      - "127.0.0.1:9093:9093"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:9093/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
 volumes:
   postgres_data:
@@ -162,3 +187,8 @@ volumes:
   caddy_data:
   caddy_config:
   prometheus_data:
+  alertmanager_data:
+
+secrets:
+  alertmanager_webhook_url:
+    file: ${ALERTMANAGER_WEBHOOK_URL_FILE:-./secrets/alertmanager-webhook-url}

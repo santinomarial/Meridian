@@ -65,7 +65,8 @@ These builds consume local Docker space and execute the production runtime
 smoke checks. The script must end with `Container runtime smoke tests passed`.
 GitHub also scans all three images with its pinned Trivy action; reproduce that
 with the organization's approved Trivy installation rather than assuming the
-hosted action is installed locally.
+hosted action is installed locally. It also validates and scans the pinned
+Prometheus and Alertmanager images and their committed configurations.
 
 ## Service-backed jobs
 

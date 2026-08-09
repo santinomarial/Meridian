@@ -17,12 +17,14 @@ Meridian/
 |   |-- vite.config.ts             Vite configuration
 |   `-- vitest.config.ts           Unit-test configuration
 |-- deploy/Caddyfile               Public TLS edge and reverse proxy
+|-- deploy/monitoring/             Prometheus rules and Alertmanager routing
+|-- deploy/systemd/                Fail-closed scheduled backup units and environment template
 |-- docs/
 |   |-- explanation/               Concept and architecture documents
 |   |-- how-to/                    Task-oriented and incident procedures
 |   |-- reference/                 Code/config-derived reference
 |   `-- tutorials/                 Learning-oriented walkthroughs
-|-- scripts/smoke-containers.sh    Production-image runtime checks
+|-- scripts/                       Container smoke and production backup/upload helpers
 |-- server/                        NestJS API and Socket.IO application
 |   |-- prisma/                    Schema, migrations, and seed
 |   |-- scripts/                   Load, backup, and install helpers

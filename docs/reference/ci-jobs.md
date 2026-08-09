@@ -15,8 +15,8 @@ Workflow: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
 | `e2e` | E2E (Playwright) | PostgreSQL 16, Redis 7 | Migrate/build/start API, install client and Chromium, run Playwright; API uses `E2E_TEST=true` and `ENABLE_TERMINAL=true` |
 | `lint` | Lint | None | `npm ci`, `npm run lint` in `client/` |
 | `security-audit` | Dependency audit | None | Production-only `npm audit --audit-level=high` for both lockfiles |
-| `container-scan` | Container scan (Trivy) | None | Build API, migration, and web images; run container smoke script; fail on high/critical Trivy findings |
-| `ops-backup` | Backup/restore smoke | PostgreSQL 16 | Build/run migration image, dump and restore PostgreSQL, verify `_prisma_migrations` |
+| `container-scan` | Container scan (Trivy) | None | Build application images; validate monitoring configs; scan app, Prometheus, and Alertmanager images for high/critical findings |
+| `ops-backup` | Backup/restore smoke | PostgreSQL 16 | Build/run migration image, dump and restore PostgreSQL, verify `_prisma_migrations`, and exercise the required off-host hook contract |
 
 ## Service and test environment
 
