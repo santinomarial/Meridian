@@ -1,10 +1,44 @@
 # Back up and restore PostgreSQL
 
 PostgreSQL is Meridian's durability boundary. Redis is not a document backup.
-This procedure uses the repository's `backup-pg.sh`; it requires `pg_dump` and
-`psql` from a PostgreSQL client installation and network access to the database.
+The automated procedure runs PostgreSQL tools inside the private Compose
+container. The manual/CI procedure uses the repository's `backup-pg.sh` and
+requires `pg_dump` and `psql` from a PostgreSQL client installation with network
+access to the database.
 
 ## Create a backup
+
+### Automated Compose backup
+
+The repository includes `scripts/backup-compose.sh` and systemd timer units for
+the supported one-VPS topology. The script runs `pg_dump` inside the private
+PostgreSQL container, writes an atomic custom-format dump with a SHA-256 sidecar,
+and removes matching local dumps after the configured retention period.
+
+Install the repository at `/opt/meridian`, then install and enable the timer:
+
+```bash
+sudo install -d -m 700 /var/backups/meridian
+sudo install -m 644 deploy/systemd/meridian-backup.service /etc/systemd/system/
+sudo install -m 644 deploy/systemd/meridian-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now meridian-backup.timer
+sudo systemctl start meridian-backup.service
+sudo systemctl status meridian-backup.service meridian-backup.timer
+sudo test -s /var/backups/meridian/last-success.unixtime
+```
+
+The service defaults to 14 days of local retention. Local backups remain on the
+same failure domain as the VPS and are not sufficient by themselves. Configure
+an approved backup agent to copy `/var/backups/meridian` to encrypted off-host
+storage, monitor `last-success.unixtime`, and alert when it is more than 26 hours
+old. Do not put cloud credentials into this repository or the Compose file.
+
+Test an automated custom-format dump against a separate empty database with
+`pg_restore --no-owner --exit-on-error --dbname=DATABASE_URL FILE.dump` before
+go-live and after material schema changes.
+
+### Manual/CI plain-SQL backup
 
 Obtain `DATABASE_URL` from the deployment's secret store. The script removes
 Prisma's `schema` query parameter while preserving standard libpq parameters.

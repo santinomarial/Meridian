@@ -99,7 +99,6 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
-    restart: unless-stopped
       args:
         # Same-origin via Caddy: leave empty so the SPA uses window.location.origin.
         # Or set both to https://YOUR_DOMAIN explicitly.
@@ -108,6 +107,7 @@ services:
         # Same-origin CSP ('self'). For a split API host, e.g.:
         # CSP_CONNECT_SRC_EXTRA= https://api.example.com wss://api.example.com
         CSP_CONNECT_SRC_EXTRA: ${CSP_CONNECT_SRC_EXTRA:-}
+    restart: unless-stopped
     # Internal only — reached through Caddy.
     expose:
       - "8080"

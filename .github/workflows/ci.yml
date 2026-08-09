@@ -281,6 +281,12 @@ jobs:
           image-ref: meridian-web:ci
           severity: CRITICAL,HIGH
           exit-code: "1"
+      - name: Trivy Prometheus image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: prom/prometheus:v3.5.0
+          severity: CRITICAL,HIGH
+          exit-code: "1"
 
   # ── Backup script smoke test against integration Postgres ────────────────
   ops-backup:
@@ -311,6 +317,8 @@ jobs:
         working-directory: server
     steps:
       - uses: actions/checkout@v7
+      - name: Validate operational shell scripts
+        run: bash -n scripts/backup-pg.sh ../scripts/backup-compose.sh
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Build migration image
         run: docker build --target migrate -t meridian-migrate:ci .
@@ -326,3 +334,29 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
           ./scripts/backup-pg.sh restore /tmp/meridian-ci.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT 1 FROM \"_prisma_migrations\" LIMIT 1;"
+      - name: Automated Compose backup smoke
+        env:
+          DOMAIN: app.example.com
+          ACME_EMAIL: ops@example.com
+          CLIENT_ORIGIN: https://app.example.com
+          JWT_SECRET: ci-compose-secret-at-least-16-chars
+          POSTGRES_PASSWORD: ci-compose-postgres-password
+          LB_COOKIE_SECRET: ci-compose-affinity-secret
+          RESEND_API_KEY: re_ci_placeholder
+          MAIL_FROM: Meridian <accounts@example.com>
+        run: |
+          docker compose -f ../docker-compose.prod.yml up -d --wait postgres
+          BACKUP_DIR=/tmp/meridian-compose-backup ../scripts/backup-compose.sh
+          sha256sum --check /tmp/meridian-compose-backup/*.sha256
+      - name: Stop Compose backup smoke services
+        if: always()
+        env:
+          DOMAIN: app.example.com
+          ACME_EMAIL: ops@example.com
+          CLIENT_ORIGIN: https://app.example.com
+          JWT_SECRET: ci-compose-secret-at-least-16-chars
+          POSTGRES_PASSWORD: ci-compose-postgres-password
+          LB_COOKIE_SECRET: ci-compose-affinity-secret
+          RESEND_API_KEY: re_ci_placeholder
+          MAIL_FROM: Meridian <accounts@example.com>
+        run: docker compose -f ../docker-compose.prod.yml down --volumes

@@ -34,6 +34,8 @@ Set these required values:
 - `RESEND_API_KEY`: restricted production Resend credential.
 - `MAIL_FROM`: sender on a verified custom domain, such as
   `Meridian <accounts@example.com>`.
+- `MAIL_TIMEOUT_MS`: maximum duration of one Resend request; keep the `10000`
+  millisecond default unless measured provider latency requires a change.
 
 Leave `API_UPSTREAMS=api:3000`, `VITE_API_URL`, and `VITE_SOCKET_URL` at their
 same-origin defaults. Production must keep `ENABLE_TERMINAL=false` and
@@ -66,6 +68,11 @@ docker compose -f docker-compose.prod.yml logs migrate api caddy
 
 Do not use `prisma migrate dev` in production.
 
+PostgreSQL, Redis, API, web, and Caddy use `restart: unless-stopped`, so Docker
+restarts them after process failure or daemon/host restart. Reboot the host once
+before go-live and confirm that all five long-running services recover without
+manual intervention.
+
 ## 3. Verify the public service
 
 Working directory: repository root.
@@ -89,11 +96,24 @@ same verification link cannot be reused. Then configure and test
 
 ## 4. Establish operational readiness
 
-Scrape `/metrics` from the internal API network; Caddy intentionally returns
-404 for the public path. Alert on readiness failure, Redis health, persistence
-failures and fencing, sustained write chains, active socket/PTY growth, and
-host/container CPU, memory, disk, and restart pressure. Exercise the Redis-loss
-and database-restore procedures before go-live.
+Start the repository-owned Prometheus configuration and alert rules:
+
+```bash
+docker compose --profile monitoring -f docker-compose.prod.yml up -d prometheus
+curl -fsS http://127.0.0.1:9090/-/ready
+```
+
+Prometheus is bound to host loopback only. Inspect it through an SSH tunnel or
+connect an approved monitoring system; do not expose port 9090 publicly. The
+committed rules cover API scrape loss, persistence failures, restore fencing,
+and sustained write chains. Configure an Alertmanager or remote monitoring
+receiver so critical alerts page a human—local rule evaluation alone is not
+paging.
+
+Caddy intentionally returns 404 for public `/metrics`. Add host/container CPU,
+memory, disk, backup-freshness, and restart alerts in the infrastructure
+monitoring system. Exercise the Redis-loss and database-restore procedures
+before go-live.
 
 Use [Health and metrics](../reference/server/health-and-metrics.md) for metric
 names and [Scaling and failure model](../explanation/scaling-and-failure-model.md)

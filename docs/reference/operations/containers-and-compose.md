@@ -61,9 +61,13 @@ File: [`docker-compose.prod.yml`](../../../docker-compose.prod.yml).
 | `api` | Internal 3000 only | Waits for migration, PostgreSQL, Redis; `/ready` health check |
 | `web` | Internal 8080 only | Built with client arguments; waits for healthy API |
 | `caddy` | Publishes TCP 80/443 and UDP 443 | Waits for API health and web start |
+| `prometheus` | Optional `monitoring` profile; host loopback 9090 only | Waits for API health; scrapes internal `/metrics` and evaluates committed rules |
 
-Named volumes are `postgres_data`, `redis_data`, `caddy_data`, and
-`caddy_config`. Only Caddy publishes host ports.
+Named volumes are `postgres_data`, `redis_data`, `caddy_data`, `caddy_config`,
+and `prometheus_data`. Caddy is the only publicly bound service; the optional
+Prometheus port is bound to `127.0.0.1` only. Every long-running production
+service uses `restart: unless-stopped`; the one-shot migration remains
+`restart: "no"`.
 
 Required Compose inputs:
 
@@ -87,6 +91,9 @@ Optional/defaulted Compose inputs:
 | `VITE_API_URL`, `VITE_SOCKET_URL` | empty |
 | `CSP_CONNECT_SRC_EXTRA` | empty |
 | `API_UPSTREAMS` | `api:3000` |
+| `MAIL_TIMEOUT_MS` | `10000` milliseconds |
+| `PROMETHEUS_IMAGE` | `prom/prometheus:v3.5.0` |
+| `PROMETHEUS_RETENTION` | `15d` |
 
 The API service fixes `NODE_ENV=production`, `PORT=3000`,
 `REDIS_REQUIRED=true`, `TRUST_PROXY=1`, `METRICS_ENABLED=true`, and

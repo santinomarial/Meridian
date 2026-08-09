@@ -1,10 +1,10 @@
 # Server configuration
 
-`server/src/config/env.validation.ts` validates the following 27 application
+`server/src/config/env.validation.ts` validates the following 28 application
 variables at startup. Numeric values marked positive must be integers greater
 than zero.
 
-## Application environment (27)
+## Application environment (28)
 
 | Variable | Default / requirement | Valid values and use |
 |---|---|---|
@@ -31,6 +31,7 @@ than zero.
 | `METRICS_ENABLED` | `true` | Exactly `true` exposes `/metrics`; other strings disable it |
 | `RESEND_API_KEY` | Unset outside production; required in production | Trimmed; blank becomes unset |
 | `MAIL_FROM` | `Meridian <no-reply@meridian.local>` outside production; required in production | Sender used by Resend; production requires a verified custom domain rather than `@resend.dev` or `@meridian.local` |
+| `MAIL_TIMEOUT_MS` | `10000` | Positive Resend request timeout in milliseconds, capped at `60000` |
 | `EMAIL_VERIFICATION_REQUIRED` | `true` in production; `false` otherwise | `true` or `false`; production explicitly rejects `false` |
 | `EMAIL_VERIFICATION_TTL_MINUTES` | `1440` | Positive email-verification-token lifetime |
 | `FORGOT_PASSWORD_TTL_MINUTES` | `30` | Positive reset-token lifetime |

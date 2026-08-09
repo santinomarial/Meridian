@@ -35,6 +35,10 @@ fi
 install -d -m 700 "$backup_dir"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 destination="${backup_dir}/meridian-${timestamp}.dump"
+if [[ -e "$destination" || -e "${destination}.sha256" ]]; then
+  echo "Backup already exists for timestamp $timestamp" >&2
+  exit 1
+fi
 partial="$(mktemp "${backup_dir}/.meridian-XXXXXX.dump")"
 trap 'rm -f "$partial"' EXIT
 chmod 600 "$partial"
@@ -44,8 +48,14 @@ docker compose -f "$compose_file" exec -T postgres \
   > "$partial"
 
 test -s "$partial"
+docker compose -f "$compose_file" exec -T postgres \
+  pg_restore --list < "$partial" > /dev/null
 mv "$partial" "$destination"
-sha256sum "$destination" > "${destination}.sha256"
+destination_name="$(basename "$destination")"
+(
+  cd "$backup_dir"
+  sha256sum "$destination_name" > "${destination_name}.sha256"
+)
 chmod 600 "$destination" "${destination}.sha256"
 date -u +%s > "${backup_dir}/last-success.unixtime"
 chmod 600 "${backup_dir}/last-success.unixtime"
