@@ -217,6 +217,14 @@ describe('DocumentManagerService', () => {
     });
   });
 
+  it('destroys loaded documents during module shutdown', async () => {
+    await manager.acquire('doc-1');
+
+    manager.onModuleDestroy();
+
+    expect(manager.size()).toBe(0);
+  });
+
   // ---------------------------------------------------------------------------
   // Teardown — uses Jest fake timers so no real time elapses
   // ---------------------------------------------------------------------------

@@ -343,11 +343,12 @@ jobs:
           POSTGRES_PASSWORD: ci-compose-postgres-password
           LB_COOKIE_SECRET: ci-compose-affinity-secret
           RESEND_API_KEY: re_ci_placeholder
-          MAIL_FROM: Meridian <accounts@example.com>
+          MAIL_FROM: "Meridian <accounts@example.com>"
         run: |
           docker compose -f ../docker-compose.prod.yml up -d --wait postgres
           BACKUP_DIR=/tmp/meridian-compose-backup ../scripts/backup-compose.sh
-          sha256sum --check /tmp/meridian-compose-backup/*.sha256
+          cd /tmp/meridian-compose-backup
+          sha256sum --check *.sha256
       - name: Stop Compose backup smoke services
         if: always()
         env:
@@ -358,5 +359,5 @@ jobs:
           POSTGRES_PASSWORD: ci-compose-postgres-password
           LB_COOKIE_SECRET: ci-compose-affinity-secret
           RESEND_API_KEY: re_ci_placeholder
-          MAIL_FROM: Meridian <accounts@example.com>
+          MAIL_FROM: "Meridian <accounts@example.com>"
         run: docker compose -f ../docker-compose.prod.yml down --volumes

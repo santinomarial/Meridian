@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, type OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
@@ -25,7 +25,7 @@ interface DocEntry {
 }
 
 @Injectable()
-export class DocumentManagerService {
+export class DocumentManagerService implements OnModuleDestroy {
   private readonly docs = new Map<string, DocEntry>();
   // In-flight reload per document so concurrent restore/audit triggers share
   // one rebuild instead of racing each other.
@@ -145,6 +145,10 @@ export class DocumentManagerService {
     return this.docs.size;
   }
 
+  onModuleDestroy(): void {
+    this.destroyAll();
+  }
+
   /**
    * Rebuilds the in-memory Y.Doc from the database, replacing the current
    * instance while preserving the entry's reference count. Used after a
@@ -164,7 +168,7 @@ export class DocumentManagerService {
     return reload;
   }
 
-  /** Destroys all in-memory docs and cancels pending timers. Intended for tests. */
+  /** Destroys all in-memory docs and cancels their awareness/teardown timers. */
   destroyAll(): void {
     for (const entry of this.docs.values()) {
       if (entry.teardownTimer !== undefined) {
