@@ -1,0 +1,36 @@
+groups:
+  - name: meridian
+    rules:
+      - alert: MeridianApiMetricsUnavailable
+        expr: up{job="meridian-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Meridian API metrics are unavailable
+          description: Prometheus has been unable to scrape the Meridian API for two minutes.
+
+      - alert: MeridianPersistenceFailure
+        expr: increase(meridian_persistence_failures_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Meridian failed to persist a collaborative update
+          description: At least one Yjs update failed to commit during the last five minutes.
+
+      - alert: MeridianPersistenceFenced
+        expr: increase(meridian_persistence_fenced_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Meridian fenced a stale collaborative update
+          description: A stale CRDT generation attempted to write during the last five minutes.
+
+      - alert: MeridianPersistenceChainStuck
+        expr: meridian_persistence_write_chains > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Meridian has a sustained persistence write chain
+          description: At least one document has retained an in-flight persistence chain for ten minutes.

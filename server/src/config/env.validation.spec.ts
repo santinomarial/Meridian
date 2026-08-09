@@ -87,4 +87,14 @@ describe('environment validation', () => {
       validateEnv({ ...REQUIRED_ENV, REDIS_REQUIRED: 'true' }).REDIS_REQUIRED,
     ).toBe(true);
   });
+
+  it('bounds the mail provider timeout', () => {
+    expect(validateEnv(REQUIRED_ENV).MAIL_TIMEOUT_MS).toBe(10_000);
+    expect(
+      validateEnv({ ...REQUIRED_ENV, MAIL_TIMEOUT_MS: '2500' }).MAIL_TIMEOUT_MS,
+    ).toBe(2500);
+    expect(() =>
+      validateEnv({ ...REQUIRED_ENV, MAIL_TIMEOUT_MS: '60001' }),
+    ).toThrow(/MAIL_TIMEOUT_MS/);
+  });
 });

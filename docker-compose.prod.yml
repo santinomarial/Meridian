@@ -12,6 +12,7 @@
 services:
   postgres:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: meridian
       POSTGRES_USER: meridian
@@ -29,6 +30,7 @@ services:
 
   redis:
     image: redis:7
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -58,6 +60,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -72,6 +75,7 @@ services:
       ENABLE_TERMINAL: "false"
       RESEND_API_KEY: ${RESEND_API_KEY:?set RESEND_API_KEY for account verification}
       MAIL_FROM: ${MAIL_FROM:?set MAIL_FROM to a sender on a verified domain}
+      MAIL_TIMEOUT_MS: ${MAIL_TIMEOUT_MS:-10000}
       EMAIL_VERIFICATION_REQUIRED: "true"
       EMAIL_VERIFICATION_TTL_MINUTES: ${EMAIL_VERIFICATION_TTL_MINUTES:-1440}
     depends_on:
@@ -95,6 +99,7 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
+    restart: unless-stopped
       args:
         # Same-origin via Caddy: leave empty so the SPA uses window.location.origin.
         # Or set both to https://YOUR_DOMAIN explicitly.
@@ -132,8 +137,28 @@ services:
       web:
         condition: service_started
 
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/monitoring/meridian-alerts.yml:/etc/prometheus/meridian-alerts.yml:ro
+      - prometheus_data:/prometheus
+    # Loopback only: inspect directly on the host or through an SSH tunnel.
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
   caddy_data:
   caddy_config:
+  prometheus_data:

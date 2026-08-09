@@ -23,6 +23,7 @@ function isResendTestingFrom(mailFrom: string): boolean {
 export class MailService {
   private readonly resendApiKey: string | undefined;
   private readonly mailFrom: string;
+  private readonly timeoutMs: number;
   private readonly isDev: boolean;
   private readonly resetTtlMinutes: number;
   private readonly verificationTtlMinutes: number;
@@ -35,6 +36,7 @@ export class MailService {
     const config = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY);
     this.resendApiKey = config.resendApiKey;
     this.mailFrom = config.mailFrom;
+    this.timeoutMs = config.mailTimeoutMs;
     this.isDev = config.nodeEnv === 'development';
     this.resetTtlMinutes = config.forgotPasswordTtlMinutes;
     this.verificationTtlMinutes = config.emailVerificationTtlMinutes ?? 1440;
@@ -106,20 +108,41 @@ export class MailService {
     action: string;
   }): Promise<MailSendResult> {
     if (this.resendApiKey) {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.resendApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: this.mailFrom,
-          to: [message.to],
-          subject: message.subject,
-          html: message.html,
-          text: message.text,
-        }),
-      });
+      let response: Response;
+      try {
+        response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.resendApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: this.mailFrom,
+            to: [message.to],
+            subject: message.subject,
+            html: message.html,
+            text: message.text,
+          }),
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : 'Unknown mail error';
+        this.logger.error(
+          {
+            action: message.action,
+            to: message.to,
+            timeoutMs: this.timeoutMs,
+            err: detail,
+          },
+          'Resend request failed',
+        );
+        return {
+          delivered: false,
+          previewUrl: message.previewUrl,
+          reason: 'provider_rejected',
+          detail: detail.slice(0, 300),
+        };
+      }
 
       if (!response.ok) {
         const body = await response.text();

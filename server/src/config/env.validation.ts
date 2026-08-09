@@ -70,6 +70,7 @@ const envSchema = z.object({
       return trimmed ? trimmed : undefined;
     }),
   MAIL_FROM: z.string().default('Meridian <no-reply@meridian.local>'),
+  MAIL_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(10_000),
   FORGOT_PASSWORD_TTL_MINUTES: z.coerce.number().int().positive().default(30),
   EMAIL_VERIFICATION_REQUIRED: z.enum(['true', 'false']).optional(),
   EMAIL_VERIFICATION_TTL_MINUTES: z.coerce

@@ -34,6 +34,8 @@ export interface AppConfig {
   // Mail / account recovery and verification
   resendApiKey: string | undefined;
   mailFrom: string;
+  /** Maximum duration of one Resend HTTP request. */
+  mailTimeoutMs: number;
   forgotPasswordTtlMinutes: number;
   requireEmailVerification: boolean;
   emailVerificationTtlMinutes: number;

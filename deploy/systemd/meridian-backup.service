@@ -1,0 +1,12 @@
+[Unit]
+Description=Back up Meridian PostgreSQL
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/meridian
+Environment=BACKUP_DIR=/var/backups/meridian
+Environment=BACKUP_RETENTION_DAYS=14
+ExecStart=/opt/meridian/scripts/backup-compose.sh
+UMask=0077

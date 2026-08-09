@@ -31,6 +31,7 @@ export const appConfig = registerAs(APP_CONFIG_KEY, (): AppConfig => {
     metricsEnabled: env.METRICS_ENABLED,
     resendApiKey: env.RESEND_API_KEY,
     mailFrom: env.MAIL_FROM,
+    mailTimeoutMs: env.MAIL_TIMEOUT_MS,
     forgotPasswordTtlMinutes: env.FORGOT_PASSWORD_TTL_MINUTES,
     requireEmailVerification:
       env.NODE_ENV === 'production' || env.EMAIL_VERIFICATION_REQUIRED === 'true',
