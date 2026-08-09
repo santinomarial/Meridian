@@ -96,7 +96,7 @@ Optional/defaulted Compose inputs:
 | `CSP_CONNECT_SRC_EXTRA` | empty |
 | `API_UPSTREAMS` | `api:3000` |
 | `MAIL_TIMEOUT_MS` | `10000` milliseconds |
-| `PROMETHEUS_IMAGE` | `prom/prometheus:v3.5.0` |
+| `PROMETHEUS_IMAGE` | `prom/prometheus:v3.13.2` |
 | `PROMETHEUS_RETENTION` | `15d` |
 
 The API service fixes `NODE_ENV=production`, `PORT=3000`,

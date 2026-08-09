@@ -138,7 +138,7 @@ services:
         condition: service_started
 
   prometheus:
-    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.13.2}
     profiles: ["monitoring"]
     restart: unless-stopped
     command:
