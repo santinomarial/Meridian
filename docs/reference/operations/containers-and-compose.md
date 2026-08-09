@@ -9,6 +9,10 @@ File: [`server/docker-compose.yml`](../../../server/docker-compose.yml).
 | `postgres` | `postgres:16` | 5432 | `postgres_data` volume; database `meridian`, user/password `postgres` |
 | `redis` | `redis:7` | 6379 | `redis_data` volume |
 
+Host ports default to 5432 and 6379. Set `POSTGRES_PORT` and `REDIS_PORT` when
+the defaults are already occupied or when creating an isolated local test
+project; container ports and application defaults are unchanged.
+
 The development file defines no health checks and no application service.
 `npm run infra:up` and `npm run infra:down` run this Compose file from
 `server/`.
