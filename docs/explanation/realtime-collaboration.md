@@ -27,7 +27,7 @@ sequenceDiagram
     Gateway-->>Client: current awareness
     Gateway-->>Client: joinedDocument
     Client->>Gateway: automatic SyncStep2
-    Note over Gateway: ignored; sync endpoint is read-only
+    Note over Gateway: SyncStep2 is ignored because sync is read-only
     Client->>Gateway: client SyncStep1
     Gateway-->>Client: server SyncStep2
     Client->>Client: apply state, then bind Monaco
