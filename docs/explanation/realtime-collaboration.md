@@ -10,7 +10,7 @@ events across replicas; Meridian does not install the Socket.IO Redis adapter.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/realtime-join-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/realtime-join-light.svg">
-  <img alt="Read-only Yjs join and synchronization sequence across the browser, editor gateway, document manager, and PostgreSQL." src="../diagrams/rendered/realtime-join-light.svg">
+  <img alt="Read-only Yjs join and synchronization sequence across the browser, editor gateway, document manager, and PostgreSQL." src="../diagrams/rendered/realtime-join-light.svg" width="860">
 </picture>
 
 The `yjs:sync` handler intentionally accepts only client SyncStep1. It ignores
@@ -28,7 +28,7 @@ once its final local socket releases it.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/realtime-update-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/realtime-update-light.svg">
-  <img alt="Durable realtime update sequence with local relay, PostgreSQL commit, acknowledgement, Redis fan-out, and gap recovery." src="../diagrams/rendered/realtime-update-light.svg">
+  <img alt="Durable realtime update sequence with local relay, PostgreSQL commit, acknowledgement, Redis fan-out, and gap recovery." src="../diagrams/rendered/realtime-update-light.svg" width="900">
 </picture>
 
 Local peers receive the update before PostgreSQL commit for low latency. The

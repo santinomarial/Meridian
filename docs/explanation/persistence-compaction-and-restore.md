@@ -36,7 +36,7 @@ attempts compaction under the same document advisory lock:
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/compaction-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/compaction-light.svg">
-  <img alt="Compaction transaction with generation fencing, snapshot reconstruction, covered update deletion, and commit." src="../diagrams/rendered/compaction-light.svg">
+  <img alt="Compaction transaction with generation fencing, snapshot reconstruction, covered update deletion, and commit." src="../diagrams/rendered/compaction-light.svg" width="900">
 </picture>
 
 Using the same lock for writes and compaction prevents a lower-sequence write
@@ -54,7 +54,7 @@ current CRDT would preserve unwanted pre-restore items.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/restore-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/restore-light.svg">
-  <img alt="Generation-fenced restore sequence across the local replica, PostgreSQL, Redis, peer replicas, and connected browsers." src="../diagrams/rendered/restore-light.svg">
+  <img alt="Generation-fenced restore sequence across the local replica, PostgreSQL, Redis, peer replicas, and connected browsers." src="../diagrams/rendered/restore-light.svg" width="900">
 </picture>
 
 Any old-generation write that reaches its locked transaction after the restore

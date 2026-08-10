@@ -8,7 +8,7 @@ for each complete Socket.IO session.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/scaling-failure-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/scaling-failure-light.svg">
-  <img alt="Multi-replica topology with sticky Socket.IO sessions, shared PostgreSQL durability, and shared Redis live coordination." src="../diagrams/rendered/scaling-failure-light.svg">
+  <img alt="Multi-replica topology with sticky Socket.IO sessions, shared PostgreSQL durability, shared Redis live coordination, and dependency failure effects." src="../diagrams/rendered/scaling-failure-light.svg" width="780">
 </picture>
 
 The client permits WebSocket and HTTP long-polling. Affinity must cover the

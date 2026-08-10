@@ -1,18 +1,31 @@
-flowchart TB
-    API["API<br/>private port 3000"]
-    Prom["Prometheus<br/>host loopback 9090"]
-    Alerts["Alertmanager<br/>host loopback 9093"]
-    Pager["Paging receiver"]
+---
+title: Deployment diagram — Monitoring and backup paths
+---
+flowchart LR
+    Pager["Paging receiver<br/>External alert destination"]
+    Offsite[("Restic repository<br/>Encrypted off-host backup")]
 
-    PG[("PostgreSQL<br/>private port 5432")]
-    Backup["systemd backup job<br/>on production host"]
-    Local["Atomic local dump<br/>+ SHA-256"]
-    Offsite[("Encrypted off-host<br/>restic repository")]
+    subgraph Host["Production host"]
+        direction LR
 
-    Prom -->|"scrape /metrics"| API
-    Prom -->|"firing alerts"| Alerts
-    Alerts -->|"HTTPS webhook"| Pager
+        subgraph Monitoring["Monitoring profile"]
+            direction TB
+            API["API container<br/>Private port 3000"]
+            Prom["Prometheus<br/>Host loopback 9090"]
+            Alerts["Alertmanager<br/>Host loopback 9093"]
+            Prom -->|"scrapes /metrics"| API
+            Prom -->|"routes firing alerts"| Alerts
+        end
 
-    Backup -->|"pg_dump via Compose"| PG
-    Backup -->|"writes atomically"| Local
-    Local -->|"required encrypted upload"| Offsite
+        subgraph Backups["Backup pipeline"]
+            direction TB
+            PG[("PostgreSQL container<br/>Private port 5432")]
+            Backup["systemd backup job<br/>Runs on the production host"]
+            Local["Atomic local dump<br/>SHA-256 integrity file"]
+            Backup -->|"runs pg_dump via Compose"| PG
+            Backup -->|"writes atomically"| Local
+        end
+    end
+
+    Alerts -->|"sends HTTPS webhook"| Pager
+    Local -->|"requires encrypted upload"| Offsite

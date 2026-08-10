@@ -1,18 +1,10 @@
+---
+title: System context — Meridian
+---
 flowchart TB
-    User["Workspace member"]
+    User["Workspace member<br/>Creates and edits shared workspaces"]
+    Meridian["Meridian<br/>Collaborative browser IDE"]
+    Mail["Resend<br/>External account-email delivery"]
 
-    subgraph Meridian["Meridian"]
-        direction LR
-        Client["React SPA<br/>Monaco + Yjs"]
-        API["NestJS API<br/>REST + Socket.IO"]
-        Client <-->|"authenticated HTTP<br/>and realtime events"| API
-    end
-
-    PG[("PostgreSQL<br/>durable system of record")]
-    Redis[("Redis<br/>live coordination")]
-    Mail["Resend<br/>account email"]
-
-    User -->|"uses in a browser"| Client
-    API -->|"transactions"| PG
-    API <-->|"Pub/Sub + counters"| Redis
-    API -.->|"verification, invites,<br/>password recovery"| Mail
+    User -->|"uses in a browser"| Meridian
+    Meridian -->|"sends verification, invitation,<br/>and recovery email"| Mail

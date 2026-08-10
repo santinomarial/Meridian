@@ -1,24 +1,42 @@
+---
+title: Component diagram — NestJS API
+---
 flowchart TB
-    HTTP["REST controllers"]
-    Sockets["Socket.IO gateways"]
-    RequestDomains["HTTP domains<br/>auth, users, workspaces,<br/>invites, documents, versions"]
-    SocketDomains["Realtime domains<br/>Yjs, presence, chat,<br/>terminal in non-production"]
-    Authorization["Authorization + session checks"]
-    Prisma["Prisma service"]
-    RedisService["Redis service"]
-    Observability["Logging + metrics"]
-    PG[("PostgreSQL")]
-    Redis[("Redis")]
+    subgraph API["NestJS API container"]
+        direction TB
 
-    HTTP --> RequestDomains
-    Sockets --> SocketDomains
-    RequestDomains --> Authorization
-    SocketDomains --> Authorization
-    RequestDomains --> Prisma
-    SocketDomains --> Prisma
-    SocketDomains <--> RedisService
+        subgraph Interfaces["Inbound interfaces"]
+            direction LR
+            HTTP["REST controllers<br/>HTTP request boundary"]
+            Sockets["Socket.IO gateways<br/>Realtime event boundary"]
+        end
 
-    Prisma --> PG
-    RedisService <--> Redis
-    HTTP -.-> Observability
-    Sockets -.-> Observability
+        subgraph Domains["Domain components"]
+            direction LR
+            RequestDomains["HTTP domains<br/>Auth, users, workspaces,<br/>invites, documents, versions"]
+            SocketDomains["Realtime domains<br/>Yjs, presence, chat,<br/>non-production terminal"]
+            Authorization["Authorization and sessions<br/>Canonical role and session checks"]
+        end
+
+        subgraph Infrastructure["Infrastructure adapters"]
+            direction LR
+            Prisma["Prisma service<br/>Transactional persistence"]
+            RedisService["Redis service<br/>Pub/Sub and counters"]
+            Observability["Observability<br/>Structured logs and metrics"]
+        end
+
+        HTTP -->|"dispatches validated requests"| RequestDomains
+        Sockets -->|"dispatches authenticated events"| SocketDomains
+        RequestDomains -->|"checks ownership and role"| Authorization
+        SocketDomains -->|"checks session and role"| Authorization
+        RequestDomains -->|"persists domain state"| Prisma
+        SocketDomains -->|"persists durable realtime state"| Prisma
+        SocketDomains -->|"publishes and subscribes"| RedisService
+        RequestDomains -->|"emits request telemetry"| Observability
+        SocketDomains -->|"emits realtime telemetry"| Observability
+    end
+
+    PG[("PostgreSQL<br/>Durable system of record")]
+    Redis[("Redis<br/>Live coordination")]
+    Prisma -->|"executes SQL transactions"| PG
+    RedisService -->|"uses Pub/Sub and atomic counters"| Redis
