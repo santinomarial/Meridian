@@ -63,10 +63,40 @@ bash scripts/smoke-containers.sh
 
 These builds consume local Docker space and execute the production runtime
 smoke checks. The script must end with `Container runtime smoke tests passed`.
-GitHub also scans all three images with its pinned Trivy action; reproduce that
-with the organization's approved Trivy installation rather than assuming the
-hosted action is installed locally. It also validates and scans the pinned
-Prometheus and Alertmanager images and their committed configurations.
+GitHub scans all three images with its pinned Trivy action; reproduce that with
+the organization's approved Trivy installation rather than assuming the hosted
+action is installed locally.
+
+Validate the same monitoring configurations with their native tools:
+
+```bash
+docker run --rm --entrypoint promtool \
+  -v "$PWD/deploy/monitoring:/etc/prometheus:ro" \
+  prom/prometheus:v3.13.2 \
+  check config /etc/prometheus/prometheus.yml
+docker run --rm --entrypoint amtool \
+  -v "$PWD/deploy/monitoring:/etc/alertmanager:ro" \
+  prom/alertmanager@sha256:a42c3e2e8f7cd4fd3a0ce1bd593ca5abe965c97b993476007d6f69c4a2aa33b5 \
+  check-config /etc/alertmanager/alertmanager.yml
+```
+
+Both commands must report a valid configuration. CI also scans these exact
+Prometheus and Alertmanager images for high and critical vulnerabilities.
+
+## Operational script checks
+
+Working directory: repository root. Install `shellcheck`, then run:
+
+```bash
+bash -n server/scripts/backup-pg.sh scripts/backup-compose.sh \
+  scripts/backup-offsite-restic.sh
+shellcheck server/scripts/backup-pg.sh scripts/backup-compose.sh \
+  scripts/backup-offsite-restic.sh scripts/smoke-containers.sh
+```
+
+Both commands must exit without output. The backup job additionally exercises
+the database dump/restore round trip and verifies that the automated backup
+fails closed when its required offsite hook is missing.
 
 ## Service-backed jobs
 
