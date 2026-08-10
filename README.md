@@ -24,9 +24,9 @@ export, and a production-oriented NestJS backend.
 ## Architecture
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/rendered/readme-system-context-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/diagrams/rendered/readme-system-context-light.svg">
-  <img alt="Meridian system context showing a workspace member using the collaborative browser IDE and Meridian sending account email through Resend." src="docs/diagrams/rendered/readme-system-context-light.svg" width="860">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/rendered/readme-overview-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/diagrams/rendered/readme-overview-light.svg">
+  <img alt="Meridian system context showing a workspace member using the collaborative browser IDE and Meridian sending account email through Resend." src="docs/diagrams/rendered/readme-overview-light.svg" width="860">
 </picture>
 
 PostgreSQL is the durability boundary. Redis carries live coordination and
