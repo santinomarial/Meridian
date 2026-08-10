@@ -1,29 +1,17 @@
----
-title: Container diagram — Meridian
----
 flowchart TB
-    User["Workspace member<br/>Uses the collaborative IDE"]
-    Mail["Resend<br/>External account-email provider"]
+    Browser["Browser<br/>React, Monaco, Zustand, Yjs"]
+    Edge["TLS edge + router<br/>Caddy in bundled production"]
+    Static["Static host<br/>Vite build + SPA fallback"]
+    API["NestJS API<br/>REST + Socket.IO"]
+    PG[("PostgreSQL<br/>private durable state")]
+    Redis[("Redis<br/>private live coordination")]
+    Mail["Resend<br/>external account email"]
+    Host["Host PTY + temporary projection<br/>non-production only"]
 
-    subgraph Meridian["Meridian software system"]
-        direction TB
-        Browser["Browser SPA<br/>React, Monaco, Zustand, Yjs<br/>Editing UI and local collaboration state"]
-        Edge["TLS edge and router<br/>Caddy<br/>Terminates TLS and routes traffic"]
-
-        subgraph Private["Private application and data tier"]
-            direction LR
-            Static["Web container<br/>Vite build and SPA fallback<br/>Serves browser assets"]
-            API["API container<br/>NestJS, REST, Socket.IO<br/>Domain logic and realtime coordination"]
-            PG[("PostgreSQL<br/>Durable system of record")]
-            Redis[("Redis<br/>Live fan-out and counters")]
-        end
-
-        Browser -->|"opens HTTPS requests<br/>and a WSS connection"| Edge
-        Edge -->|"serves application routes"| Static
-        Edge -->|"routes API and /socket.io"| API
-        API -->|"Prisma transactions"| PG
-        API -->|"publishes, subscribes,<br/>and updates counters"| Redis
-    end
-
-    User -->|"uses"| Browser
-    API -->|"sends account email"| Mail
+    Browser <-->|"HTTPS + WSS"| Edge
+    Edge -->|"all other paths"| Static
+    Edge -->|"API + /socket.io"| API
+    API -->|"Prisma transactions"| PG
+    API <-->|"Pub/Sub + counters"| Redis
+    API -.->|"action emails"| Mail
+    API -.->|"optional execution"| Host

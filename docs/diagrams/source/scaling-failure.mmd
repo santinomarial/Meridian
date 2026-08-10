@@ -1,22 +1,15 @@
----
-title: Scaling topology and dependency failure effects
----
 flowchart TB
     Clients["Browser clients"]
     LB["Load balancer<br/>Socket.IO session affinity"]
-    APIs["API replicas × N<br/>Local sockets, Y.Docs, and PTYs<br/>Reloadable process-local state"]
-    PG[("Shared PostgreSQL<br/>Durable ordering and state")]
-    Redis[("Shared Redis<br/>Live fan-out and counters")]
+    A["API replica A<br/>local sockets, Y.Docs, PTYs"]
+    B["API replica B<br/>local sockets, Y.Docs, PTYs"]
+    PG[("Shared PostgreSQL<br/>durable ordering + state")]
+    Redis[("Shared Redis<br/>live fan-out + counters")]
 
-    Clients -->|"opens HTTPS and WSS"| LB
-    LB -->|"affinity selects one replica"| APIs
-    APIs -->|"commits transactions<br/>under advisory locks"| PG
-    APIs -->|"publishes and receives committed<br/>and ephemeral events"| Redis
-
-    Restart["Replica restart<br/>Drops local sockets, Y.Docs, and PTYs;<br/>durable documents reload from PostgreSQL"]
-    PGDown["PostgreSQL unavailable<br/>Durable writes and dependent<br/>authorization fail closed"]
-    RedisDown["Redis unavailable<br/>Single-replica editing continues;<br/>cross-replica fan-out pauses"]
-
-    APIs -.->|"restart effect"| Restart
-    PG -.->|"dependency failure"| PGDown
-    Redis -.->|"dependency failure"| RedisDown
+    Clients -->|"HTTPS + WSS"| LB
+    LB -->|"affinity selects one replica"| A
+    LB --> B
+    A -->|"transactions + advisory locks"| PG
+    B --> PG
+    A <-->|"post-commit and ephemeral events"| Redis
+    B <--> Redis

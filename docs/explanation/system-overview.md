@@ -10,7 +10,7 @@ traffic before that fallback.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/system-overview-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/system-overview-light.svg">
-  <img alt="Meridian container diagram showing the browser SPA, Caddy edge, web and API containers, PostgreSQL, Redis, and external account email." src="../diagrams/rendered/system-overview-light.svg" width="760">
+  <img alt="Meridian delivery and runtime architecture from browser and TLS edge through the API, data services, email, and optional terminal host." src="../diagrams/rendered/system-overview-light.svg">
 </picture>
 
 PostgreSQL is the durable system of record. Redis accelerates sequence

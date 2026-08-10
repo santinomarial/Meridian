@@ -22,7 +22,7 @@ Swagger route to secure at the application layer.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/server-components-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/server-components-light.svg">
-  <img alt="Server components showing REST and Socket.IO interfaces, domain modules, authorization, Prisma, Redis, logging, and metrics." src="../diagrams/rendered/server-components-light.svg" width="820">
+  <img alt="Server components showing REST and Socket.IO interfaces, domain modules, authorization, Prisma, Redis, logging, and metrics." src="../diagrams/rendered/server-components-light.svg">
 </picture>
 
 ## HTTP pipeline
@@ -30,7 +30,7 @@ Swagger route to secure at the application layer.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/server-http-pipeline-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/server-http-pipeline-light.svg">
-  <img alt="HTTP request pipeline from parsing and authentication through validation, domain handling, PostgreSQL, and normalized errors." src="../diagrams/rendered/server-http-pipeline-light.svg" width="900">
+  <img alt="HTTP request pipeline from parsing and authentication through validation, domain handling, PostgreSQL, and normalized errors." src="../diagrams/rendered/server-http-pipeline-light.svg">
 </picture>
 
 Body parsing is registered as Express middleware and therefore occurs before

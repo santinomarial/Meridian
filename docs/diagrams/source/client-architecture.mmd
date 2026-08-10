@@ -1,50 +1,23 @@
----
-title: Component diagram — Browser SPA
----
-flowchart LR
-    subgraph Browser["Browser SPA"]
-        direction LR
+flowchart TD
+    Route["React route"] --> Loader["Workspace loader"]
+    Loader --> REST["Credentialed REST client"]
+    REST --> Store["Zustand workspace + UI state"]
+    UI["Explorer, tabs, panels"]
+    Monaco["Monaco editor model"]
+    Binding["y-monaco binding"]
+    YDoc["Active-document Y.Doc"]
+    Awareness["Awareness"]
+    Batch["Merged local updates"]
+    Outbox[("IndexedDB<br/>durable outbox")]
+    Listeners["Session + document listeners"]
+    Socket["Singleton Socket.IO client"]
 
-        subgraph Bootstrap["Workspace bootstrap"]
-            direction TB
-            Route["Route and workspace loader<br/>Starts the selected workspace"]
-            REST["Credentialed REST client<br/>Loads the durable checkpoint"]
-            Store["Zustand workspace state<br/>Drives explorer, tabs, and panels"]
-            Route -->|"loads workspace"| REST
-            REST -->|"stores checkpoint and metadata"| Store
-        end
-
-        subgraph Document["Active collaborative document"]
-            direction TB
-            Monaco["Monaco editor model<br/>Visible text model"]
-            Binding["y-monaco binding<br/>Maps Monaco changes to Yjs"]
-            YDoc["Active Y.Doc<br/>Convergent document state"]
-            Awareness["Awareness state<br/>Presence and cursor metadata"]
-            Batch["Update batcher<br/>Merges local Yjs updates"]
-            Outbox[("IndexedDB outbox<br/>Retains updates until durable ack")]
-
-            Store -->|"bootstraps from checkpoint"| Monaco
-            Monaco -->|"local editor changes"| Binding
-            Binding -->|"applies local changes"| YDoc
-            YDoc -->|"updates editor text"| Binding
-            Binding -->|"renders remote changes"| Monaco
-            Binding -->|"publishes local presence"| Awareness
-            Awareness -->|"renders peer presence"| Binding
-            YDoc -->|"emits local updates"| Batch
-            Batch -->|"queues durably"| Outbox
-        end
-
-        subgraph Transport["Realtime transport"]
-            direction TB
-            Listeners["Session and document listeners<br/>Validate lifecycle and route events"]
-            Socket["Singleton Socket.IO client<br/>One authenticated connection"]
-
-            Outbox -->|"emits or retries yjs:update"| Socket
-            Socket -->|"returns post-commit yjs:ack"| Listeners
-            Listeners -->|"removes acknowledged update"| Outbox
-            Socket -->|"delivers document and awareness events"| Listeners
-            Listeners -->|"applies remote document updates"| YDoc
-            Listeners -->|"applies remote presence"| Awareness
-            Awareness -->|"sends owned presence"| Socket
-        end
-    end
+    Store --> UI
+    Store -->|"checkpoint bootstrap"| Monaco
+    Monaco <--> Binding <--> YDoc
+    Binding <--> Awareness
+    YDoc --> Batch --> Outbox
+    Listeners <--> Socket
+    Listeners <--> YDoc
+    Listeners <--> Awareness
+    Outbox <-->|"emit or resend<br/>post-commit ack removes"| Socket

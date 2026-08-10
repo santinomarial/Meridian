@@ -7,7 +7,7 @@ those models to Socket.IO collaboration.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/client-architecture-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/client-architecture-light.svg">
-  <img alt="Client architecture showing routing, workspace state, Monaco and Yjs collaboration, the durable outbox, and Socket.IO transport." src="../diagrams/rendered/client-architecture-light.svg" width="860">
+  <img alt="Client architecture showing routing, workspace state, Monaco and Yjs collaboration, the durable outbox, and Socket.IO transport." src="../diagrams/rendered/client-architecture-light.svg">
 </picture>
 
 ## Routing and startup

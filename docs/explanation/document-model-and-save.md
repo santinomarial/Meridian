@@ -21,7 +21,7 @@ silently diverging from the CRDT.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/document-save-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/document-save-light.svg">
-  <img alt="Save sequence showing browser outbox durability, post-commit Yjs acknowledgement, and checkpoint creation in PostgreSQL." src="../diagrams/rendered/document-save-light.svg" width="900">
+  <img alt="Save sequence showing browser outbox durability, post-commit Yjs acknowledgement, and checkpoint creation in PostgreSQL." src="../diagrams/rendered/document-save-light.svg">
 </picture>
 
 The client flushes its current binding and waits briefly for pending durable

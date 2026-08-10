@@ -9,7 +9,7 @@ process memory hold coordination state, not additional application records.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/data-identity-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/data-identity-light.svg">
-  <img alt="Identity data model connecting users to sessions, password reset tokens, and email verification tokens." src="../diagrams/rendered/data-identity-light.svg" width="860">
+  <img alt="Identity data model connecting users to sessions, password reset tokens, and email verification tokens." src="../diagrams/rendered/data-identity-light.svg">
 </picture>
 
 ## Workspace access
@@ -17,7 +17,7 @@ process memory hold coordination state, not additional application records.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/data-workspace-access-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/data-workspace-access-light.svg">
-  <img alt="Workspace access data model connecting users, workspaces, memberships, and invitations." src="../diagrams/rendered/data-workspace-access-light.svg" width="720">
+  <img alt="Workspace access data model connecting users, workspaces, memberships, and invitations." src="../diagrams/rendered/data-workspace-access-light.svg">
 </picture>
 
 ## Documents and collaborative history
@@ -25,7 +25,7 @@ process memory hold coordination state, not additional application records.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/data-document-history-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/data-document-history-light.svg">
-  <img alt="Document data model connecting workspaces, documents, versions, collaborative updates, snapshots, and version authors." src="../diagrams/rendered/data-document-history-light.svg" width="860">
+  <img alt="Document data model connecting workspaces, documents, versions, collaborative updates, snapshots, and version authors." src="../diagrams/rendered/data-document-history-light.svg">
 </picture>
 
 Mermaid does not express all nullability in these diagrams. Email verification

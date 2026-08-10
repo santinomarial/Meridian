@@ -1,28 +1,17 @@
----
-title: Deployment diagram — Bundled production runtime
----
 flowchart TB
     Browser["Public browser"]
-    Mail["Resend<br/>External email provider"]
+    Caddy["Caddy on production host<br/>only public service<br/>80 / 443"]
+    Web["Web<br/>private Compose network<br/>8080 internal"]
+    API["API<br/>private Compose network<br/>3000 internal"]
+    Migrate["Migration job<br/>private, one shot"]
+    PG[("PostgreSQL<br/>private Compose network<br/>5432 internal")]
+    Redis[("Redis<br/>private Compose network<br/>6379 internal")]
+    Mail["Resend<br/>external email provider"]
 
-    subgraph Host["Production host"]
-        Caddy["Caddy<br/>Only public service<br/>TCP 80 / 443 · UDP 443"]
-
-        subgraph Network["Private Docker Compose network"]
-            direction LR
-            Web["Web container<br/>Nginx · 8080 internal"]
-            API["API container<br/>NestJS · 3000 internal"]
-            Migrate["Migration job<br/>Prisma · one shot"]
-            PG[("PostgreSQL container<br/>5432 internal")]
-            Redis[("Redis container<br/>6379 internal")]
-        end
-
-        Caddy -->|"serves SPA routes"| Web
-        Caddy -->|"routes API and Socket.IO"| API
-        Migrate -->|"runs prisma migrate deploy"| PG
-        API -->|"commits transactions"| PG
-        API -->|"uses Pub/Sub and counters"| Redis
-    end
-
-    Browser -->|"opens HTTPS and WSS"| Caddy
-    API -->|"sends account email"| Mail
+    Browser <-->|"HTTPS + WSS"| Caddy
+    Caddy -->|"SPA routes"| Web
+    Caddy -->|"API + Socket.IO"| API
+    Migrate -->|"migrate deploy"| PG
+    API -->|"transactions"| PG
+    API <-->|"Pub/Sub + counters"| Redis
+    API -->|"account email"| Mail

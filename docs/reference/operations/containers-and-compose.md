@@ -73,7 +73,7 @@ File: [`docker-compose.prod.yml`](../../../docker-compose.prod.yml).
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../diagrams/rendered/production-runtime-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../../diagrams/rendered/production-runtime-light.svg">
-  <img alt="Production runtime topology showing Caddy routing to private web and API services, PostgreSQL, Redis, migrations, and Resend." src="../../diagrams/rendered/production-runtime-light.svg" width="760">
+  <img alt="Production runtime topology showing Caddy routing to private web and API services, PostgreSQL, Redis, migrations, and Resend." src="../../diagrams/rendered/production-runtime-light.svg">
 </picture>
 
 ### Monitoring and backup topology
@@ -81,7 +81,7 @@ File: [`docker-compose.prod.yml`](../../../docker-compose.prod.yml).
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../diagrams/rendered/production-operations-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../../diagrams/rendered/production-operations-light.svg">
-  <img alt="Production monitoring and backup topology showing Prometheus, Alertmanager paging, PostgreSQL dumps, and encrypted off-host restic storage." src="../../diagrams/rendered/production-operations-light.svg" width="820">
+  <img alt="Production monitoring and backup topology showing Prometheus, Alertmanager paging, PostgreSQL dumps, and encrypted off-host restic storage." src="../../diagrams/rendered/production-operations-light.svg">
 </picture>
 
 Named volumes are `postgres_data`, `redis_data`, `caddy_data`, `caddy_config`,

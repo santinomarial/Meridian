@@ -13,7 +13,7 @@ isolation.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/terminal-projection-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/terminal-projection-light.svg">
-  <img alt="Terminal path through Socket.IO, authorization, PTY lifecycle, the disposable saved-file projection, PostgreSQL, and Redis." src="../diagrams/rendered/terminal-projection-light.svg" width="760">
+  <img alt="Terminal path through Socket.IO, authorization, PTY lifecycle, the disposable saved-file projection, PostgreSQL, and Redis." src="../diagrams/rendered/terminal-projection-light.svg">
 </picture>
 
 Starting the first session for a workspace/user projection recreates a

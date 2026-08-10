@@ -1,10 +1,8 @@
----
-title: Physical ERD — Documents and collaborative history
----
 erDiagram
     USER o|--o{ DOCUMENT_VERSION : authors
     WORKSPACE ||--o{ DOCUMENT : contains
     WORKSPACE ||--o{ DOCUMENT_VERSION : indexes
+    DOCUMENT o|--o{ DOCUMENT : parents
     DOCUMENT ||--o{ DOCUMENT_VERSION : records
     DOCUMENT ||--o{ DOCUMENT_UPDATE : appends
     DOCUMENT ||--o{ SNAPSHOT : compacts
@@ -18,7 +16,7 @@ erDiagram
     DOCUMENT {
         string id PK
         string workspaceId FK
-        string parentId FK "nullable; references DOCUMENT.id"
+        string parentId FK
         DocumentType type
         string path
         string name

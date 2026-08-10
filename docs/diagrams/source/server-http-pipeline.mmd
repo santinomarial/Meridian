@@ -1,39 +1,22 @@
----
-title: Request flow — NestJS HTTP pipeline
----
 flowchart TB
     subgraph Success["Successful request path"]
-        direction TB
-
-        subgraph Ingress["Ingress and request context"]
-            direction LR
-            Request["HTTP request"]
-            Parser["Route-specific parser<br/>then default parser"]
-            Context["Cookie + request ID<br/>middleware"]
-            Throttle["Global throttler"]
-            Request --> Parser --> Context --> Throttle
-        end
-
-        subgraph Dispatch["Authorization and domain handling"]
-            direction LR
-            Auth["Route auth guard"]
-            Validate["DTO validation"]
-            Handler["Controller + service"]
-            DB[("PostgreSQL")]
-            Response["HTTP response"]
-            Auth --> Validate --> Handler
-            Handler -->|"transaction when required"| DB
-            Handler -->|"serialized result"| Response
-        end
-
-        Throttle -->|"allowed request"| Auth
-    end
-
-    subgraph Failure["Normalized failure path"]
         direction LR
-        Error["Global exception filter"] --> ErrorResponse["Normalized error response<br/>request ID + hidden 5xx details"]
+        Request["HTTP request"]
+        Parser["Route-specific parser<br/>then default parser"]
+        Context["Cookie + request ID<br/>middleware"]
+        Throttle["Global throttler"]
+        Auth["Route auth guard"]
+        Validate["DTO validation"]
+        Handler["Controller + service"]
+        DB[("PostgreSQL")]
+        Response["HTTP response"]
+
+        Request --> Parser --> Context --> Throttle --> Auth --> Validate --> Handler
+        Handler --> DB
+        Handler --> Response
     end
 
+    Error["Global exception filter"] --> ErrorResponse["Normalized error response<br/>request ID + hidden 5xx details"]
     Parser -.->|"parse or size error"| Error
     Throttle -.->|"limit exceeded"| Error
     Auth -.->|"authentication failure"| Error

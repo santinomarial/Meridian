@@ -1,34 +1,17 @@
----
-title: Component and trust-boundary view — Development terminal
----
 flowchart TB
-    subgraph BrowserRuntime["Browser"]
-        Browser["xterm.js client<br/>Terminal UI"]
-    end
-
-    subgraph API["NestJS API · non-production terminal"]
-        direction TB
-        Gateway["Terminal gateway<br/>Session, role, and rate limits"]
-        Service["Terminal service<br/>PTY lifecycle and ownership"]
-        Gateway -->|"authorizes terminal commands"| Service
-        Service -->|"streams output and exit events"| Gateway
-    end
-
-    subgraph Host["Development host · not a security sandbox"]
-        direction TB
-        Projection["Projection service<br/>Materializes saved workspace state"]
-        Temp["Disposable temporary tree<br/>One per workspace and user"]
-        PTY["node-pty shell<br/>One per socket"]
-        Projection -->|"materializes files"| Temp
-        Temp -->|"provides cwd and HOME"| PTY
-    end
-
+    Browser["xterm.js client"]
+    Gateway["Terminal gateway<br/>session, role, limits"]
+    Service["Terminal service<br/>PTY lifecycle"]
     DB[("PostgreSQL<br/>Document.content checkpoints")]
-    Redis[("Redis<br/>Best-effort projection coordination")]
+    Projection["Projection service<br/>not a security sandbox"]
+    Temp["Disposable temporary tree<br/>per workspace and user"]
+    PTY["node-pty shell<br/>one per socket"]
+    Redis["Redis Pub/Sub<br/>best-effort projection ops"]
 
-    Browser -->|"opens session; sends input and resize"| Gateway
-    Gateway -->|"streams output and exit"| Browser
-    Service -->|"requests workspace projection"| Projection
-    Service -->|"spawns, writes, resizes, and stops"| PTY
-    Projection -->|"reads saved checkpoints only"| DB
-    Projection -->|"publishes best-effort ops; no replay"| Redis
+    Browser <-->|"Socket.IO terminal events"| Gateway
+    Gateway <--> Service
+    Service -->|"spawn, input, resize, stop"| PTY
+    DB -->|"saved checkpoints only"| Projection
+    Projection -->|"materialize"| Temp
+    Temp -->|"cwd + HOME"| PTY
+    Projection <-.->|"best effort, no replay"| Redis
