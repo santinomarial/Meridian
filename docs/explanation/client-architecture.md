@@ -6,24 +6,28 @@ those models to Socket.IO collaboration.
 
 ```mermaid
 flowchart TD
-    Route["React route"]
-    Loader["Workspace loader"]
-    REST["Credentialed REST client"]
-    Store["Zustand workspace store"]
+    Route["React route"] --> Loader["Workspace loader"]
+    Loader --> REST["Credentialed REST client"]
+    REST --> Store["Zustand workspace + UI state"]
     UI["Explorer, tabs, panels"]
-    Monaco["Monaco model"]
+    Monaco["Monaco editor model"]
     Binding["y-monaco binding"]
-    YDoc["Per-active-document Y.Doc<br/>Awareness + IndexedDB outbox"]
-    Session["Session Socket.IO listeners"]
+    YDoc["Active-document Y.Doc"]
+    Awareness["Awareness"]
+    Batch["Merged local updates"]
+    Outbox[("IndexedDB<br/>durable outbox")]
+    Listeners["Session + document listeners"]
     Socket["Singleton Socket.IO client"]
 
-    Route --> Loader --> REST --> Store
     Store --> UI
-    Store --> Monaco
+    Store -->|"checkpoint bootstrap"| Monaco
     Monaco <--> Binding <--> YDoc
-    Session <--> YDoc
-    Binding <--> Socket
-    Session <--> Socket
+    Binding <--> Awareness
+    YDoc --> Batch --> Outbox
+    Listeners <--> Socket
+    Listeners <--> YDoc
+    Listeners <--> Awareness
+    Outbox <-->|"emit or resend<br/>post-commit ack removes"| Socket
 ```
 
 ## Routing and startup

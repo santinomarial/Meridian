@@ -17,27 +17,62 @@ Swagger is a development and test aid. Bootstrap mounts `/docs` and its JSON
 document only when `NODE_ENV` is not `production`; there is no production
 Swagger route to secure at the application layer.
 
+## Components
+
+```mermaid
+flowchart TB
+    HTTP["REST controllers"]
+    Sockets["Socket.IO gateways"]
+    RequestDomains["HTTP domains<br/>auth, users, workspaces,<br/>invites, documents, versions"]
+    SocketDomains["Realtime domains<br/>Yjs, presence, chat,<br/>terminal in non-production"]
+    Authorization["Authorization + session checks"]
+    Prisma["Prisma service"]
+    RedisService["Redis service"]
+    Observability["Logging + metrics"]
+    PG[("PostgreSQL")]
+    Redis[("Redis")]
+
+    HTTP --> RequestDomains
+    Sockets --> SocketDomains
+    RequestDomains --> Authorization
+    SocketDomains --> Authorization
+    RequestDomains --> Prisma
+    SocketDomains --> Prisma
+    SocketDomains <--> RedisService
+
+    Prisma --> PG
+    RedisService <--> Redis
+    HTTP -.-> Observability
+    Sockets -.-> Observability
+```
+
 ## HTTP pipeline
 
 ```mermaid
-flowchart LR
-    Request["HTTP request"]
-    Parser["Route-specific JSON parser<br/>then default parser"]
-    Cookie["Cookie parser"]
-    RequestId["Request ID middleware"]
-    Throttle["Global throttler"]
-    Auth["Route auth guard"]
-    Validate["Global DTO validation"]
-    Handler["Controller + service"]
-    DB[("PostgreSQL")]
-    Error["Global exception filter"]
+flowchart TB
+    subgraph Success["Successful request path"]
+        direction LR
+        Request["HTTP request"]
+        Parser["Route-specific parser<br/>then default parser"]
+        Context["Cookie + request ID<br/>middleware"]
+        Throttle["Global throttler"]
+        Auth["Route auth guard"]
+        Validate["DTO validation"]
+        Handler["Controller + service"]
+        DB[("PostgreSQL")]
+        Response["HTTP response"]
 
-    Request --> Parser --> Cookie --> RequestId --> Throttle --> Auth --> Validate --> Handler --> DB
-    Parser -.-> Error
-    Throttle -.-> Error
-    Auth -.-> Error
-    Validate -.-> Error
-    Handler -.-> Error
+        Request --> Parser --> Context --> Throttle --> Auth --> Validate --> Handler
+        Handler --> DB
+        Handler --> Response
+    end
+
+    Error["Global exception filter"] --> ErrorResponse["Normalized error response<br/>request ID + hidden 5xx details"]
+    Parser -.->|"parse or size error"| Error
+    Throttle -.->|"limit exceeded"| Error
+    Auth -.->|"authentication failure"| Error
+    Validate -.->|"invalid DTO"| Error
+    Handler -.->|"domain or unexpected error"| Error
 ```
 
 Body parsing is registered as Express middleware and therefore occurs before

@@ -16,18 +16,25 @@ sequenceDiagram
 
     Note over Client: Monaco initially shows REST checkpoint
     Client->>Gateway: joinDocument
+    activate Gateway
     Gateway->>Gateway: validate session and membership
     Gateway->>Manager: acquire document
-    alt cold document
+    activate Manager
+    opt document is cold on this replica
         Manager->>PG: current generation, snapshot, later updates
         PG-->>Manager: durable lineage
         Manager->>Manager: replay, or seed from checkpoint
     end
+    Manager-->>Gateway: loaded Y.Doc + generation
+    deactivate Manager
     Gateway-->>Client: server SyncStep1
     Gateway-->>Client: current awareness
     Gateway-->>Client: joinedDocument
+    deactivate Gateway
+
+    Note over Client,Gateway: Read-only Yjs sync
     Client->>Gateway: automatic SyncStep2
-    Note over Gateway: SyncStep2 is ignored because sync is read-only
+    Note over Gateway,Manager: Automatic SyncStep2 is ignored
     Client->>Gateway: client SyncStep1
     Gateway-->>Client: server SyncStep2
     Client->>Client: apply state, then bind Monaco
@@ -47,19 +54,36 @@ once its final local socket releases it.
 
 ```mermaid
 sequenceDiagram
-    participant Sender
-    participant Gateway
-    participant LocalPeer
+    participant Sender as Editing browser
+    participant Gateway as Local API
+    participant LocalPeer as Local peer
     participant PG as PostgreSQL
     participant Redis
+    participant Remote as Remote API
+    participant RemotePeer as Remote peer
 
     Sender->>Gateway: yjs:update(updateId, bytes)
+    activate Gateway
     Gateway->>Gateway: validate room, session, role, generation, limits
     Gateway-->>LocalPeer: yjs:update
+    Note over Gateway,LocalPeer: Low-latency relay before durability
     Gateway->>PG: insert idempotent generation-aware update
     PG-->>Gateway: committed seq
     Gateway-->>Sender: yjs:ack(updateId, generation, seq)
     Gateway->>Redis: publish committed update
+    deactivate Gateway
+
+    Redis-->>Remote: generation + seq + update
+    activate Remote
+    alt sequence is contiguous
+        Remote->>Remote: apply committed update
+    else sequence gap detected
+        Remote->>PG: load missing committed updates
+        PG-->>Remote: ordered updates through received seq
+        Remote->>Remote: apply catch-up in order
+    end
+    Remote-->>RemotePeer: yjs:update
+    deactivate Remote
 ```
 
 Local peers receive the update before PostgreSQL commit for low latency. The

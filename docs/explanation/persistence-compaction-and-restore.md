@@ -35,16 +35,24 @@ attempts compaction under the same document advisory lock:
 
 ```mermaid
 flowchart TD
-    Lock["Acquire document advisory lock"]
-    Fence{"Generation still current?"}
-    Base["Load latest snapshot"]
-    Updates["Replay durable updates through local committed cutoff"]
-    Snapshot["Insert replacement snapshot"]
-    Delete["Delete covered updates and older snapshots"]
+    Trigger(["Local compaction threshold reached"])
 
-    Lock --> Fence
-    Fence -->|yes| Base --> Updates --> Snapshot --> Delete
-    Fence -->|no| Stop["Stop without mutation"]
+    subgraph Transaction["One PostgreSQL transaction"]
+        direction TD
+        Lock["Acquire document advisory lock"]
+        Fence{"Generation still current?"}
+        Base["Load latest durable snapshot"]
+        Updates["Replay updates through<br/>the committed cutoff"]
+        Snapshot["Insert replacement snapshot"]
+        Delete["Delete covered updates<br/>and older snapshots"]
+
+        Lock --> Fence
+        Fence -->|"yes"| Base --> Updates --> Snapshot --> Delete
+    end
+
+    Trigger --> Lock
+    Fence -->|"no"| Stop(["Exit without mutation"])
+    Delete --> Commit(["Commit compaction"])
 ```
 
 Using the same lock for writes and compaction prevents a lower-sequence write
@@ -61,23 +69,30 @@ current CRDT would preserve unwanted pre-restore items.
 
 ```mermaid
 sequenceDiagram
-    participant HTTP as Restore request
+    participant Caller as Restore caller
+    participant Local as Local API replica
     participant PG as PostgreSQL
-    participant Local as Local restore service
     participant Redis
     participant Peer as Other replica
-    participant Client
+    participant Browsers as Connected browsers
 
-    HTTP->>PG: lock document
-    HTTP->>PG: increment generation, checkpoint restored text,<br/>create version, replace history with seq-0 snapshot
-    PG-->>HTTP: commit new generation
-    HTTP->>Local: applyRestore
+    Caller->>Local: restore document version
+    activate Local
+    Local->>PG: lock document and replace lineage atomically
+    Note over Local,PG: Increment generation, checkpoint restored text,<br/>create version, install seq-0 snapshot
+    PG-->>Local: commit new generation
+    Note over Local,PG: Old-generation writes are now durably fenced
     Local->>Local: reload loaded Y.Doc
-    Local-->>Client: document:restored
+    Local-->>Browsers: document:restored(new generation)
     Local->>Redis: document:<id>:restore
+    deactivate Local
     Redis-->>Peer: restore-control event
-    Peer->>Peer: clear lineage bookkeeping and reload
-    Peer-->>Client: document:restored
+    activate Peer
+    Peer->>PG: load committed generation and snapshot
+    PG-->>Peer: new durable lineage
+    Peer->>Peer: clear old lineage bookkeeping and reload
+    Peer-->>Browsers: document:restored(new generation)
+    deactivate Peer
 ```
 
 Any old-generation write that reaches its locked transaction after the restore

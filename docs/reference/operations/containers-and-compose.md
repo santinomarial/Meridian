@@ -68,6 +68,51 @@ File: [`docker-compose.prod.yml`](../../../docker-compose.prod.yml).
 | `prometheus` | Optional `monitoring` profile; host loopback 9090 only | Waits for API and Alertmanager; scrapes internal `/metrics` and evaluates committed rules |
 | `alertmanager` | Optional `monitoring` profile; host loopback 9093 only | Reads a Docker secret containing the paging webhook URL and routes alerts |
 
+### Runtime topology
+
+```mermaid
+flowchart TB
+    Browser["Public browser"]
+    Caddy["Caddy on production host<br/>only public service<br/>80 / 443"]
+    Web["Web<br/>private Compose network<br/>8080 internal"]
+    API["API<br/>private Compose network<br/>3000 internal"]
+    Migrate["Migration job<br/>private, one shot"]
+    PG[("PostgreSQL<br/>private Compose network<br/>5432 internal")]
+    Redis[("Redis<br/>private Compose network<br/>6379 internal")]
+    Mail["Resend<br/>external email provider"]
+
+    Browser <-->|"HTTPS + WSS"| Caddy
+    Caddy -->|"SPA routes"| Web
+    Caddy -->|"API + Socket.IO"| API
+    Migrate -->|"migrate deploy"| PG
+    API -->|"transactions"| PG
+    API <-->|"Pub/Sub + counters"| Redis
+    API -->|"account email"| Mail
+```
+
+### Monitoring and backup topology
+
+```mermaid
+flowchart TB
+    API["API<br/>private port 3000"]
+    Prom["Prometheus<br/>host loopback 9090"]
+    Alerts["Alertmanager<br/>host loopback 9093"]
+    Pager["Paging receiver"]
+
+    PG[("PostgreSQL<br/>private port 5432")]
+    Backup["systemd backup job<br/>on production host"]
+    Local["Atomic local dump<br/>+ SHA-256"]
+    Offsite[("Encrypted off-host<br/>restic repository")]
+
+    Prom -->|"scrape /metrics"| API
+    Prom -->|"firing alerts"| Alerts
+    Alerts -->|"HTTPS webhook"| Pager
+
+    Backup -->|"pg_dump via Compose"| PG
+    Backup -->|"writes atomically"| Local
+    Local -->|"required encrypted upload"| Offsite
+```
+
 Named volumes are `postgres_data`, `redis_data`, `caddy_data`, `caddy_config`,
 `prometheus_data`, and `alertmanager_data`. Caddy is the only publicly bound
 service; both optional monitoring ports are bound to `127.0.0.1` only. Every

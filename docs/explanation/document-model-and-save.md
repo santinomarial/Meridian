@@ -23,19 +23,35 @@ sequenceDiagram
     participant Editor as Browser editor
     participant Outbox as IndexedDB outbox
     participant Realtime as Realtime gateway
-    participant PG as PostgreSQL
     participant REST as Checkpoint endpoint
+    participant PG as PostgreSQL
 
+    Editor->>Editor: flush merged local Yjs updates
     Editor->>Outbox: enqueue merged Yjs update
+    Outbox-->>Editor: durable browser queue entry
     Editor->>Realtime: yjs:update(updateId)
+    activate Realtime
     Realtime->>PG: commit DocumentUpdate
-    PG-->>Realtime: generation + seq
+    PG-->>Realtime: committed generation + seq
     Realtime-->>Editor: yjs:ack(updateId)
+    deactivate Realtime
     Editor->>Outbox: remove acknowledged update
-    Editor->>REST: checkpoint
-    REST->>PG: lock document and project durable CRDT text
-    REST->>PG: update Document.content and create version if changed
+    Note over Editor,PG: The live edit is now durable Yjs history
+
+    Editor->>Editor: wait for pending outbox entries to drain
+    Editor->>REST: POST checkpoint
+    activate REST
+    REST->>PG: drain local writes and acquire document lock
+    REST->>PG: project durable CRDT text
+    alt projected text changed
+        REST->>PG: update Document.content and create version
+    else projected text unchanged
+        REST->>PG: keep existing checkpoint
+    end
+    PG-->>REST: transaction committed
     REST-->>Editor: saved checkpoint
+    deactivate REST
+    Note over Editor,PG: Export, versions, REST reads, and terminal now see the checkpoint
 ```
 
 The client flushes its current binding and waits briefly for pending durable

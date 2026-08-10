@@ -11,17 +11,23 @@ isolation.
 ## Projection model
 
 ```mermaid
-flowchart LR
-    DB[("PostgreSQL<br/>Document.content checkpoints")]
-    Materialize["Terminal sandbox service"]
-    Temp["Temporary projection<br/>workspace/user"]
-    PTY["PTY shell<br/>one per socket"]
+flowchart TB
     Browser["xterm.js client"]
+    Gateway["Terminal gateway<br/>session, role, limits"]
+    Service["Terminal service<br/>PTY lifecycle"]
+    DB[("PostgreSQL<br/>Document.content checkpoints")]
+    Projection["Projection service<br/>not a security sandbox"]
+    Temp["Disposable temporary tree<br/>per workspace and user"]
+    PTY["node-pty shell<br/>one per socket"]
     Redis["Redis Pub/Sub<br/>best-effort projection ops"]
 
-    DB -->|"materialize saved tree"| Materialize --> Temp
-    Temp --> PTY <--> Browser
-    Materialize <--> Redis
+    Browser <-->|"Socket.IO terminal events"| Gateway
+    Gateway <--> Service
+    Service -->|"spawn, input, resize, stop"| PTY
+    DB -->|"saved checkpoints only"| Projection
+    Projection -->|"materialize"| Temp
+    Temp -->|"cwd + HOME"| PTY
+    Projection <-.->|"best effort, no replay"| Redis
 ```
 
 Starting the first session for a workspace/user projection recreates a

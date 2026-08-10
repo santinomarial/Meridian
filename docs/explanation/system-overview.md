@@ -8,22 +8,23 @@ but the static host must provide SPA fallback and route API and Socket.IO
 traffic before that fallback.
 
 ```mermaid
-flowchart LR
+flowchart TB
     Browser["Browser<br/>React, Monaco, Zustand, Yjs"]
-    Static["Static host<br/>Vite build"]
+    Edge["TLS edge + router<br/>Caddy in bundled production"]
+    Static["Static host<br/>Vite build + SPA fallback"]
     API["NestJS API<br/>REST + Socket.IO"]
-    PG[("PostgreSQL<br/>durable application and CRDT state")]
-    Redis[("Redis<br/>optional coordination")]
-    Mail["Resend<br/>required for production identity"]
-    Host["Host PTY + temporary files<br/>optional terminal"]
+    PG[("PostgreSQL<br/>private durable state")]
+    Redis[("Redis<br/>private live coordination")]
+    Mail["Resend<br/>external account email"]
+    Host["Host PTY + temporary projection<br/>non-production only"]
 
-    Browser -->|"static assets"| Static
-    Browser -->|"credentialed HTTP"| API
-    Browser <-->|"Socket.IO"| API
+    Browser <-->|"HTTPS + WSS"| Edge
+    Edge -->|"all other paths"| Static
+    Edge -->|"API + /socket.io"| API
     API -->|"Prisma transactions"| PG
-    API <-->|"Pub/Sub and counters"| Redis
+    API <-->|"Pub/Sub + counters"| Redis
     API -.->|"action emails"| Mail
-    API -.->|"saved-file projection and execution"| Host
+    API -.->|"optional execution"| Host
 ```
 
 PostgreSQL is the durable system of record. Redis accelerates sequence

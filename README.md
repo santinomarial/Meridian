@@ -24,25 +24,24 @@ export, and a production-oriented NestJS backend.
 ## Architecture
 
 ```mermaid
-flowchart LR
-    Browser["Browser<br/>React, Monaco, Yjs"]
-    Edge["Caddy<br/>TLS and routing"]
-    Web["Static web image"]
-    API["NestJS API<br/>REST and Socket.IO"]
+flowchart TB
+    User["Workspace member"]
+
+    subgraph Meridian["Meridian"]
+        direction LR
+        Client["React SPA<br/>Monaco + Yjs"]
+        API["NestJS API<br/>REST + Socket.IO"]
+        Client <-->|"authenticated HTTP<br/>and realtime events"| API
+    end
+
     PG[("PostgreSQL<br/>durable system of record")]
     Redis[("Redis<br/>live coordination")]
     Mail["Resend<br/>account email"]
-    Prom["Prometheus"]
-    Alerts["Alertmanager<br/>paging webhook"]
 
-    Browser --> Edge
-    Edge --> Web
-    Edge --> API
-    API --> PG
-    API <--> Redis
-    API --> Mail
-    Prom -->|"scrape /metrics"| API
-    Prom --> Alerts
+    User -->|"uses in a browser"| Client
+    API -->|"transactions"| PG
+    API <-->|"Pub/Sub + counters"| Redis
+    API -.->|"verification, invites,<br/>password recovery"| Mail
 ```
 
 PostgreSQL is the durability boundary. Redis carries live coordination and
