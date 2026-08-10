@@ -1,0 +1,17 @@
+flowchart TB
+    Browser["Public browser"]
+    Caddy["Caddy on production host<br/>only public service<br/>80 / 443"]
+    Web["Web<br/>private Compose network<br/>8080 internal"]
+    API["API<br/>private Compose network<br/>3000 internal"]
+    Migrate["Migration job<br/>private, one shot"]
+    PG[("PostgreSQL<br/>private Compose network<br/>5432 internal")]
+    Redis[("Redis<br/>private Compose network<br/>6379 internal")]
+    Mail["Resend<br/>external email provider"]
+
+    Browser <-->|"HTTPS + WSS"| Caddy
+    Caddy -->|"SPA routes"| Web
+    Caddy -->|"API + Socket.IO"| API
+    Migrate -->|"migrate deploy"| PG
+    API -->|"transactions"| PG
+    API <-->|"Pub/Sub + counters"| Redis
+    API -->|"account email"| Mail

@@ -5,23 +5,11 @@ process-local. A single API process is therefore the simplest topology.
 Multiple replicas require shared PostgreSQL, shared private Redis, and affinity
 for each complete Socket.IO session.
 
-```mermaid
-flowchart TB
-    Clients["Browser clients"]
-    LB["Load balancer<br/>Socket.IO session affinity"]
-    A["API replica A<br/>local sockets, Y.Docs, PTYs"]
-    B["API replica B<br/>local sockets, Y.Docs, PTYs"]
-    PG[("Shared PostgreSQL<br/>durable ordering + state")]
-    Redis[("Shared Redis<br/>live fan-out + counters")]
-
-    Clients -->|"HTTPS + WSS"| LB
-    LB -->|"affinity selects one replica"| A
-    LB --> B
-    A -->|"transactions + advisory locks"| PG
-    B --> PG
-    A <-->|"post-commit and ephemeral events"| Redis
-    B <--> Redis
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/scaling-failure-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/scaling-failure-light.svg">
+  <img alt="Multi-replica topology with sticky Socket.IO sessions, shared PostgreSQL durability, and shared Redis live coordination." src="../diagrams/rendered/scaling-failure-light.svg">
+</picture>
 
 The client permits WebSocket and HTTP long-polling. Affinity must cover the
 handshake, polling requests, transport upgrade, and remaining connection—not

@@ -1,0 +1,50 @@
+erDiagram
+    USER o|--o{ DOCUMENT_VERSION : authors
+    WORKSPACE ||--o{ DOCUMENT : contains
+    WORKSPACE ||--o{ DOCUMENT_VERSION : indexes
+    DOCUMENT o|--o{ DOCUMENT : parents
+    DOCUMENT ||--o{ DOCUMENT_VERSION : records
+    DOCUMENT ||--o{ DOCUMENT_UPDATE : appends
+    DOCUMENT ||--o{ SNAPSHOT : compacts
+
+    USER {
+        string id PK
+    }
+    WORKSPACE {
+        string id PK
+    }
+    DOCUMENT {
+        string id PK
+        string workspaceId FK
+        string parentId FK
+        DocumentType type
+        string path
+        string name
+        string language
+        string content
+        int crdtGeneration
+    }
+    DOCUMENT_VERSION {
+        string id PK
+        string documentId FK
+        string workspaceId FK
+        string createdById FK
+        int versionNumber
+        string content
+        string message
+    }
+    DOCUMENT_UPDATE {
+        string id PK
+        string documentId FK
+        int generation
+        int seq
+        string updateId
+        bytes update
+    }
+    SNAPSHOT {
+        string id PK
+        string documentId FK
+        int generation
+        int seq
+        bytes state
+    }

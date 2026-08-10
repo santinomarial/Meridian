@@ -1,0 +1,18 @@
+flowchart TB
+    API["API<br/>private port 3000"]
+    Prom["Prometheus<br/>host loopback 9090"]
+    Alerts["Alertmanager<br/>host loopback 9093"]
+    Pager["Paging receiver"]
+
+    PG[("PostgreSQL<br/>private port 5432")]
+    Backup["systemd backup job<br/>on production host"]
+    Local["Atomic local dump<br/>+ SHA-256"]
+    Offsite[("Encrypted off-host<br/>restic repository")]
+
+    Prom -->|"scrape /metrics"| API
+    Prom -->|"firing alerts"| Alerts
+    Alerts -->|"HTTPS webhook"| Pager
+
+    Backup -->|"pg_dump via Compose"| PG
+    Backup -->|"writes atomically"| Local
+    Local -->|"required encrypted upload"| Offsite

@@ -1,0 +1,31 @@
+sequenceDiagram
+    participant Sender as Editing browser
+    participant Gateway as Local API
+    participant LocalPeer as Local peer
+    participant PG as PostgreSQL
+    participant Redis
+    participant Remote as Remote API
+    participant RemotePeer as Remote peer
+
+    Sender->>Gateway: yjs:update(updateId, bytes)
+    activate Gateway
+    Gateway->>Gateway: validate room, session, role, generation, limits
+    Gateway-->>LocalPeer: yjs:update
+    Note over Gateway,LocalPeer: Low-latency relay before durability
+    Gateway->>PG: insert idempotent generation-aware update
+    PG-->>Gateway: committed seq
+    Gateway-->>Sender: yjs:ack(updateId, generation, seq)
+    Gateway->>Redis: publish committed update
+    deactivate Gateway
+
+    Redis-->>Remote: generation + seq + update
+    activate Remote
+    alt sequence is contiguous
+        Remote->>Remote: apply committed update
+    else sequence gap detected
+        Remote->>PG: load missing committed updates
+        PG-->>Remote: ordered updates through received seq
+        Remote->>Remote: apply catch-up in order
+    end
+    Remote-->>RemotePeer: yjs:update
+    deactivate Remote

@@ -1,0 +1,34 @@
+erDiagram
+    USER ||--o{ SESSION : authenticates
+    USER ||--o{ PASSWORD_RESET_TOKEN : resets
+    USER ||--o{ EMAIL_VERIFICATION_TOKEN : verifies
+
+    USER {
+        string id PK
+        string email UK
+        datetime emailVerifiedAt
+        string passwordHash
+        string displayName
+        string avatarUrl
+    }
+    SESSION {
+        string id PK
+        string userId FK
+        string jti UK
+        datetime expiresAt
+        datetime revokedAt
+    }
+    PASSWORD_RESET_TOKEN {
+        string id PK
+        string userId FK
+        string tokenHash UK
+        datetime expiresAt
+        datetime usedAt
+    }
+    EMAIL_VERIFICATION_TOKEN {
+        string id PK
+        string userId FK
+        string tokenHash UK
+        datetime expiresAt
+        datetime usedAt
+    }

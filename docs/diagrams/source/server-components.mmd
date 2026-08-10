@@ -1,0 +1,24 @@
+flowchart TB
+    HTTP["REST controllers"]
+    Sockets["Socket.IO gateways"]
+    RequestDomains["HTTP domains<br/>auth, users, workspaces,<br/>invites, documents, versions"]
+    SocketDomains["Realtime domains<br/>Yjs, presence, chat,<br/>terminal in non-production"]
+    Authorization["Authorization + session checks"]
+    Prisma["Prisma service"]
+    RedisService["Redis service"]
+    Observability["Logging + metrics"]
+    PG[("PostgreSQL")]
+    Redis[("Redis")]
+
+    HTTP --> RequestDomains
+    Sockets --> SocketDomains
+    RequestDomains --> Authorization
+    SocketDomains --> Authorization
+    RequestDomains --> Prisma
+    SocketDomains --> Prisma
+    SocketDomains <--> RedisService
+
+    Prisma --> PG
+    RedisService <--> Redis
+    HTTP -.-> Observability
+    Sockets -.-> Observability

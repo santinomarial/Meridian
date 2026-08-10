@@ -1,0 +1,30 @@
+sequenceDiagram
+    participant Client as Browser
+    participant Gateway as Editor gateway
+    participant Manager as Document manager
+    participant PG as PostgreSQL
+
+    Note over Client: Monaco initially shows REST checkpoint
+    Client->>Gateway: joinDocument
+    activate Gateway
+    Gateway->>Gateway: validate session and membership
+    Gateway->>Manager: acquire document
+    activate Manager
+    opt document is cold on this replica
+        Manager->>PG: current generation, snapshot, later updates
+        PG-->>Manager: durable lineage
+        Manager->>Manager: replay, or seed from checkpoint
+    end
+    Manager-->>Gateway: loaded Y.Doc + generation
+    deactivate Manager
+    Gateway-->>Client: server SyncStep1
+    Gateway-->>Client: current awareness
+    Gateway-->>Client: joinedDocument
+    deactivate Gateway
+
+    Note over Client,Gateway: Read-only Yjs sync
+    Client->>Gateway: automatic SyncStep2
+    Note over Gateway,Manager: Automatic SyncStep2 is ignored
+    Client->>Gateway: client SyncStep1
+    Gateway-->>Client: server SyncStep2
+    Client->>Client: apply state, then bind Monaco

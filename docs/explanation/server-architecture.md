@@ -19,61 +19,19 @@ Swagger route to secure at the application layer.
 
 ## Components
 
-```mermaid
-flowchart TB
-    HTTP["REST controllers"]
-    Sockets["Socket.IO gateways"]
-    RequestDomains["HTTP domains<br/>auth, users, workspaces,<br/>invites, documents, versions"]
-    SocketDomains["Realtime domains<br/>Yjs, presence, chat,<br/>terminal in non-production"]
-    Authorization["Authorization + session checks"]
-    Prisma["Prisma service"]
-    RedisService["Redis service"]
-    Observability["Logging + metrics"]
-    PG[("PostgreSQL")]
-    Redis[("Redis")]
-
-    HTTP --> RequestDomains
-    Sockets --> SocketDomains
-    RequestDomains --> Authorization
-    SocketDomains --> Authorization
-    RequestDomains --> Prisma
-    SocketDomains --> Prisma
-    SocketDomains <--> RedisService
-
-    Prisma --> PG
-    RedisService <--> Redis
-    HTTP -.-> Observability
-    Sockets -.-> Observability
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/server-components-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/server-components-light.svg">
+  <img alt="Server components showing REST and Socket.IO interfaces, domain modules, authorization, Prisma, Redis, logging, and metrics." src="../diagrams/rendered/server-components-light.svg">
+</picture>
 
 ## HTTP pipeline
 
-```mermaid
-flowchart TB
-    subgraph Success["Successful request path"]
-        direction LR
-        Request["HTTP request"]
-        Parser["Route-specific parser<br/>then default parser"]
-        Context["Cookie + request ID<br/>middleware"]
-        Throttle["Global throttler"]
-        Auth["Route auth guard"]
-        Validate["DTO validation"]
-        Handler["Controller + service"]
-        DB[("PostgreSQL")]
-        Response["HTTP response"]
-
-        Request --> Parser --> Context --> Throttle --> Auth --> Validate --> Handler
-        Handler --> DB
-        Handler --> Response
-    end
-
-    Error["Global exception filter"] --> ErrorResponse["Normalized error response<br/>request ID + hidden 5xx details"]
-    Parser -.->|"parse or size error"| Error
-    Throttle -.->|"limit exceeded"| Error
-    Auth -.->|"authentication failure"| Error
-    Validate -.->|"invalid DTO"| Error
-    Handler -.->|"domain or unexpected error"| Error
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/server-http-pipeline-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/server-http-pipeline-light.svg">
+  <img alt="HTTP request pipeline from parsing and authentication through validation, domain handling, PostgreSQL, and normalized errors." src="../diagrams/rendered/server-http-pipeline-light.svg">
+</picture>
 
 Body parsing is registered as Express middleware and therefore occurs before
 Nest guards and throttling. Larger document and bulk-import routes have

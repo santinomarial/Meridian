@@ -18,41 +18,11 @@ silently diverging from the CRDT.
 
 ## Save as a consistency boundary
 
-```mermaid
-sequenceDiagram
-    participant Editor as Browser editor
-    participant Outbox as IndexedDB outbox
-    participant Realtime as Realtime gateway
-    participant REST as Checkpoint endpoint
-    participant PG as PostgreSQL
-
-    Editor->>Editor: flush merged local Yjs updates
-    Editor->>Outbox: enqueue merged Yjs update
-    Outbox-->>Editor: durable browser queue entry
-    Editor->>Realtime: yjs:update(updateId)
-    activate Realtime
-    Realtime->>PG: commit DocumentUpdate
-    PG-->>Realtime: committed generation + seq
-    Realtime-->>Editor: yjs:ack(updateId)
-    deactivate Realtime
-    Editor->>Outbox: remove acknowledged update
-    Note over Editor,PG: The live edit is now durable Yjs history
-
-    Editor->>Editor: wait for pending outbox entries to drain
-    Editor->>REST: POST checkpoint
-    activate REST
-    REST->>PG: drain local writes and acquire document lock
-    REST->>PG: project durable CRDT text
-    alt projected text changed
-        REST->>PG: update Document.content and create version
-    else projected text unchanged
-        REST->>PG: keep existing checkpoint
-    end
-    PG-->>REST: transaction committed
-    REST-->>Editor: saved checkpoint
-    deactivate REST
-    Note over Editor,PG: Export, versions, REST reads, and terminal now see the checkpoint
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/document-save-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/document-save-light.svg">
+  <img alt="Save sequence showing browser outbox durability, post-commit Yjs acknowledgement, and checkpoint creation in PostgreSQL." src="../diagrams/rendered/document-save-light.svg">
+</picture>
 
 The client flushes its current binding and waits briefly for pending durable
 acknowledgements before requesting the checkpoint. The server also drains its

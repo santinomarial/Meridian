@@ -1,0 +1,25 @@
+sequenceDiagram
+    participant Caller as Restore caller
+    participant Local as Local API replica
+    participant PG as PostgreSQL
+    participant Redis
+    participant Peer as Other replica
+    participant Browsers as Connected browsers
+
+    Caller->>Local: restore document version
+    activate Local
+    Local->>PG: lock document and replace lineage atomically
+    Note over Local,PG: Increment generation, checkpoint restored text,<br/>create version, install seq-0 snapshot
+    PG-->>Local: commit new generation
+    Note over Local,PG: Old-generation writes are now durably fenced
+    Local->>Local: reload loaded Y.Doc
+    Local-->>Browsers: document:restored(new generation)
+    Local->>Redis: document:<id>:restore
+    deactivate Local
+    Redis-->>Peer: restore-control event
+    activate Peer
+    Peer->>PG: load committed generation and snapshot
+    PG-->>Peer: new durable lineage
+    Peer->>Peer: clear old lineage bookkeeping and reload
+    Peer-->>Browsers: document:restored(new generation)
+    deactivate Peer

@@ -1,0 +1,19 @@
+flowchart TD
+    Trigger(["Local compaction threshold reached"])
+
+    subgraph Transaction["One PostgreSQL transaction"]
+        direction TD
+        Lock["Acquire document advisory lock"]
+        Fence{"Generation still current?"}
+        Base["Load latest durable snapshot"]
+        Updates["Replay updates through<br/>the committed cutoff"]
+        Snapshot["Insert replacement snapshot"]
+        Delete["Delete covered updates<br/>and older snapshots"]
+
+        Lock --> Fence
+        Fence -->|"yes"| Base --> Updates --> Snapshot --> Delete
+    end
+
+    Trigger --> Lock
+    Fence -->|"no"| Stop(["Exit without mutation"])
+    Delete --> Commit(["Commit compaction"])

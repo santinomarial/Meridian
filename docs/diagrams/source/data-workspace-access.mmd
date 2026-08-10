@@ -1,0 +1,31 @@
+erDiagram
+    USER ||--o{ WORKSPACE : owns
+    USER ||--o{ WORKSPACE_MEMBER : joins
+    WORKSPACE ||--o{ WORKSPACE_MEMBER : contains
+    USER ||--o{ INVITE : sends
+    WORKSPACE ||--o{ INVITE : issues
+
+    USER {
+        string id PK
+    }
+    WORKSPACE {
+        string id PK
+        string ownerId FK
+        string name
+    }
+    WORKSPACE_MEMBER {
+        string id PK
+        string workspaceId FK
+        string userId FK
+        WorkspaceRole role
+    }
+    INVITE {
+        string id PK
+        string tokenHash UK
+        string workspaceId FK
+        string invitedById FK
+        string email
+        WorkspaceRole role
+        datetime expiresAt
+        datetime acceptedAt
+    }

@@ -6,133 +6,27 @@ process memory hold coordination state, not additional application records.
 
 ## Identity lifecycle
 
-```mermaid
-erDiagram
-    USER ||--o{ SESSION : authenticates
-    USER ||--o{ PASSWORD_RESET_TOKEN : resets
-    USER ||--o{ EMAIL_VERIFICATION_TOKEN : verifies
-
-    USER {
-        string id PK
-        string email UK
-        datetime emailVerifiedAt
-        string passwordHash
-        string displayName
-        string avatarUrl
-    }
-    SESSION {
-        string id PK
-        string userId FK
-        string jti UK
-        datetime expiresAt
-        datetime revokedAt
-    }
-    PASSWORD_RESET_TOKEN {
-        string id PK
-        string userId FK
-        string tokenHash UK
-        datetime expiresAt
-        datetime usedAt
-    }
-    EMAIL_VERIFICATION_TOKEN {
-        string id PK
-        string userId FK
-        string tokenHash UK
-        datetime expiresAt
-        datetime usedAt
-    }
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/data-identity-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/data-identity-light.svg">
+  <img alt="Identity data model connecting users to sessions, password reset tokens, and email verification tokens." src="../diagrams/rendered/data-identity-light.svg">
+</picture>
 
 ## Workspace access
 
-```mermaid
-erDiagram
-    USER ||--o{ WORKSPACE : owns
-    USER ||--o{ WORKSPACE_MEMBER : joins
-    WORKSPACE ||--o{ WORKSPACE_MEMBER : contains
-    USER ||--o{ INVITE : sends
-    WORKSPACE ||--o{ INVITE : issues
-
-    USER {
-        string id PK
-    }
-    WORKSPACE {
-        string id PK
-        string ownerId FK
-        string name
-    }
-    WORKSPACE_MEMBER {
-        string id PK
-        string workspaceId FK
-        string userId FK
-        WorkspaceRole role
-    }
-    INVITE {
-        string id PK
-        string tokenHash UK
-        string workspaceId FK
-        string invitedById FK
-        string email
-        WorkspaceRole role
-        datetime expiresAt
-        datetime acceptedAt
-    }
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/data-workspace-access-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/data-workspace-access-light.svg">
+  <img alt="Workspace access data model connecting users, workspaces, memberships, and invitations." src="../diagrams/rendered/data-workspace-access-light.svg">
+</picture>
 
 ## Documents and collaborative history
 
-```mermaid
-erDiagram
-    USER o|--o{ DOCUMENT_VERSION : authors
-    WORKSPACE ||--o{ DOCUMENT : contains
-    WORKSPACE ||--o{ DOCUMENT_VERSION : indexes
-    DOCUMENT o|--o{ DOCUMENT : parents
-    DOCUMENT ||--o{ DOCUMENT_VERSION : records
-    DOCUMENT ||--o{ DOCUMENT_UPDATE : appends
-    DOCUMENT ||--o{ SNAPSHOT : compacts
-
-    USER {
-        string id PK
-    }
-    WORKSPACE {
-        string id PK
-    }
-    DOCUMENT {
-        string id PK
-        string workspaceId FK
-        string parentId FK
-        DocumentType type
-        string path
-        string name
-        string language
-        string content
-        int crdtGeneration
-    }
-    DOCUMENT_VERSION {
-        string id PK
-        string documentId FK
-        string workspaceId FK
-        string createdById FK
-        int versionNumber
-        string content
-        string message
-    }
-    DOCUMENT_UPDATE {
-        string id PK
-        string documentId FK
-        int generation
-        int seq
-        string updateId
-        bytes update
-    }
-    SNAPSHOT {
-        string id PK
-        string documentId FK
-        int generation
-        int seq
-        bytes state
-    }
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/data-document-history-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/data-document-history-light.svg">
+  <img alt="Document data model connecting workspaces, documents, versions, collaborative updates, snapshots, and version authors." src="../diagrams/rendered/data-document-history-light.svg">
+</picture>
 
 Mermaid does not express all nullability in these diagrams. Email verification
 time, password hashes, and avatars can be absent; invite email and acceptance

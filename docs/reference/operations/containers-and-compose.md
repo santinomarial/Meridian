@@ -70,48 +70,19 @@ File: [`docker-compose.prod.yml`](../../../docker-compose.prod.yml).
 
 ### Runtime topology
 
-```mermaid
-flowchart TB
-    Browser["Public browser"]
-    Caddy["Caddy on production host<br/>only public service<br/>80 / 443"]
-    Web["Web<br/>private Compose network<br/>8080 internal"]
-    API["API<br/>private Compose network<br/>3000 internal"]
-    Migrate["Migration job<br/>private, one shot"]
-    PG[("PostgreSQL<br/>private Compose network<br/>5432 internal")]
-    Redis[("Redis<br/>private Compose network<br/>6379 internal")]
-    Mail["Resend<br/>external email provider"]
-
-    Browser <-->|"HTTPS + WSS"| Caddy
-    Caddy -->|"SPA routes"| Web
-    Caddy -->|"API + Socket.IO"| API
-    Migrate -->|"migrate deploy"| PG
-    API -->|"transactions"| PG
-    API <-->|"Pub/Sub + counters"| Redis
-    API -->|"account email"| Mail
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../diagrams/rendered/production-runtime-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../diagrams/rendered/production-runtime-light.svg">
+  <img alt="Production runtime topology showing Caddy routing to private web and API services, PostgreSQL, Redis, migrations, and Resend." src="../../diagrams/rendered/production-runtime-light.svg">
+</picture>
 
 ### Monitoring and backup topology
 
-```mermaid
-flowchart TB
-    API["API<br/>private port 3000"]
-    Prom["Prometheus<br/>host loopback 9090"]
-    Alerts["Alertmanager<br/>host loopback 9093"]
-    Pager["Paging receiver"]
-
-    PG[("PostgreSQL<br/>private port 5432")]
-    Backup["systemd backup job<br/>on production host"]
-    Local["Atomic local dump<br/>+ SHA-256"]
-    Offsite[("Encrypted off-host<br/>restic repository")]
-
-    Prom -->|"scrape /metrics"| API
-    Prom -->|"firing alerts"| Alerts
-    Alerts -->|"HTTPS webhook"| Pager
-
-    Backup -->|"pg_dump via Compose"| PG
-    Backup -->|"writes atomically"| Local
-    Local -->|"required encrypted upload"| Offsite
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../diagrams/rendered/production-operations-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../diagrams/rendered/production-operations-light.svg">
+  <img alt="Production monitoring and backup topology showing Prometheus, Alertmanager paging, PostgreSQL dumps, and encrypted off-host restic storage." src="../../diagrams/rendered/production-operations-light.svg">
+</picture>
 
 Named volumes are `postgres_data`, `redis_data`, `caddy_data`, `caddy_config`,
 `prometheus_data`, and `alertmanager_data`. Caddy is the only publicly bound

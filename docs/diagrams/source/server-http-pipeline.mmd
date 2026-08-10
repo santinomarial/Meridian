@@ -1,0 +1,24 @@
+flowchart TB
+    subgraph Success["Successful request path"]
+        direction LR
+        Request["HTTP request"]
+        Parser["Route-specific parser<br/>then default parser"]
+        Context["Cookie + request ID<br/>middleware"]
+        Throttle["Global throttler"]
+        Auth["Route auth guard"]
+        Validate["DTO validation"]
+        Handler["Controller + service"]
+        DB[("PostgreSQL")]
+        Response["HTTP response"]
+
+        Request --> Parser --> Context --> Throttle --> Auth --> Validate --> Handler
+        Handler --> DB
+        Handler --> Response
+    end
+
+    Error["Global exception filter"] --> ErrorResponse["Normalized error response<br/>request ID + hidden 5xx details"]
+    Parser -.->|"parse or size error"| Error
+    Throttle -.->|"limit exceeded"| Error
+    Auth -.->|"authentication failure"| Error
+    Validate -.->|"invalid DTO"| Error
+    Handler -.->|"domain or unexpected error"| Error

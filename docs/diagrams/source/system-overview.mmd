@@ -1,0 +1,17 @@
+flowchart TB
+    Browser["Browser<br/>React, Monaco, Zustand, Yjs"]
+    Edge["TLS edge + router<br/>Caddy in bundled production"]
+    Static["Static host<br/>Vite build + SPA fallback"]
+    API["NestJS API<br/>REST + Socket.IO"]
+    PG[("PostgreSQL<br/>private durable state")]
+    Redis[("Redis<br/>private live coordination")]
+    Mail["Resend<br/>external account email"]
+    Host["Host PTY + temporary projection<br/>non-production only"]
+
+    Browser <-->|"HTTPS + WSS"| Edge
+    Edge -->|"all other paths"| Static
+    Edge -->|"API + /socket.io"| API
+    API -->|"Prisma transactions"| PG
+    API <-->|"Pub/Sub + counters"| Redis
+    API -.->|"action emails"| Mail
+    API -.->|"optional execution"| Host

@@ -1,0 +1,15 @@
+flowchart TB
+    Clients["Browser clients"]
+    LB["Load balancer<br/>Socket.IO session affinity"]
+    A["API replica A<br/>local sockets, Y.Docs, PTYs"]
+    B["API replica B<br/>local sockets, Y.Docs, PTYs"]
+    PG[("Shared PostgreSQL<br/>durable ordering + state")]
+    Redis[("Shared Redis<br/>live fan-out + counters")]
+
+    Clients -->|"HTTPS + WSS"| LB
+    LB -->|"affinity selects one replica"| A
+    LB --> B
+    A -->|"transactions + advisory locks"| PG
+    B --> PG
+    A <-->|"post-commit and ephemeral events"| Redis
+    B <--> Redis

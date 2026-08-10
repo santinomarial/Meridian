@@ -7,25 +7,11 @@ static delivery separate lets the client be cached and deployed independently,
 but the static host must provide SPA fallback and route API and Socket.IO
 traffic before that fallback.
 
-```mermaid
-flowchart TB
-    Browser["Browser<br/>React, Monaco, Zustand, Yjs"]
-    Edge["TLS edge + router<br/>Caddy in bundled production"]
-    Static["Static host<br/>Vite build + SPA fallback"]
-    API["NestJS API<br/>REST + Socket.IO"]
-    PG[("PostgreSQL<br/>private durable state")]
-    Redis[("Redis<br/>private live coordination")]
-    Mail["Resend<br/>external account email"]
-    Host["Host PTY + temporary projection<br/>non-production only"]
-
-    Browser <-->|"HTTPS + WSS"| Edge
-    Edge -->|"all other paths"| Static
-    Edge -->|"API + /socket.io"| API
-    API -->|"Prisma transactions"| PG
-    API <-->|"Pub/Sub + counters"| Redis
-    API -.->|"action emails"| Mail
-    API -.->|"optional execution"| Host
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/system-overview-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/system-overview-light.svg">
+  <img alt="Meridian delivery and runtime architecture from browser and TLS edge through the API, data services, email, and optional terminal host." src="../diagrams/rendered/system-overview-light.svg">
+</picture>
 
 PostgreSQL is the durable system of record. Redis accelerates sequence
 allocation and carries cross-process live events, but is not required for

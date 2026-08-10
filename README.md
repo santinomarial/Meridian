@@ -23,26 +23,11 @@ export, and a production-oriented NestJS backend.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    User["Workspace member"]
-
-    subgraph Meridian["Meridian"]
-        direction LR
-        Client["React SPA<br/>Monaco + Yjs"]
-        API["NestJS API<br/>REST + Socket.IO"]
-        Client <-->|"authenticated HTTP<br/>and realtime events"| API
-    end
-
-    PG[("PostgreSQL<br/>durable system of record")]
-    Redis[("Redis<br/>live coordination")]
-    Mail["Resend<br/>account email"]
-
-    User -->|"uses in a browser"| Client
-    API -->|"transactions"| PG
-    API <-->|"Pub/Sub + counters"| Redis
-    API -.->|"verification, invites,<br/>password recovery"| Mail
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/rendered/readme-overview-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/diagrams/rendered/readme-overview-light.svg">
+  <img alt="Meridian system context showing the browser client, API, PostgreSQL, Redis, and account email provider." src="docs/diagrams/rendered/readme-overview-light.svg">
+</picture>
 
 PostgreSQL is the durability boundary. Redis carries live coordination and
 cross-replica fan-out, but it is not a document backup.

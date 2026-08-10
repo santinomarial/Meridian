@@ -4,31 +4,11 @@ The client is a Vite-built React SPA. React Router owns browser navigation,
 Zustand holds workspace and UI state, Monaco owns editor models, and Yjs bridges
 those models to Socket.IO collaboration.
 
-```mermaid
-flowchart TD
-    Route["React route"] --> Loader["Workspace loader"]
-    Loader --> REST["Credentialed REST client"]
-    REST --> Store["Zustand workspace + UI state"]
-    UI["Explorer, tabs, panels"]
-    Monaco["Monaco editor model"]
-    Binding["y-monaco binding"]
-    YDoc["Active-document Y.Doc"]
-    Awareness["Awareness"]
-    Batch["Merged local updates"]
-    Outbox[("IndexedDB<br/>durable outbox")]
-    Listeners["Session + document listeners"]
-    Socket["Singleton Socket.IO client"]
-
-    Store --> UI
-    Store -->|"checkpoint bootstrap"| Monaco
-    Monaco <--> Binding <--> YDoc
-    Binding <--> Awareness
-    YDoc --> Batch --> Outbox
-    Listeners <--> Socket
-    Listeners <--> YDoc
-    Listeners <--> Awareness
-    Outbox <-->|"emit or resend<br/>post-commit ack removes"| Socket
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/rendered/client-architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../diagrams/rendered/client-architecture-light.svg">
+  <img alt="Client architecture showing routing, workspace state, Monaco and Yjs collaboration, the durable outbox, and Socket.IO transport." src="../diagrams/rendered/client-architecture-light.svg">
+</picture>
 
 ## Routing and startup
 
