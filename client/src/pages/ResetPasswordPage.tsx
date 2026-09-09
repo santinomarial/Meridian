@@ -93,6 +93,7 @@ export function ResetPasswordPage() {
             <form
               className="space-y-4"
               onSubmit={handleSubmit}
+              autoComplete="on"
               noValidate
               data-testid="reset-password-form"
             >
@@ -215,6 +216,7 @@ function PasswordField({
         />
         <input
           id={id}
+          name={id}
           type="password"
           value={value}
           onChange={(e) => onChange(e.target.value)}

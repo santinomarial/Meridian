@@ -35,6 +35,30 @@ test("login is the default auth mode on page load", async ({ page }) => {
   await expect(page.getByTestId("switch-to-signup")).toBeVisible();
 });
 
+test("auth fields expose password-manager metadata", async ({ page }) => {
+  await page.goto("/");
+
+  const form = page.getByTestId("auth-form");
+  const email = page.getByLabel("Email Address");
+  const password = page.getByLabel("Password");
+
+  await expect(form).toHaveAttribute("autocomplete", "on");
+  await expect(email).toHaveAttribute("name", "username");
+  await expect(email).toHaveAttribute("autocomplete", "username");
+  await expect(password).toHaveAttribute("name", "password");
+  await expect(password).toHaveAttribute("autocomplete", "current-password");
+
+  await page.getByTestId("switch-to-signup").click();
+  await expect(page.getByLabel(/^Password$/)).toHaveAttribute(
+    "autocomplete",
+    "new-password",
+  );
+  await expect(page.getByLabel("Confirm Password")).toHaveAttribute(
+    "name",
+    "confirm-password",
+  );
+});
+
 // ── 3. Sign-up is secondary ────────────────────────────────────────────────────
 
 test("clicking sign-up switches to the sign-up form", async ({ page }) => {

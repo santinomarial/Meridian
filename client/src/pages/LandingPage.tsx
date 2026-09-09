@@ -82,6 +82,7 @@ function LandingHeader({ onGetStarted }: { onGetStarted: () => void }) {
 
 type IconFieldProps = {
   id: string;
+  name?: string;
   label: string;
   icon: string;
   type?: string;
@@ -93,6 +94,7 @@ type IconFieldProps = {
 
 function IconField({
   id,
+  name,
   label,
   icon,
   type = "text",
@@ -114,6 +116,7 @@ function IconField({
         />
         <input
           id={id}
+          name={name ?? id}
           type={type}
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -351,7 +354,13 @@ function AuthCard({
           ) : null}
         </div>
       ) : (
-        <form className="space-y-4" onSubmit={handleSubmit} noValidate data-testid="auth-form">
+        <form
+          className="space-y-4"
+          onSubmit={handleSubmit}
+          autoComplete="on"
+          noValidate
+          data-testid="auth-form"
+        >
           {isSignUp ? (
             <IconField
               id="name"
@@ -366,13 +375,14 @@ function AuthCard({
 
           <IconField
             id="email"
+            name={isForgot ? "email" : "username"}
             label="Email Address"
             icon="alternate_email"
             type="email"
             placeholder="name@company.com"
             value={email}
             onChange={(v) => setEmail(v)}
-            autoComplete="email"
+            autoComplete={isForgot ? "email" : "username"}
           />
 
           {!isForgot ? (
@@ -400,6 +410,7 @@ function AuthCard({
                 />
                 <input
                   id="password"
+                  name="password"
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
@@ -428,6 +439,7 @@ function AuthCard({
                 />
                 <input
                   id="confirm-password"
+                  name="confirm-password"
                   type="password"
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
