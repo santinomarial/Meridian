@@ -114,7 +114,7 @@ Optional/defaulted Compose inputs:
 | `CSP_CONNECT_SRC_EXTRA` | empty |
 | `API_UPSTREAMS` | `api:3000` |
 | `MAIL_TIMEOUT_MS` | `10000` milliseconds |
-| `PROMETHEUS_IMAGE` | `prom/prometheus:v3.13.2` |
+| `PROMETHEUS_IMAGE` | `prom/prometheus:v3.13.3` |
 | `PROMETHEUS_RETENTION` | `15d` |
 | `ALERTMANAGER_IMAGE` | Immutable official `main` image at revision `8d7515af` (see Compose for digest) |
 

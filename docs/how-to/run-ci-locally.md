@@ -72,7 +72,7 @@ Validate the same monitoring configurations with their native tools:
 ```bash
 docker run --rm --entrypoint promtool \
   -v "$PWD/deploy/monitoring:/etc/prometheus:ro" \
-  prom/prometheus:v3.13.2 \
+  prom/prometheus:v3.13.3 \
   check config /etc/prometheus/prometheus.yml
 docker run --rm --entrypoint amtool \
   -v "$PWD/deploy/monitoring:/etc/alertmanager:ro" \

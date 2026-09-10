@@ -1,0 +1,20 @@
+vulnerabilities:
+  - id: CVE-2026-84304
+    paths:
+      - bin/prometheus
+      - bin/promtool
+    expired_at: 2026-10-10
+    statement: >-
+      Prometheus 3.13.3 does not instantiate a gRPC server; its source only
+      imports gRPC credentials for outbound integrations, while this finding
+      affects gRPC servers receiving fragmented HTTP/2 DATA frames. Recheck
+      when the next upstream Prometheus patch release is available.
+  - id: CVE-2026-84445
+    paths:
+      - bin/prometheus
+      - bin/promtool
+    expired_at: 2026-10-10
+    statement: >-
+      Prometheus 3.13.3 does not instantiate a gRPC xDS server, which is the
+      component affected by this finding. Recheck when the next upstream
+      Prometheus patch release is available.

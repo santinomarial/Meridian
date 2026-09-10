@@ -92,7 +92,7 @@ These variables are consumed by Compose, Caddy, or Docker rather than by
 | `VITE_API_URL` | empty | Client build argument |
 | `VITE_SOCKET_URL` | empty | Client build argument |
 | `CSP_CONNECT_SRC_EXTRA` | empty | Client image CSP substitution |
-| `PROMETHEUS_IMAGE` | `prom/prometheus:v3.13.2` | Prometheus service image |
+| `PROMETHEUS_IMAGE` | `prom/prometheus:v3.13.3` | Prometheus service image |
 | `PROMETHEUS_RETENTION` | `15d` | Prometheus TSDB retention duration |
 | `ALERTMANAGER_IMAGE` | Immutable official image digest in `.env.production.example` | Alertmanager service image |
 | `ALERTMANAGER_WEBHOOK_URL_FILE` | `./secrets/alertmanager-webhook-url` | Host path mounted as the Alertmanager webhook secret |
