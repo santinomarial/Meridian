@@ -295,12 +295,13 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: "1"
       - name: Trivy Prometheus image
+        env:
+          TRIVY_IGNOREFILE: deploy/monitoring/trivyignore-prometheus.yaml
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: prom/prometheus:v3.13.3
           severity: CRITICAL,HIGH
           exit-code: "1"
-          ignorefile: deploy/monitoring/trivyignore-prometheus.yaml
       - name: Trivy Alertmanager image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
