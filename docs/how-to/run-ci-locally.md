@@ -76,7 +76,7 @@ docker run --rm --entrypoint promtool \
   check config /etc/prometheus/prometheus.yml
 docker run --rm --entrypoint amtool \
   -v "$PWD/deploy/monitoring:/etc/alertmanager:ro" \
-  prom/alertmanager@sha256:a42c3e2e8f7cd4fd3a0ce1bd593ca5abe965c97b993476007d6f69c4a2aa33b5 \
+  prom/alertmanager@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d \
   check-config /etc/alertmanager/alertmanager.yml
 ```
 

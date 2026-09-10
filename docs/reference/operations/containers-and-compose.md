@@ -116,7 +116,7 @@ Optional/defaulted Compose inputs:
 | `MAIL_TIMEOUT_MS` | `10000` milliseconds |
 | `PROMETHEUS_IMAGE` | `prom/prometheus:v3.13.3` |
 | `PROMETHEUS_RETENTION` | `15d` |
-| `ALERTMANAGER_IMAGE` | Immutable official `main` image at revision `8d7515af` (see Compose for digest) |
+| `ALERTMANAGER_IMAGE` | Immutable official Alertmanager 0.34.0 image (see Compose for digest) |
 
 The API service fixes `NODE_ENV=production`, `PORT=3000`,
 `REDIS_REQUIRED=true`, `TRUST_PROXY=1`, `METRICS_ENABLED=true`, and

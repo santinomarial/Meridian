@@ -1,0 +1,47 @@
+vulnerabilities:
+  - id: CVE-2026-56854
+    paths:
+      - bin/alertmanager
+      - bin/amtool
+    expired_at: 2026-10-10
+    statement: >-
+      Alertmanager 0.34.0 does not implement an SSH server or SSH
+      authentication, while this finding affects source-address restrictions
+      in SSH server authentication. Recheck when the next upstream
+      Alertmanager patch release is available.
+  - id: CVE-2026-84304
+    paths:
+      - bin/alertmanager
+      - bin/amtool
+    expired_at: 2026-10-10
+    statement: >-
+      Alertmanager 0.34.0 does not instantiate a gRPC server; its source only
+      imports gRPC credentials for outbound tracing, while this finding
+      affects gRPC servers receiving fragmented HTTP/2 DATA frames. Recheck
+      when the next upstream Alertmanager patch release is available.
+  - id: CVE-2026-84445
+    paths:
+      - bin/alertmanager
+      - bin/amtool
+    expired_at: 2026-10-10
+    statement: >-
+      Alertmanager 0.34.0 does not instantiate a gRPC xDS server, which is the
+      component affected by this finding. Recheck when the next upstream
+      Alertmanager patch release is available.
+  - id: CVE-2026-56864
+    paths:
+      - bin/amtool
+    expired_at: 2026-10-10
+    statement: >-
+      amtool uses golang.org/x/mod only for semantic-version comparison and
+      does not download modules or contact GOSUMDB, which is the affected
+      code path. Recheck when the next upstream Alertmanager patch release is
+      available.
+  - id: CVE-2026-56865
+    paths:
+      - bin/amtool
+    expired_at: 2026-10-10
+    statement: >-
+      amtool uses golang.org/x/mod only for semantic-version comparison and
+      does not use the vulnerable sumdb transparency-log verifier. Recheck
+      when the next upstream Alertmanager patch release is available.

@@ -161,7 +161,7 @@ services:
   alertmanager:
     # Official main build at revision 8d7515af, pinned immutably until the next
     # numbered release incorporates the same patched Go dependencies.
-    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager@sha256:a42c3e2e8f7cd4fd3a0ce1bd593ca5abe965c97b993476007d6f69c4a2aa33b5}
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d}
     profiles: ["monitoring"]
     restart: unless-stopped
     command:

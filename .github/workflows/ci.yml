@@ -14,7 +14,7 @@ env:
   NODE_VERSION: "22"
   # Official main build at revision 8d7515af; immutable and Trivy-clean while
   # the latest numbered release still bundles dependencies affected by Go CVEs.
-  ALERTMANAGER_IMAGE: prom/alertmanager@sha256:a42c3e2e8f7cd4fd3a0ce1bd593ca5abe965c97b993476007d6f69c4a2aa33b5
+  ALERTMANAGER_IMAGE: prom/alertmanager@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d
 
 permissions:
   contents: read
@@ -303,6 +303,8 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: "1"
       - name: Trivy Alertmanager image
+        env:
+          TRIVY_IGNOREFILE: deploy/monitoring/trivyignore-alertmanager.yaml
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.ALERTMANAGER_IMAGE }}
