@@ -161,6 +161,24 @@ test.describe("collaboration panel", () => {
       await expect(page.getByRole("dialog", { name: "Collaboration" })).toBeVisible();
     });
 
+    test("resizing desktop closes panels before entering a compact layout", async ({ page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await freshWorkspace(page);
+      await expect(page.getByTestId("file-explorer")).toBeVisible();
+      await expect(page.getByTestId("collaboration-panel")).toBeVisible();
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(page.getByRole("dialog", { name: "Explorer" })).toHaveCount(0);
+      await expect(page.getByRole("dialog", { name: "Collaboration" })).toHaveCount(0);
+      await expect(page.locator("#main-content")).toBeVisible();
+
+      await page.getByRole("button", { name: "Explorer", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Explorer" })).toBeVisible();
+      await page.getByRole("button", { name: "Collaboration", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Explorer" })).toHaveCount(0);
+      await expect(page.getByRole("dialog", { name: "Collaboration" })).toBeVisible();
+    });
+
     test("activity bar toggles the desktop collaboration panel", async ({ page }) => {
       await freshWorkspace(page);
 

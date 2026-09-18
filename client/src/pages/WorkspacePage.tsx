@@ -54,16 +54,16 @@ export function WorkspacePage() {
   // Manage Socket.IO connection lifecycle
   useSessionSocket();
 
-  // Drawers start closed on every compact layout. Opening one later is
-  // exclusive, so tablet users never get two modal overlays at once.
+  // Entering a compact layout closes the desktop panels. This also applies
+  // when resizing an existing workspace, not only on its first render.
   useEffect(() => {
-    if (window.matchMedia("(max-width: 1024px)").matches) {
+    if (isCompact) {
       useWorkspaceStore.setState({
         isExplorerOpen: false,
         isCollaborationPanelOpen: false,
       });
     }
-  }, []);
+  }, [isCompact]);
 
   // Cmd+S / Ctrl+S — save active document. The hook handles the no-op cases
   // (viewer, no active file, backend unavailable) and the canonical save flow.
