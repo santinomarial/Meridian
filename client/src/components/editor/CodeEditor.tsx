@@ -68,7 +68,7 @@ type CodeEditorProps = {
   workspaceTheme?: WorkspaceTheme;
 };
 
-export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
+export function CodeEditor({ workspaceTheme = "light" }: CodeEditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const [mountedEditor, setMountedEditor] = useState<editor.IStandaloneCodeEditor | null>(null);
   const monacoTheme: MeridianEditorTheme = toMeridianMonacoTheme(workspaceTheme);

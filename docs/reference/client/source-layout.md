@@ -39,6 +39,8 @@ Unit tests are colocated as `src/**/*.test.ts`; Playwright tests are
 Account routes share `AccountLayout` and the workspace's `MeridianWordmark`.
 Keep the favicon and wordmark's M consistent. Use the semantic color tokens in
 `index.css`: Harvard crimson (`#A51C30`), black, white, and neutral grays.
+White is the default theme. Black surfaces are the optional dark mode; an
+explicit theme choice is remembered across routes and sessions.
 Crimson container tokens keep primary buttons consistent across themes; small
 text uses white on dark surfaces for contrast. Errors retain explicit labels.
 Monaco and terminal backgrounds follow those same surfaces. Geist is the

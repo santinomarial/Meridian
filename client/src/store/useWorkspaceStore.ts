@@ -209,7 +209,7 @@ function getInitialTheme(): WorkspaceTheme {
   } catch {
     // localStorage unavailable
   }
-  return "dark";
+  return "light";
 }
 
 function persistTheme(theme: WorkspaceTheme): void {

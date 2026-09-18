@@ -22,6 +22,24 @@ async function openUnavailableGate(page: Page): Promise<void> {
 // ── Theme toggle (available on the unavailable gate) ──────────────────────────
 
 test.describe("theme toggle", () => {
+  test("defaults to white and remembers an explicit dark-mode choice across routes and reloads", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto("/");
+    await expect(page.getByTestId("auth-card")).toBeVisible();
+    await expect(page.locator("html")).not.toHaveClass(/dark/);
+    await expect(page.locator("body")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+    await page.getByRole("button", { name: "Switch to dark mode" }).click();
+    await page.reload();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await openUnavailableGate(page);
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await page.getByTestId("theme-toggle").click();
+    await page.goto("/");
+    await expect(page.getByTestId("auth-card")).toBeVisible();
+    await expect(page.locator("html")).not.toHaveClass(/dark/);
+    await expect(page.locator("body")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  });
+
   test("clicking theme toggle switches between dark and light", async ({ page }) => {
     await openUnavailableGate(page);
     const toggle = page.getByTestId("theme-toggle");
