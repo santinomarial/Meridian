@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
+import { AccountLayout } from "../components/layout/AccountLayout";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { PasswordStrength } from "../components/ui/PasswordStrength";
 import { resetPassword } from "../lib/api";
@@ -17,19 +18,6 @@ export function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-
-  // Match landing: respect the user's saved light/dark preference.
-  useEffect(() => {
-    const html = document.documentElement;
-    let theme: "light" | "dark" = "dark";
-    try {
-      if (localStorage.getItem("meridian-theme") === "light") theme = "light";
-    } catch {
-      // localStorage unavailable; retain the dark default.
-    }
-    html.classList.toggle("dark", theme === "dark");
-    html.style.colorScheme = theme;
-  }, []);
 
   const handleSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
@@ -59,30 +47,18 @@ export function ResetPasswordPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-6 text-body-md text-on-background">
-      <AmbientBackground />
+    <AccountLayout>
 
       <div
-        className="glass-panel inner-glow relative z-10 flex w-full max-w-[420px] flex-col gap-8 rounded-xl p-8"
+        className="flex w-full flex-col gap-7"
         data-testid="reset-password-card"
       >
-        {/* Branding */}
-        <div className="flex items-center justify-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded bg-primary">
-            <MaterialIcon name="polymer" className="text-xl text-on-primary" aria-hidden />
-          </div>
-          <span className="text-display-lg font-bold text-on-surface">Meridian</span>
-        </div>
-
         {success ? (
           <SuccessView />
         ) : (
           <>
-            <div className="space-y-2 text-center">
-              <div className="mb-2 inline-flex items-center justify-center rounded border border-outline-variant/50 bg-surface-container px-2 py-0.5 uppercase text-on-surface-variant label-caps">
-                Reset Password
-              </div>
-              <h1 className="text-headline-md font-semibold tracking-tight text-on-surface">
+            <div className="space-y-2">
+              <h1 className="text-[28px] font-medium tracking-tight text-on-surface">
                 Choose a new password
               </h1>
               <p className="text-body-sm text-on-surface-variant">
@@ -117,7 +93,7 @@ export function ResetPasswordPage() {
               {error !== null ? (
                 <div
                   role="alert"
-                  className="rounded-lg bg-error/10 px-3 py-2 text-[12px] text-error"
+                  className="rounded-md bg-error/10 px-3 py-2 text-[12px] text-error"
                   data-testid="reset-error"
                 >
                   <p>{error}</p>
@@ -138,7 +114,7 @@ export function ResetPasswordPage() {
                 type="submit"
                 disabled={loading}
                 data-testid="reset-submit"
-                className="group mt-4 flex w-full items-center justify-center gap-2 rounded-lg btn-primary py-3 text-body-md font-semibold shadow-lg shadow-primary/15 transition-all active:scale-[0.98] disabled:opacity-60"
+                className="group mt-4 flex w-full items-center justify-center gap-2 rounded-md btn-primary py-3 text-body-md font-semibold transition-colors disabled:opacity-60"
               >
                 {loading ? "Resetting…" : "Reset password"}
                 {!loading ? (
@@ -153,7 +129,7 @@ export function ResetPasswordPage() {
           </>
         )}
       </div>
-    </div>
+    </AccountLayout>
   );
 }
 
@@ -170,18 +146,17 @@ function SuccessView() {
           className="mb-3 text-5xl text-primary"
           aria-hidden
         />
-        <h2 className="text-headline-sm font-semibold text-on-surface">
-          Password updated!
+        <h2 className="text-headline-md font-semibold text-on-surface">
+          Password updated
         </h2>
         <p className="mt-2 text-body-sm text-on-surface-variant">
-          Your password has been reset successfully. You can now log in with
-          your new password.
+          Log in with your new password to return to your workspace.
         </p>
       </div>
       <Link
         to="/"
         data-testid="back-to-login"
-        className="inline-flex items-center gap-2 rounded-lg btn-primary px-6 py-3 text-body-md font-semibold transition-all active:scale-[0.98]"
+        className="inline-flex items-center gap-2 rounded-md btn-primary px-6 py-3 text-body-md font-semibold transition-colors"
       >
         <MaterialIcon name="login" className="text-lg" aria-hidden />
         Log in
@@ -205,7 +180,7 @@ function PasswordField({
 }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={id} className="label-caps ml-1 text-on-surface-variant">
+      <label htmlFor={id} className="text-body-sm font-medium text-on-surface">
         {label}
       </label>
       <div className="group relative">
@@ -222,42 +197,9 @@ function PasswordField({
           onChange={(e) => onChange(e.target.value)}
           placeholder="••••••••"
           autoComplete={autoComplete}
-          className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
+          className="w-full rounded-md border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
         />
       </div>
-    </div>
-  );
-}
-
-function AmbientBackground() {
-  const primaryRef = useRef<HTMLDivElement>(null);
-  const secondaryRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const onMove = (event: MouseEvent) => {
-      const x = event.clientX / window.innerWidth;
-      const y = event.clientY / window.innerHeight;
-      if (primaryRef.current) {
-        primaryRef.current.style.transform = `translate(${x * 20}px, ${y * 20}px)`;
-      }
-      if (secondaryRef.current) {
-        secondaryRef.current.style.transform = `translate(${-x * 30}px, ${-y * 30}px)`;
-      }
-    };
-    window.addEventListener("mousemove", onMove);
-    return () => window.removeEventListener("mousemove", onMove);
-  }, []);
-
-  return (
-    <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden>
-      <div
-        ref={primaryRef}
-        className="absolute -left-[10%] -top-[20%] h-[60%] w-[60%] rounded-full bg-primary/5 blur-[120px]"
-      />
-      <div
-        ref={secondaryRef}
-        className="absolute -right-[10%] top-[40%] h-[50%] w-[50%] rounded-full bg-secondary/5 blur-[100px]"
-      />
     </div>
   );
 }

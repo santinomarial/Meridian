@@ -85,7 +85,7 @@ export function TerminalPanel() {
   const isRunning = terminalStatus === "running" || terminalStatus === "ready";
   const status = statusMeta(terminalStatus, connectionStatus);
   // Keep panel chrome flush with the xterm canvas (same hex as useTerminal themes).
-  const terminalBackground = theme === "light" ? "#eceef3" : "#0f1219";
+  const terminalBackground = theme === "light" ? "#faf9f5" : "#131916";
 
   if (!terminalEnabled) return null;
 
@@ -98,7 +98,7 @@ export function TerminalPanel() {
       style={{ height: 260, background: terminalBackground }}
       data-testid="terminal-panel"
     >
-      <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b meridian-crisp-border bg-surface-container/90 px-3 backdrop-blur-sm">
+      <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b meridian-crisp-border bg-surface-container px-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="flex items-center gap-1.5">
             <MaterialIcon

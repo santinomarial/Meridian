@@ -13,12 +13,12 @@ type SyncPayload = { status: "synced" | "syncing" | "failed" };
 
 // Readable xterm palettes aligned with Meridian surface tokens.
 const DARK_TERMINAL_THEME: ITheme = {
-  background: "#0f1219",
-  foreground: "#e8eaf2",
-  cursor: "#a5b4fc",
-  cursorAccent: "#0f1219",
-  selectionBackground: "#2a3350",
-  selectionForeground: "#e8eaf2",
+  background: "#131916",
+  foreground: "#e4e9e2",
+  cursor: "#a4d8c7",
+  cursorAccent: "#131916",
+  selectionBackground: "#284c3e",
+  selectionForeground: "#e4e9e2",
   black: "#1a1f2b",
   red: "#fca5a5",
   green: "#5eead4",
@@ -26,7 +26,7 @@ const DARK_TERMINAL_THEME: ITheme = {
   blue: "#93c5fd",
   magenta: "#c4b5fd",
   cyan: "#67e8f9",
-  white: "#e8eaf2",
+  white: "#e4e9e2",
   brightBlack: "#6b7280",
   brightRed: "#fecaca",
   brightGreen: "#99f6e4",
@@ -38,13 +38,13 @@ const DARK_TERMINAL_THEME: ITheme = {
 };
 
 const LIGHT_TERMINAL_THEME: ITheme = {
-  background: "#eceef3",
-  foreground: "#3a4150",
-  cursor: "#4f46e5",
-  cursorAccent: "#eceef3",
-  selectionBackground: "#c7d2fe",
-  selectionForeground: "#3a4150",
-  black: "#3a4150",
+  background: "#faf9f5",
+  foreground: "#252b29",
+  cursor: "#16675b",
+  cursorAccent: "#faf9f5",
+  selectionBackground: "#d3e8df",
+  selectionForeground: "#252b29",
+  black: "#252b29",
   red: "#dc2626",
   green: "#0d9488",
   yellow: "#c2410c",
@@ -59,7 +59,7 @@ const LIGHT_TERMINAL_THEME: ITheme = {
   brightBlue: "#3b82f6",
   brightMagenta: "#8b5cf6",
   brightCyan: "#06b6d4",
-  brightWhite: "#3a4150",
+  brightWhite: "#252b29",
 };
 
 function themeFor(appTheme: WorkspaceTheme): ITheme {

@@ -1,5 +1,5 @@
 /** Meridian brand indigo — single source for accents in JS (avatars, Monaco, etc.) */
-export const MERIDIAN_BRAND = "#4f46e5";
+export const MERIDIAN_BRAND = "#16675b";
 
 export const MERIDIAN_BRAND_HOVER = "#4338ca";
 

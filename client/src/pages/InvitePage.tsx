@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
+import { AccountLayout } from "../components/layout/AccountLayout";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { acceptInvite, getCurrentUser, getInvite } from "../lib/api";
 import type { ApiInviteDetails, ApiUser } from "../lib/apiTypes";
@@ -7,20 +8,7 @@ import type { ApiInviteDetails, ApiUser } from "../lib/apiTypes";
 type LoadState = "loading" | "authenticated" | "unauthenticated";
 
 function PageShell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-surface-dim px-4">
-      {/* Meridian wordmark */}
-      <div className="mb-8 flex items-center gap-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded bg-primary">
-          <MaterialIcon name="polymer" className="text-xl text-on-primary" aria-hidden />
-        </div>
-        <span className="text-xl font-bold text-on-surface">Meridian</span>
-      </div>
-      <div className="w-full max-w-sm rounded-xl border meridian-crisp-border bg-surface-container p-6 shadow-xl">
-        {children}
-      </div>
-    </div>
-  );
+  return <AccountLayout><div className="w-full">{children}</div></AccountLayout>;
 }
 
 function LoadingState() {
@@ -52,7 +40,7 @@ function PrimaryButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 active:scale-[0.98] disabled:opacity-50"
+      className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 active:scale-[0.98] disabled:opacity-50"
     >
       {children}
     </button>
@@ -175,7 +163,7 @@ function AuthenticatedState({
           </p>
         ) : null}
         {invite === null ? (
-          <p className="mt-2 text-[10px] text-on-surface-variant/60">
+          <p className="mt-2 text-body-sm text-on-surface-variant">
             This invite link could not be verified — you can still open your own
             workspace.
           </p>

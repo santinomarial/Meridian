@@ -33,3 +33,16 @@ client/
 Unit tests are colocated as `src/**/*.test.ts`; Playwright tests are
 `e2e/*.spec.ts`. For component/data-flow explanation, see
 [client architecture](../../explanation/client-architecture.md).
+
+## Visual conventions
+
+Account routes share `AccountLayout` and the workspace's `MeridianWordmark`.
+Keep the favicon and wordmark's M consistent. Use the semantic color tokens in
+`index.css`: warm paper and ink surfaces, a restrained green accent, and separate
+colors for errors and status. Monaco and terminal backgrounds follow those same
+surfaces. Geist is the interface font; JetBrains Mono is for code and paths.
+
+Prefer clear labels, thin dividers, and useful actions over decorative cards,
+glows, gradients, and promotional badges. Account forms scroll on short screens.
+Empty states should explain the next available action, respect workspace roles,
+and only describe capabilities that the server actually enables.
