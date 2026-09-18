@@ -3,9 +3,18 @@
 #
 # Same-origin model: SPA + API + Socket.IO share https://{$DOMAIN}.
 # Do not publish api:3000 or web:8080 on the host — only this service's 80/443.
-
 {
 	email {$ACME_EMAIL}
+	# Apply the same redaction to runtime/proxy errors as to access logs.
+	log {
+		format filter {
+			wrap json
+			fields {
+				request>uri delete
+				request>headers>Referer delete
+			}
+		}
+	}
 }
 
 {$DOMAIN} {
@@ -13,7 +22,9 @@
 
 	# Keep scrape and tooling endpoints off the public internet.
 	@blocked path /metrics /docs /docs/* /e2e /e2e/*
-	respond @blocked 404
+	handle @blocked {
+		respond 404
+	}
 
 	# Nest API + Socket.IO (must win over SPA fallback).
 	@api path /auth /auth/* /users /users/* /workspaces /workspaces/* /documents /documents/* /invites /invites/* /health /ready /socket.io /socket.io/*
@@ -57,6 +68,14 @@
 
 	log {
 		output stdout
-		format console
+		# Browser invite/reset/verification URLs contain bearer credentials.
+		# Omit URI and Referer rather than retaining tokens at the public edge.
+		format filter {
+			wrap json
+			fields {
+				request>uri delete
+				request>headers>Referer delete
+			}
+		}
 	}
 }

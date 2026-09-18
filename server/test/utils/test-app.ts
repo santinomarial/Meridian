@@ -38,7 +38,7 @@ async function ensureEditorGatewaySubscriptions(
  * Boots the real AppModule with the same HTTP pipeline as production
  * (configureApp = cookie parser + global ValidationPipe; the global exception
  * filter, throttler guard, and request-id middleware come from AppModule). Use
- * `request(testApp.server)` (supertest) to drive it without binding a port.
+ * `request(testApp.server)` (supertest) to drive its isolated loopback listener.
  */
 export async function createTestApp(): Promise<TestApp> {
   const moduleRef = await Test.createTestingModule({
@@ -47,7 +47,9 @@ export async function createTestApp(): Promise<TestApp> {
 
   const app = moduleRef.createNestApplication({ bodyParser: false });
   configureApp(app);
-  await app.init();
+  // A stable ephemeral listener avoids Supertest repeatedly opening/closing
+  // the same HTTP server while Socket.IO and keep-alive sockets are attached.
+  await app.listen(0, '127.0.0.1');
   await ensureEditorGatewaySubscriptions(app);
 
   const prisma = app.get(PrismaService);

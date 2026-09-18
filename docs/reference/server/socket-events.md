@@ -24,7 +24,7 @@ authorization cache. A ten-second sweep rechecks passive sockets.
 | `joinDocument` | `{ documentId: string, userId?: string, displayName?: string }` | Any member of containing workspace; optional identity fields are ignored | Join/acquire document, begin Yjs sync, send awareness, emit join events |
 | `leaveDocument` | `{ documentId: string }` | Existing room membership; unmetered | Remove awareness, leave/release, emit `userLeft` |
 | `yjs:sync` | `{ documentId: string, message: binary }` | Any role; joined document room | Read-only Yjs sync: accept SyncStep1, ignore SyncStep2, reject mutating messages |
-| `yjs:update` | `{ documentId: string, updateId: string, update: binary }`; ID length 8–128 | Owner/editor; joined document room | Apply, relay, persist, then emit custom ack/nack |
+| `yjs:update` | `{ documentId: string, generation: nonnegative integer, updateId: string, update: binary }`; ID length 8–128 | Owner/editor; joined document room | Apply, relay, persist, then emit custom ack/nack |
 | `awareness:update` | `{ documentId: string, update: binary }` | Any role; joined document room | Replace asserted user identity, relay ephemeral awareness, publish to Redis |
 
 `yjs:sync`, `yjs:update`, and `awareness:update` are capped by
@@ -41,7 +41,7 @@ editor gateway's per-socket one-second budget.
 | `userLeft` | `{ documentId, socketId }` | Remaining document-room sockets |
 | `chat:message` | `{ id, workspaceId, senderId, senderName, text, timestamp }` | Workspace peers, excluding local sender; all sockets on remote replicas |
 | `yjs:sync` | `{ documentId, message: binary }` | Joining/requesting socket |
-| `yjs:update` | `{ documentId, update: binary }` | Document peers; Redis fan-out may include every local room socket |
+| `yjs:update` | `{ documentId, generation, update: binary }` | Document peers; Redis fan-out may include every local room socket |
 | `awareness:update` | `{ documentId, update: binary }` | Joining socket for current state, then document peers |
 | `document:restored` | `{ documentId, generation }` | Document room or stale update sender |
 | `error` | `{ message: string }` | Offending socket |
@@ -55,7 +55,13 @@ These are application events, not Socket.IO acknowledgement callbacks.
 | `yjs:ack` | `{ documentId, updateId, generation, seq }` | PostgreSQL commit completed; the same `updateId` is idempotent |
 | `yjs:nack` | `{ documentId, updateId, reason: "persist_failed" }` | Persistence failed; retain and resend the queued update |
 
-A stale generation emits `document:restored`, not `yjs:nack`.
+An update whose declared generation differs from the joined/current generation
+receives `yjs:nack` with `reason: "stale_generation"` and the current `generation`,
+plus `document:restored`. A concurrent restore detected by the durable write
+fence triggers `document:restored` and replica resynchronization.
+
+Browser handshakes must have an allowed Origin, including WebSocket transport.
+Non-browser clients without an Origin still require a valid authenticated session.
 
 ## Client to server: terminal
 

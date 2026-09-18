@@ -219,6 +219,7 @@ export class EditorGateway
       this.authorizationSweep = undefined;
     }
     this.unsubscribeAuthorization();
+    for (const client of this.connectedClients.values()) client.disconnect(true);
     this.connectedClients.clear();
   }
 

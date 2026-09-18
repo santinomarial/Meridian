@@ -259,7 +259,7 @@ test.describe("workspace (backend required)", () => {
     });
 
     // Save via keyboard shortcut
-    await page.keyboard.press("Meta+s");
+    await page.keyboard.press("ControlOrMeta+s");
 
     await expect(page.getByTestId("save-status")).toContainText("Saved", {
       timeout: 8_000,
@@ -294,7 +294,7 @@ test.describe("workspace (backend required)", () => {
     });
 
     // Save
-    await page.keyboard.press("Meta+s");
+    await page.keyboard.press("ControlOrMeta+s");
     await expect(page.getByTestId("save-status")).toContainText("Saved", {
       timeout: 8_000,
     });

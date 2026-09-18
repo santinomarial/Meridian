@@ -14,7 +14,7 @@ Working directory: repository root.
 ```bash
 test ! -e .env && cp .env.production.example .env
 openssl rand -base64 48
-openssl rand -base64 32
+openssl rand -hex 32
 openssl rand -hex 32
 ```
 
@@ -29,7 +29,7 @@ Set these required values:
   certificate notices.
 - `CLIENT_ORIGIN`: exact HTTPS origin, such as `https://app.example.com`.
 - `JWT_SECRET`: at least 16 characters; use the generated 48-byte value.
-- `POSTGRES_PASSWORD`: strong generated database password.
+- `POSTGRES_PASSWORD`: strong generated database password. Use the hex output above; the Compose connection URL requires URL-safe characters.
 - `LB_COOKIE_SECRET`: stable secret used to sign Caddy's affinity cookie.
 - `RESEND_API_KEY`: restricted production Resend credential.
 - `MAIL_FROM`: sender on a verified custom domain, such as
@@ -60,6 +60,19 @@ mounted in production.
 ## 2. Validate and start
 
 Working directory: repository root.
+
+**Existing installations:** the production PostgreSQL image now uses Alpine
+instead of Debian. Before this change, take a logical SQL dump, stop writers,
+and restore into a **new** PostgreSQL volume/project with the new image. Verify
+the restored data before switching traffic. Do not reuse the old data directory
+across libc/locale implementations or remove its volume until rollback is no
+longer needed. Follow [backup and restore](backup-and-restore-database.md).
+Fresh deployments require no data conversion.
+
+Deploy this client and API together: Yjs updates now require their document
+generation. Existing browser tabs must reload; pending entries from older
+clients are preserved as downloadable recovery data rather than replayed into
+an unknown document generation.
 
 ```bash
 docker compose -f docker-compose.prod.yml config --quiet
@@ -106,6 +119,20 @@ save a file, reconnect, and confirm the file remains. Also verify that the
 registration session is not created before mailbox verification and that the
 same verification link cannot be reused. Then configure and test
 [database backups](backup-and-restore-database.md).
+
+For repeatable browser checks against a disposable, verified account, install
+the client development dependencies and Chromium, then run from the root:
+
+```bash
+SMOKE_BASE_URL=https://app.example.com \
+SMOKE_EMAIL=smoke@example.com SMOKE_PASSWORD='disposable-account-password' \
+SMOKE_ALLOW_REMOTE=true node scripts/smoke-production.cjs
+```
+
+The smoke creates and deletes a file, and checks login cookies, editing, Save,
+versions, restore, reload, ZIP export, security headers, and blocked endpoints.
+Remote runs always verify the TLS certificate. Real email delivery, paging,
+and offsite recovery still require the operational checks below.
 
 ## 4. Establish operational readiness
 

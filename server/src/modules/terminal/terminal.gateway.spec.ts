@@ -268,6 +268,38 @@ describe('TerminalGateway', () => {
       expect(terminalService.writeToSession).toHaveBeenCalledWith('socket-1', 'ls\n');
     });
 
+    it('preserves keystroke order while authorization is awaiting the database', async () => {
+      const { gateway, terminalService, workspaces } = makeGateway(true);
+      terminalService.getSession.mockReturnValue(activeSession());
+      let authorize!: (role: WorkspaceRole) => void;
+      workspaces.getMemberRole.mockReturnValueOnce(new Promise((resolve) => { authorize = resolve; }));
+      const { socket } = makeSocket();
+      const command = gateway.handleInput({ data: 'python3 main.py' }, socket);
+      const enter = gateway.handleInput({ data: '\r' }, socket);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(workspaces.getMemberRole).toHaveBeenCalledTimes(1);
+      expect(terminalService.writeToSession).not.toHaveBeenCalled();
+      authorize(WorkspaceRole.EDITOR);
+      await Promise.all([command, enter]);
+      expect(terminalService.writeToSession.mock.calls).toEqual([
+        ['socket-1', 'python3 main.py'], ['socket-1', '\r'],
+      ]);
+    });
+
+    it('does not send authorized input into a replacement terminal session', async () => {
+      const { gateway, terminalService, workspaces } = makeGateway(true);
+      terminalService.getSession.mockReturnValue(activeSession());
+      let authorize!: (role: WorkspaceRole) => void;
+      workspaces.getMemberRole.mockReturnValueOnce(new Promise((resolve) => { authorize = resolve; }));
+      const { socket } = makeSocket();
+      const input = gateway.handleInput({ data: 'old command\r' }, socket);
+      await new Promise((resolve) => setImmediate(resolve));
+      terminalService.getSession.mockReturnValue(activeSession());
+      authorize(WorkspaceRole.EDITOR);
+      await input;
+      expect(terminalService.writeToSession).not.toHaveBeenCalled();
+    });
+
     it('drops input that exceeds the terminal message rate limit', async () => {
       const { gateway, terminalService, rateLimiter } = makeGateway(true);
       terminalService.getSession.mockReturnValue(activeSession());

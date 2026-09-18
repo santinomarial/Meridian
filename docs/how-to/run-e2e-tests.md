@@ -79,3 +79,7 @@ failures; do not assume an interrupted run removed every synthetic account.
 See [Client commands](../reference/client/commands.md) and
 [Server configuration](../reference/server/configuration.md#browser-e2e-scope)
 for runner and environment reference.
+
+When `MERIDIAN_BACKEND_URL` or `CI` is set, global setup requires a ready API
+and a working E2E cleanup endpoint. A missing or incorrectly configured backend
+fails the run instead of producing an apparently successful skipped suite.

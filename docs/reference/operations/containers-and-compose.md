@@ -57,6 +57,32 @@ marks matching static assets immutable for seven days. See
 
 File: [`docker-compose.prod.yml`](../../../docker-compose.prod.yml).
 
+The infrastructure images are covered by the same high/critical vulnerability
+gate as the API, migrations, and web image:
+
+- `deploy/caddy/Dockerfile` builds Caddy 2.11.4's standard modules with Go 1.27.1
+  and the dependencies locked in `go.mod`/`go.sum`. This removes vulnerable Go,
+  crypto, network, and gRPC versions embedded in the upstream binary.
+- `deploy/postgres/Dockerfile` starts from PostgreSQL 16.15 on Alpine 3.24,
+  updates OS packages, and replaces the entrypoint's `gosu` invocation with
+  Alpine's native `su-exec`. Both perform the same required switch to the
+  `postgres` user. The obsolete Go-based helper is removed from the final image.
+- Redis 7.4.11 Alpine is pinned by multi-platform digest in Compose and CI.
+
+Refresh these pins and scan rebuilt images regularly; a clean scan is dated
+evidence, not a permanent security guarantee. `scripts/smoke-infrastructure.sh`
+checks PostgreSQL initialization, migrations, restart, edge routing and logs
+using the built CI image tags. It creates only disposable containers/volumes.
+Changing an existing PostgreSQL installation from Debian to Alpine requires a
+logical dump/restore into a new volume; see the deployment procedure.
+
+Caddy omits request URI and Referer from access and runtime logs because invite,
+reset and verification URLs contain bearer credentials. Nginx access logging
+is disabled and routine request-level error logging is suppressed; Caddy remains
+the source of request status/timing logs. The infrastructure smoke checks that
+credential sentinels do not appear in either container's logs, including missing
+asset requests. Application request logs retain their existing redaction policy.
+
 | Service | Network exposure | Dependency/order |
 |---|---|---|
 | `postgres` | Internal 5432 only | Health checked with `pg_isready`; persistent volume |

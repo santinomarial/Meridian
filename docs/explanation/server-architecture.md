@@ -64,9 +64,8 @@ decision. Registered pattern subscriptions are reapplied when the subscriber
 becomes ready.
 
 Nest shutdown hooks drain known local document write chains, disconnect
-dependencies, and kill PTYs. Process exit releases loaded in-memory documents,
-but production shutdown does not explicitly call the test-only
-`DocumentManagerService.destroyAll()`. Graceful termination cannot recover work
+dependencies, and kill PTYs. The document manager destroys its loaded Yjs documents and awareness timers
+through `onModuleDestroy()`. Graceful termination cannot recover work
 after a forced kill or host loss. Those failure semantics are canonical in
 [Scaling and failure model](scaling-and-failure-model.md).
 

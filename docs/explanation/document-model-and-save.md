@@ -29,7 +29,9 @@ acknowledgements before requesting the checkpoint. The server also drains its
 local persistence chain, acquires the document advisory lock, projects the
 current generation from durable snapshots and updates, and compares it with the
 existing checkpoint. If text changed, the checkpoint and next version are
-written in the transaction; otherwise Save is a successful no-op.
+written in the transaction; otherwise Save is a successful no-op. The response does not replace live Monaco
+text: if visible edits differ from that checkpoint, the client keeps those edits
+and reports them as unsaved.
 
 This means a collaborative edit can already be durable in Yjs history while
 remaining absent from export, version history, ordinary REST reads, and a newly

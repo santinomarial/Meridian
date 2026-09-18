@@ -175,19 +175,24 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   };
 
   return (
-    <div className="meridian-editor-chrome relative flex h-full min-h-0 w-full flex-1 flex-col" data-testid="monaco-editor-wrapper">
+    <div className="meridian-editor-chrome relative flex h-full min-h-0 w-full flex-1 flex-col" data-testid="monaco-editor-wrapper" data-collaboration-ready={collaborationReady}>
       <Editor
         key={activeFileId}
         height="100%"
         language={LANGUAGE_TO_MONACO[language]}
         theme={monacoTheme}
         value={content}
-        options={isViewer || (backendStatus === "available" && !collaborationReady) ? { ...EDITOR_OPTIONS, readOnly: true } : EDITOR_OPTIONS}
+        options={{ ...EDITOR_OPTIONS, readOnly: isViewer || (backendStatus === "available" && !collaborationReady) }}
         loading={<EditorSkeleton />}
         beforeMount={registerMeridianMonacoThemes}
         onMount={handleMount}
         onChange={handleChange}
       />
+      {backendStatus === "available" && !collaborationReady && (
+        <div className="meridian-editor-chrome absolute inset-0 flex items-center justify-center" role="status" aria-live="polite">
+          Synchronizing document…
+        </div>
+      )}
     </div>
   );
 }

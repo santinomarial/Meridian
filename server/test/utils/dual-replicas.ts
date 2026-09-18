@@ -35,7 +35,7 @@ export async function closeReplicaPair(pair: ReplicaPair): Promise<void> {
 export async function listenTestApp(
   testApp: TestApp,
 ): Promise<TestApp & { port: number; url: string }> {
-  await testApp.app.listen(0);
+  if (!testApp.server.listening) await testApp.app.listen(0, '127.0.0.1');
   const address = testApp.app.getHttpServer().address() as AddressInfo | null;
   if (address === null || typeof address.port !== 'number') {
     throw new Error('Failed to bind test app to an ephemeral port');

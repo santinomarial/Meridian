@@ -32,9 +32,8 @@ function terminalRows(page: Page) {
 /** Clicks into the terminal and types a command followed by Enter. */
 async function runInTerminal(page: Page, command: string): Promise<void> {
   await page.getByTestId("terminal-xterm").click();
-  // Insert the command as one browser input event. Character-by-character
-  // typing can interleave with an asynchronous terminal projection refresh,
-  // producing a split shell command even though the application is healthy.
+  // Keep this helper fast; the gateway preserves order across input events,
+  // including this paste and the separate Enter event.
   await page.keyboard.insertText(command);
   await page.keyboard.press("Enter");
 }
@@ -51,9 +50,11 @@ async function createFileWithContent(page: Page, name: string, content: string):
   await fileItem(page, displayedName).click();
 
   await expect(page.getByTestId("monaco-editor-wrapper")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("monaco-editor-wrapper")).toHaveAttribute("data-collaboration-ready", "true");
   await page.locator(".monaco-editor .view-lines").click();
   await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.type(content);
+  await expect(page.getByTestId("save-status")).toHaveAttribute("data-save-status", "unsaved");
   await page.keyboard.press("ControlOrMeta+s");
   await expect(page.getByTestId("save-status")).toContainText("Saved", { timeout: 8_000 });
 }

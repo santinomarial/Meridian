@@ -75,6 +75,7 @@ export class TerminalGateway
   private readonly enabled: boolean;
   private readonly wsMessageLimit: number;
   private readonly terminalClients = new Map<string, Socket>();
+  private readonly inputChains = new Map<string, Promise<void>>();
   private readonly unsubscribeAuthorization: () => void;
   private authorizationSweep: NodeJS.Timeout | undefined;
   private authorizationSweepRunning = false;
@@ -113,6 +114,7 @@ export class TerminalGateway
     }
     this.unsubscribeAuthorization();
     this.terminalClients.clear();
+    this.inputChains.clear();
   }
 
   handleDisconnect(client: Socket): void {
@@ -122,6 +124,7 @@ export class TerminalGateway
     }
     this.rateLimiter.clear(this.rateLimitKey(client.id));
     this.terminalClients.delete(client.id);
+    this.inputChains.delete(client.id);
   }
 
   @SubscribeMessage('terminal:start')
@@ -287,20 +290,34 @@ export class TerminalGateway
       return;
     }
 
-    const role = await this.currentWorkspaceRole(client, session.workspaceId);
-    if (role === undefined) return;
-    if (role === null || role === WorkspaceRole.VIEWER) {
-      this.revokeTerminalAccess(
-        client,
-        role === WorkspaceRole.VIEWER
-          ? 'Viewers cannot use the terminal'
-          : 'Not a member of this workspace',
-      );
-      return;
+    // Socket.IO delivers in order, but async authorization can finish out of
+    // order. Keep Enter behind its command even when the role cache expires.
+    const previous = this.inputChains.get(client.id) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(async () => {
+      if (this.terminalService.getSession(client.id) !== session) return;
+      const role = await this.currentWorkspaceRole(client, session.workspaceId);
+      if (role === undefined) return;
+      if (role === null || role === WorkspaceRole.VIEWER) {
+        this.revokeTerminalAccess(
+          client,
+          role === WorkspaceRole.VIEWER
+            ? 'Viewers cannot use the terminal'
+            : 'Not a member of this workspace',
+        );
+        return;
+      }
+      // A stop/start or revocation during authorization must not redirect old
+      // input into a replacement PTY on the same socket.
+      if (this.terminalService.getSession(client.id) !== session) return;
+      this.terminalClients.set(client.id, client);
+      this.terminalService.writeToSession(client.id, dto.data);
+    });
+    this.inputChains.set(client.id, next);
+    try {
+      await next;
+    } finally {
+      if (this.inputChains.get(client.id) === next) this.inputChains.delete(client.id);
     }
-
-    this.terminalClients.set(client.id, client);
-    this.terminalService.writeToSession(client.id, dto.data);
   }
 
   @SubscribeMessage('terminal:resize')

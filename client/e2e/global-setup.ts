@@ -108,24 +108,31 @@ export default async function globalSetup() {
   const zip = buildMinimalZip("hello.ts", "const hello = 'world';\n");
   fs.writeFileSync(zipPath, zip);
 
-  // Best-effort: purge throwaway accounts left behind by previous runs. The
-  // endpoint only works when the server is started with E2E_TEST=true, and is
-  // a no-op (or unreachable) otherwise — so failures here are non-fatal.
+  // CI and explicitly configured backend runs require the isolated E2E server.
+  // Only implicit offline runs may skip backend cleanup and backend tests.
   const backendUrl =
     process.env["MERIDIAN_BACKEND_URL"] ?? "http://localhost:3000";
   const requireBackend = !!process.env["CI"] || !!process.env["MERIDIAN_BACKEND_URL"];
   try {
     if (requireBackend) {
-      const ready = await fetch(`${backendUrl}/ready`);
-      if (!ready.ok()) throw new Error(`E2E backend is not ready: ${ready.status()}`);
+      let ready = false;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        try {
+          ready = (await fetch(`${backendUrl}/ready`, { signal: AbortSignal.timeout(3_000) })).ok;
+        } catch { /* backend may still be starting */ }
+        if (ready) break;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      if (!ready) throw new Error(`E2E backend did not become ready: ${backendUrl}`);
     }
     const cleanup = await fetch(`${backendUrl}/e2e/cleanup`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ emailPrefix: "e2e-" }),
+      signal: AbortSignal.timeout(10_000),
     });
-    if (requireBackend && !cleanup.ok()) {
-      throw new Error(`E2E backend cleanup failed: ${cleanup.status()}. Start the isolated server with E2E_TEST=true.`);
+    if (requireBackend && !cleanup.ok) {
+      throw new Error(`E2E backend cleanup failed: ${cleanup.status}. Start the isolated server with E2E_TEST=true.`);
     }
   } catch (error) {
     if (requireBackend) throw error;

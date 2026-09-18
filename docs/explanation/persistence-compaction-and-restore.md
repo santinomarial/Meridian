@@ -16,12 +16,14 @@ then runs in a PostgreSQL transaction that:
 4. allocates the next sequence for that generation; and
 5. inserts the update before committing.
 
-When Redis is ready, a seed-and-increment Lua operation accelerates sequence
-allocation. The first local use seeds the prefixed per-lineage counter from the
-maximum durable update/snapshot sequence; later writes use increment. If Redis
-is unavailable or a command fails, the transaction reads the same PostgreSQL
-high-water mark while still holding the advisory lock. Sequence uniqueness and
-ordering therefore survive Redis failure.
+Every allocation reads the maximum durable update/snapshot sequence while
+holding the document lock. When Redis is ready, a Lua operation raises its
+counter to at least that durable floor before incrementing. This reconciliation
+runs on every write, including after Redis loses a key or PostgreSQL advances
+during an outage. If Redis fails, allocation uses the durable floor plus one.
+
+Cold loads hold the same document lock while reading snapshots and deltas and
+creating an initial seed, so compaction or restore cannot split the read.
 
 The process-local chain preserves local call order and gives graceful shutdown
 something to drain. It does not coordinate replicas. After document teardown,

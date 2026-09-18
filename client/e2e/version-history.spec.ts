@@ -32,10 +32,12 @@ async function freshWorkspace(page: Page, displayName = "Test User"): Promise<vo
 
 /** Selects all editor text and types the given content, then saves with Cmd+S. */
 async function replaceAndSave(page: Page, content: string): Promise<void> {
+  await expect(page.getByTestId("monaco-editor-wrapper")).toHaveAttribute("data-collaboration-ready", "true");
   await page.locator(".monaco-editor .view-lines").click();
-  await page.keyboard.press("Meta+a");
+  await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.type(content);
-  await page.keyboard.press("Meta+s");
+  await expect(page.getByTestId("save-status")).toHaveAttribute("data-save-status", "unsaved");
+  await page.keyboard.press("ControlOrMeta+s");
   await expect(page.getByTestId("save-status")).toContainText("Saved", { timeout: 8_000 });
 }
 

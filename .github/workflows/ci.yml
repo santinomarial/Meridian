@@ -66,7 +66,7 @@ jobs:
 
   # ── Server integration: real request lifecycle against Postgres + Redis ────
   # supertest drives the booted AppModule (ValidationPipe, JwtAuthGuard, the
-  # throttler, the exception filter, real Prisma) — no port is bound.
+  # throttler, the exception filter, real Prisma) on an ephemeral loopback port.
   server-integration:
     name: Server (integration + multi-replica)
     runs-on: ubuntu-latest
@@ -264,8 +264,14 @@ jobs:
         run: docker build --target migrate -t meridian-migrate:ci ./server
       - name: Build web image
         run: docker build -t meridian-web:ci ./client
+      - name: Build patched infrastructure images
+        run: |
+          docker build -t meridian-caddy:ci ./deploy/caddy
+          docker build -t meridian-postgres:ci ./deploy/postgres
       - name: Smoke production container runtimes
         run: bash scripts/smoke-containers.sh
+      - name: Smoke production infrastructure
+        run: bash scripts/smoke-infrastructure.sh
       - name: Validate monitoring configurations
         run: |
           docker run --rm --entrypoint promtool \
@@ -300,6 +306,24 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: prom/prometheus:v3.13.3
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Trivy Caddy image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: meridian-caddy:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Trivy PostgreSQL image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: meridian-postgres:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Trivy Redis image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: redis:7.4.11-alpine@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7
           severity: CRITICAL,HIGH
           exit-code: "1"
       - name: Trivy Alertmanager image
@@ -349,6 +373,7 @@ jobs:
         run: >-
           shellcheck scripts/backup-pg.sh ../scripts/backup-compose.sh
           ../scripts/backup-offsite-restic.sh ../scripts/smoke-containers.sh
+          ../scripts/smoke-infrastructure.sh
       - name: Build migration image
         run: docker build --target migrate -t meridian-migrate:ci .
       - name: Apply migrations with production image

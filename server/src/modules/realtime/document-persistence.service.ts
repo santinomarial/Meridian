@@ -1,4 +1,4 @@
-import { Injectable, type OnApplicationShutdown } from '@nestjs/common';
+import { Injectable, type BeforeApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Prisma } from '@prisma/client';
@@ -21,7 +21,7 @@ function seqKey(documentId: string, generation: number): string {
 }
 
 @Injectable()
-export class DocumentPersistenceService implements OnApplicationShutdown {
+export class DocumentPersistenceService implements BeforeApplicationShutdown {
   // ---------------------------------------------------------------------------
   // Sequence counters
   //
@@ -78,7 +78,7 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     this.snapshotEveryN = config.snapshotEveryNUpdates;
   }
 
-  async onApplicationShutdown(): Promise<void> {
+  async beforeApplicationShutdown(): Promise<void> {
     await this.flushAll();
   }
 
