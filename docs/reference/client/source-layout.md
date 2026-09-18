@@ -46,6 +46,12 @@ text uses white on dark surfaces for contrast. Errors retain explicit labels.
 Monaco and terminal backgrounds follow those same surfaces. Geist is the
 interface font; JetBrains Mono is for code and paths.
 
+Code highlighting is an intentional exception to the brand palette: inherit
+Monaco's `vs` / `vs-dark` syntax rules for familiar VS Code colors across all
+bundled languages. Keep regular-weight keywords and comments, distinct nested
+bracket colors, and the same syntax theme in the editor and version previews.
+Editor widgets and the surrounding app retain the crimson and neutral palette.
+
 Prefer clear labels, thin dividers, and useful actions over decorative cards,
 glows, gradients, and promotional badges. Account forms scroll on short screens.
 Empty states should explain the next available action, respect workspace roles,
