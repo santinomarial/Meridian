@@ -37,7 +37,7 @@ function CollaboratorRow({ collaborator }: { collaborator: Collaborator }) {
     >
       <div className="relative shrink-0">
         <span
-          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[9px] font-bold text-on-primary"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[9px] font-bold text-white"
           style={{ backgroundColor: collaborator.color }}
         >
           {getInitials(collaborator.name)}
@@ -45,7 +45,7 @@ function CollaboratorRow({ collaborator }: { collaborator: Collaborator }) {
         <span
           className={[
             "absolute -bottom-px -right-px h-2 w-2 rounded-full border border-surface-container-low",
-            isActive ? "bg-emerald-500" : "bg-outline-variant",
+            isActive ? "bg-secondary" : "bg-outline-variant",
           ].join(" ")}
           aria-hidden
         />
@@ -82,7 +82,7 @@ function CollaboratorRow({ collaborator }: { collaborator: Collaborator }) {
 function ChatMessageLine({ message }: { message: ChatMessage }) {
   return (
     <p className="px-1 py-0.5 text-[11px] leading-[1.5] text-on-surface">
-      <span className="font-semibold" style={{ color: message.senderColor }}>
+      <span className="font-semibold">
         {message.senderName}:
       </span>{" "}
       {message.text}
@@ -208,7 +208,7 @@ function CollaborationPanelContent({
           <span
             className={[
               "h-1.5 w-1.5 rounded-full",
-              isLive ? "bg-emerald-500" : "bg-outline-variant",
+              isLive ? "bg-secondary" : "bg-outline-variant",
             ].join(" ")}
             aria-hidden
           />

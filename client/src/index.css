@@ -8,63 +8,65 @@
    * Text, controls, and editor surfaces share the same restrained palette.
    * Accent/background pairs are checked in both light and dark themes.
    */
+  /* Harvard crimson anchors controls; neutral text stays readable in both themes. */
   :root {
-    /* Paper surfaces with a quiet ink-and-teal hierarchy. */
-    --color-primary: #16675b;
+    --color-brand: #a51c30;
+    --color-primary: #a51c30;
     --color-on-primary: #ffffff;
-    --color-primary-container: #16675b;
+    --color-primary-container: #a51c30;
     --color-on-primary-container: #ffffff;
-    --color-primary-fixed-dim: #377f70;
+    --color-primary-fixed-dim: #821626;
     --color-on-primary-fixed: #ffffff;
-    --color-inverse-primary: #16675b;
-    --color-surface: #f2f1ec;
-    --color-surface-dim: #eae9e2;
-    --color-surface-variant: #e4e3db;
-    --color-surface-container-low: #f3f2ed;
-    --color-surface-container: #eeede6;
-    --color-surface-container-high: #e4e3db;
-    --color-surface-container-highest: #d8d8ce;
-    --color-surface-container-lowest: #faf9f5;
-    --color-on-surface: #252b29;
-    --color-on-surface-variant: #5b645f;
-    --color-outline: #7c857e;
-    --color-outline-variant: #c8cdc4;
-    --color-secondary: #286e4b;
+    --color-inverse-primary: #a51c30;
+    --color-surface: #f5f5f5;
+    --color-surface-dim: #ebebeb;
+    --color-surface-variant: #e5e5e5;
+    --color-surface-container-low: #f5f5f5;
+    --color-surface-container: #eeeeee;
+    --color-surface-container-high: #e5e5e5;
+    --color-surface-container-highest: #d4d4d4;
+    --color-surface-container-lowest: #ffffff;
+    --color-on-surface: #111111;
+    --color-on-surface-variant: #525252;
+    --color-outline: #737373;
+    --color-outline-variant: #cccccc;
+    --color-secondary: #404040;
     --color-on-secondary: #ffffff;
-    --color-tertiary: #945021;
-    --color-error: #b52e2e;
+    --color-tertiary: #525252;
+    --color-error: #a51c30;
     --color-on-error: #ffffff;
-    --color-background: var(--color-surface-container-lowest);
-    --color-on-background: var(--color-on-surface);
+    --color-background: #ffffff;
+    --color-on-background: #111111;
   }
 
   .dark {
-    --color-primary: #a4d8c7;
-    --color-on-primary: #14271f;
-    --color-primary-container: #a4d8c7;
-    --color-on-primary-container: #14271f;
-    --color-primary-fixed-dim: #bce4d6;
-    --color-on-primary-fixed: #14271f;
-    --color-inverse-primary: #16675b;
-    --color-background: #161c1a;
-    --color-on-background: #e4e9e2;
-    --color-surface: #161c1a;
-    --color-surface-dim: #171d1b;
-    --color-surface-variant: #2a3430;
-    --color-surface-container-low: #1b2220;
-    --color-surface-container: #202825;
-    --color-surface-container-high: #2a3430;
-    --color-surface-container-highest: #39433f;
-    --color-surface-container-lowest: #131916;
-    --color-on-surface: #e4e9e2;
-    --color-on-surface-variant: #a6b2aa;
-    --color-outline: #7b8b81;
-    --color-outline-variant: #37443c;
-    --color-secondary: #85b79b;
-    --color-on-secondary: #14271f;
-    --color-tertiary: #dcb17f;
-    --color-error: #f0a7a3;
-    --color-on-error: #3b1010;
+    --color-brand: #a51c30;
+    --color-primary: #ffffff;
+    --color-on-primary: #111111;
+    --color-primary-container: #a51c30;
+    --color-on-primary-container: #ffffff;
+    --color-primary-fixed-dim: #821626;
+    --color-on-primary-fixed: #ffffff;
+    --color-inverse-primary: #a51c30;
+    --color-surface: #101010;
+    --color-surface-dim: #0a0a0a;
+    --color-surface-variant: #262626;
+    --color-surface-container-low: #141414;
+    --color-surface-container: #1c1c1c;
+    --color-surface-container-high: #262626;
+    --color-surface-container-highest: #383838;
+    --color-surface-container-lowest: #0a0a0a;
+    --color-on-surface: #ffffff;
+    --color-on-surface-variant: #b3b3b3;
+    --color-outline: #858585;
+    --color-outline-variant: #383838;
+    --color-secondary: #d4d4d4;
+    --color-on-secondary: #111111;
+    --color-tertiary: #b3b3b3;
+    --color-error: #ec7f90;
+    --color-on-error: #111111;
+    --color-background: #0a0a0a;
+    --color-on-background: #ffffff;
   }
 
   html,
@@ -85,6 +87,12 @@
     color: var(--color-on-surface);
     font-family: Geist, ui-sans-serif, system-ui, sans-serif;
     font-feature-settings: "tnum" 0;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-on-surface-variant);
+    opacity: 1;
   }
 }
 

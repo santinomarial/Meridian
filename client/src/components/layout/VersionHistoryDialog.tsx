@@ -347,7 +347,7 @@ function VersionHistoryDialogBody() {
                       className={[
                         "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
                         showDiff
-                          ? "bg-primary text-on-primary"
+                          ? "bg-primary-container text-on-primary-container"
                           : "bg-surface-container-high text-on-surface hover:bg-surface-container-highest",
                       ].join(" ")}
                     >
@@ -368,7 +368,7 @@ function VersionHistoryDialogBody() {
                             onClick={() => void handleRestore()}
                             disabled={restoring}
                             data-testid="version-restore-confirm"
-                            className="rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-on-primary transition-colors hover:bg-primary/90 disabled:opacity-50"
+                            className="rounded-md bg-primary-container px-2.5 py-1 text-xs font-semibold text-on-primary-container transition-colors hover:bg-primary-fixed-dim disabled:opacity-50"
                           >
                             {restoring ? "Restoring…" : "Confirm"}
                           </button>

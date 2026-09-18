@@ -85,7 +85,7 @@ export function TerminalPanel() {
   const isRunning = terminalStatus === "running" || terminalStatus === "ready";
   const status = statusMeta(terminalStatus, connectionStatus);
   // Keep panel chrome flush with the xterm canvas (same hex as useTerminal themes).
-  const terminalBackground = theme === "light" ? "#faf9f5" : "#131916";
+  const terminalBackground = theme === "light" ? "#ffffff" : "#0a0a0a";
 
   if (!terminalEnabled) return null;
 

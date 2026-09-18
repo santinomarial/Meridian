@@ -76,7 +76,7 @@ function formatRelativeTime(timestamp: number): string {
 function CollaboratorAvatar({ collaborator }: { collaborator: Collaborator }) {
   return (
     <span
-      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-surface text-[10px] font-bold text-on-primary"
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-surface text-[10px] font-bold text-white"
       style={{ backgroundColor: collaborator.color }}
       title={collaborator.name}
     >
@@ -774,7 +774,7 @@ export function Header() {
                   {collaborators.map((c) => (
                     <div key={c.id} className="flex items-center gap-2.5 px-3 py-2">
                       <span
-                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-on-primary"
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
                         style={{ backgroundColor: c.color }}
                       >
                         {getInitials(c.name)}
@@ -917,7 +917,7 @@ export function Header() {
                     className={[
                       "shrink-0 rounded px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-wait disabled:opacity-60",
                       copyStatus === "copied"
-                        ? "bg-primary text-on-primary"
+                        ? "bg-primary-container text-on-primary-container"
                         : "bg-surface-container-high text-on-surface hover:bg-surface-container-highest",
                     ].join(" ")}
                   >

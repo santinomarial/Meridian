@@ -2,15 +2,10 @@
  * Deterministic collaborator colors: the same user id always maps to the
  * same color on every client, with no coordination needed.
  */
+// Initials and cursor labels identify peers alongside the restrained palette.
 const COLLAB_PALETTE = [
-  "#e06c75", // red
-  "#61afef", // blue
-  "#98c379", // green
-  "#c678dd", // purple
-  "#d19a66", // orange
-  "#56b6c2", // teal
-  "#e5c07b", // yellow
-  "#ec6ab1", // pink
+  "#a51c30", "#737373", "#821626", "#525252",
+  "#ba3448", "#666666", "#713442", "#404040",
 ] as const;
 
 export function colorForUser(userId: string): string {

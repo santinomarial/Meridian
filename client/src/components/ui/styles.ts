@@ -41,8 +41,8 @@ export const headerButtonSecondary = [
 ].join(" ");
 
 export const headerButtonPrimary = [
-  "inline-flex h-8 items-center rounded-[4px] px-3 text-[11px] font-bold leading-none text-on-primary bg-primary",
+  "inline-flex h-8 items-center rounded-[4px] px-3 text-[11px] font-bold leading-none text-on-primary-container bg-primary-container",
   transitionBase,
-  "hover:bg-primary-container",
+  "hover:bg-primary-fixed-dim",
   focusRing,
 ].join(" ");

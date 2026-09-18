@@ -80,7 +80,7 @@ export function WorkspaceWelcome() {
                 <input id="welcome-filename" value={filename} onChange={(event) => { setFilename(event.target.value); setError(null); }} placeholder="e.g. main.ts" autoComplete="off" spellCheck={false} required disabled={creating || isImporting}
                   aria-invalid={error !== null} aria-describedby={error ? "welcome-file-error" : undefined}
                   className={`min-w-0 flex-[1_1_160px] rounded border meridian-crisp-border bg-surface-container-lowest px-3 py-2.5 font-mono text-base sm:text-sm ${focusRing}`} />
-                <button type="submit" disabled={creating || isImporting || !filename.trim()} className={`min-h-11 rounded bg-primary px-4 text-sm font-medium text-on-primary disabled:opacity-50 ${focusRing}`}>
+                <button type="submit" disabled={creating || isImporting || !filename.trim()} className={`min-h-11 rounded bg-primary-container px-4 text-sm font-medium text-on-primary-container disabled:opacity-50 ${focusRing}`}>
                   {creating ? "Creating…" : "Create file"}
                 </button>
               </div>

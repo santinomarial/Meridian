@@ -38,9 +38,11 @@ Unit tests are colocated as `src/**/*.test.ts`; Playwright tests are
 
 Account routes share `AccountLayout` and the workspace's `MeridianWordmark`.
 Keep the favicon and wordmark's M consistent. Use the semantic color tokens in
-`index.css`: warm paper and ink surfaces, a restrained green accent, and separate
-colors for errors and status. Monaco and terminal backgrounds follow those same
-surfaces. Geist is the interface font; JetBrains Mono is for code and paths.
+`index.css`: Harvard crimson (`#A51C30`), black, white, and neutral grays.
+Crimson container tokens keep primary buttons consistent across themes; small
+text uses white on dark surfaces for contrast. Errors retain explicit labels.
+Monaco and terminal backgrounds follow those same surfaces. Geist is the
+interface font; JetBrains Mono is for code and paths.
 
 Prefer clear labels, thin dividers, and useful actions over decorative cards,
 glows, gradients, and promotional badges. Account forms scroll on short screens.
