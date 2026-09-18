@@ -3,12 +3,12 @@ import { colorForUser } from "./collabColors";
 import { normalizeAwarenessUser } from "./awarenessPresence";
 
 describe("normalizeAwarenessUser", () => {
-  it("preserves a valid collaborator identity", () => {
+  it("preserves collaborator identity and applies the current palette", () => {
     expect(
       normalizeAwarenessUser({
         user: { id: "user-1", name: "Ada Lovelace", color: "#A1B2C3" },
       }),
-    ).toEqual({ id: "user-1", name: "Ada Lovelace", color: "#a1b2c3" });
+    ).toEqual({ id: "user-1", name: "Ada Lovelace", color: colorForUser("user-1") });
   });
 
   it("replaces CSS-injecting colors and strips control characters from names", () => {

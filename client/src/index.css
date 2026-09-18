@@ -10,6 +10,7 @@
    */
   /* Harvard crimson anchors controls; neutral text stays readable in both themes. */
   :root {
+    accent-color: var(--color-brand);
     --color-brand: #a51c30;
     --color-primary: #a51c30;
     --color-on-primary: #ffffff;
@@ -93,6 +94,11 @@
   textarea::placeholder {
     color: var(--color-on-surface-variant);
     opacity: 1;
+  }
+
+  ::selection {
+    background-color: var(--color-brand);
+    color: #ffffff;
   }
 }
 

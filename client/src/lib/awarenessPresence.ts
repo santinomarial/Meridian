@@ -18,8 +18,6 @@ export type AwarenessUser = {
 
 const REMOTE_SELECTION_STYLE_ID = "meridian-remote-selection-styles";
 
-const SAFE_HEX_COLOR = /^#[0-9a-f]{6}$/i;
-
 function replaceControlCharacters(value: string): string {
   return [...value]
     .map((character) => {
@@ -42,9 +40,8 @@ export function normalizeAwarenessUser(
   if (safeId.length === 0) return null;
   const safeName =
     replaceControlCharacters(name).trim().slice(0, 80) || "Collaborator";
-  const safeColor = SAFE_HEX_COLOR.test(color)
-    ? color.toLowerCase()
-    : colorForUser(safeId);
+  // Render peers with our palette, including peers still running an older client.
+  const safeColor = colorForUser(safeId);
   return { id: safeId, name: safeName, color: safeColor };
 }
 
