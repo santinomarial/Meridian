@@ -1,4 +1,4 @@
-import { Allow, IsString, MaxLength, MinLength } from 'class-validator';
+import { Allow, IsInt, Min, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class YjsUpdateDto {
   @IsString()
@@ -13,6 +13,11 @@ export class YjsUpdateDto {
   @MinLength(8)
   @MaxLength(128)
   updateId!: string;
+
+  /** Generation in which the browser produced these bytes, retained on retry. */
+  @IsInt()
+  @Min(0)
+  generation!: number;
 
   // Binary data (Buffer on server, ArrayBuffer/Uint8Array from client).
   // @Allow keeps the field through whitelist stripping without applying

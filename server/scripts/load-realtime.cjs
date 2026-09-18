@@ -369,6 +369,7 @@ function sendUpdate(client, stageState, expectedPeers, userIndex, updateIndex) {
     }, ACK_TIMEOUT_MS);
     client.pending.set(updateId, { startedAt, timeout, resolve, reject });
     client.socket.emit('yjs:update', {
+      generation: 0,
       documentId: client.documentId,
       updateId,
       update,

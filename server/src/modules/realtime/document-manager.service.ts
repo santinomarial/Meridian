@@ -1,4 +1,4 @@
-import { Injectable, type OnModuleDestroy } from '@nestjs/common';
+import { NotFoundException, Injectable, type OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
@@ -6,7 +6,8 @@ import type { AppConfig } from '../../config/configuration.type';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DocumentPersistenceService } from './document-persistence.service';
-import { seedClientId } from '../../common/crdt/crdt-lineage';
+import type { Prisma } from '@prisma/client';
+import { acquireDocumentLock, seedClientId } from '../../common/crdt/crdt-lineage';
 
 interface DocEntry {
   doc: Y.Doc;
@@ -75,6 +76,8 @@ export class DocumentManagerService implements OnModuleDestroy {
       })
       .catch((err: unknown) => {
         this.docs.delete(documentId);
+        awareness.destroy();
+        doc.destroy();
         throw err;
       })
       .finally(() => {
@@ -238,55 +241,63 @@ export class DocumentManagerService implements OnModuleDestroy {
    * snapshot and delta updates. Returns the generation that was loaded.
    */
   private async loadFromDb(documentId: string, doc: Y.Doc): Promise<number> {
-    const document = await this.prisma.document.findUnique({
-      where: { id: documentId },
-      select: { content: true, crdtGeneration: true },
+    return this.prisma.$transaction(async (tx) => {
+      // Keep the snapshot, delta read, and first seed in the same critical
+      // section as compaction and restore. A mixed read can lose durable edits.
+      await acquireDocumentLock(tx, documentId);
+      const document = await tx.document.findUnique({
+        where: { id: documentId },
+        select: { content: true, crdtGeneration: true },
+      });
+      if (document === null) throw new NotFoundException('Document not found');
+      const generation = document.crdtGeneration;
+
+      // Load the most recent snapshot of this generation, if any, as the base.
+      const snapshot = await tx.snapshot.findFirst({
+        where: { documentId, generation },
+        orderBy: { seq: 'desc' },
+      });
+
+      if (snapshot !== null) {
+        Y.applyUpdate(doc, snapshot.state);
+      }
+
+      // Load only the delta updates that came after the snapshot (or all updates
+      // when there is no snapshot, using seq > -1 to match every row).
+      const updates = await tx.documentUpdate.findMany({
+        where: {
+          documentId,
+          generation,
+          seq: { gt: snapshot?.seq ?? -1 },
+        },
+        orderBy: { seq: 'asc' },
+      });
+
+      for (const row of updates) {
+        Y.applyUpdate(doc, row.update);
+      }
+
+      // First collaborative open of this generation: no Yjs history exists yet,
+      // so seed the Y.Doc from the REST-managed content column. The seed is
+      // persisted as the first update so later cold loads replay the exact same
+      // CRDT items that client edits reference. The server is the only party
+      // that seeds — clients must never insert initial content themselves.
+      if (snapshot === null && updates.length === 0) {
+        await this.seedFromContent(
+          tx,
+          documentId,
+          generation,
+          document?.content ?? '',
+          doc,
+        );
+      }
+
+      return generation;
     });
-    const generation = document?.crdtGeneration ?? 0;
-
-    // Load the most recent snapshot of this generation, if any, as the base.
-    const snapshot = await this.prisma.snapshot.findFirst({
-      where: { documentId, generation },
-      orderBy: { seq: 'desc' },
-    });
-
-    if (snapshot !== null) {
-      Y.applyUpdate(doc, snapshot.state);
-    }
-
-    // Load only the delta updates that came after the snapshot (or all updates
-    // when there is no snapshot, using seq > -1 to match every row).
-    const updates = await this.prisma.documentUpdate.findMany({
-      where: {
-        documentId,
-        generation,
-        seq: { gt: snapshot?.seq ?? -1 },
-      },
-      orderBy: { seq: 'asc' },
-    });
-
-    for (const row of updates) {
-      Y.applyUpdate(doc, row.update);
-    }
-
-    // First collaborative open of this generation: no Yjs history exists yet,
-    // so seed the Y.Doc from the REST-managed content column. The seed is
-    // persisted as the first update so later cold loads replay the exact same
-    // CRDT items that client edits reference. The server is the only party
-    // that seeds — clients must never insert initial content themselves.
-    if (snapshot === null && updates.length === 0) {
-      await this.seedFromContent(
-        documentId,
-        generation,
-        document?.content ?? '',
-        doc,
-      );
-    }
-
-    return generation;
   }
 
   private async seedFromContent(
+    tx: Prisma.TransactionClient,
     documentId: string,
     generation: number,
     content: string,
@@ -300,7 +311,7 @@ export class DocumentManagerService implements OnModuleDestroy {
     // the seq-0 insert without producing two independent copies of the text.
     doc.clientID = seedClientId(documentId, generation);
     doc.getText('content').insert(0, content);
-    await this.prisma.documentUpdate.createMany({
+    await tx.documentUpdate.createMany({
       data: [{
         documentId,
         generation,

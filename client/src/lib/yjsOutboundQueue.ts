@@ -8,7 +8,8 @@
  */
 
 const DB_NAME = "meridian-yjs-outbound";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
+const CONFLICTS = "conflicts";
 const STORE = "pending";
 
 export type QueuedYjsUpdate = {
@@ -16,6 +17,8 @@ export type QueuedYjsUpdate = {
   id: string;
   documentId: string;
   updateId: string;
+  /** Missing only on legacy entries, which must never be replayed blindly. */
+  generation?: number;
   /** Base64-encoded Yjs update bytes */
   updateBase64: string;
   enqueuedAt: number;
@@ -28,6 +31,9 @@ function openDb(): Promise<IDBDatabase> {
     request.onsuccess = () => resolve(request.result);
     request.onupgradeneeded = () => {
       const db = request.result;
+      if (!db.objectStoreNames.contains(CONFLICTS)) {
+        db.createObjectStore(CONFLICTS, { keyPath: "id" });
+      }
       if (!db.objectStoreNames.contains(STORE)) {
         const store = db.createObjectStore(STORE, { keyPath: "id" });
         store.createIndex("documentId", "documentId", { unique: false });
@@ -61,6 +67,7 @@ export async function enqueueYjsUpdate(
   documentId: string,
   updateId: string,
   update: Uint8Array,
+  generation: number,
 ): Promise<void> {
   const db = await openDb();
   try {
@@ -70,6 +77,7 @@ export async function enqueueYjsUpdate(
       updateId,
       updateBase64: encodeUpdateBase64(update),
       enqueuedAt: Date.now(),
+      generation,
     };
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, "readwrite");
@@ -130,6 +138,35 @@ export async function clearYjsOutboundQueue(): Promise<void> {
       tx.objectStore(STORE).clear();
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error("clear failed"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Preserve incompatible edits separately; they must not block future saves. */
+export async function quarantineYjsUpdate(entry: QueuedYjsUpdate): Promise<void> {
+  const db = await openDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([STORE, CONFLICTS], "readwrite");
+      tx.objectStore(CONFLICTS).put(entry);
+      tx.objectStore(STORE).delete(entry.id);
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => reject(tx.error ?? new Error("Recovery archive failed"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+export async function listRecoveryUpdates(): Promise<QueuedYjsUpdate[]> {
+  const db = await openDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction(CONFLICTS, "readonly").objectStore(CONFLICTS).getAll();
+      request.onsuccess = () => resolve(request.result as QueuedYjsUpdate[]);
+      request.onerror = () => reject(request.error);
     });
   } finally {
     db.close();

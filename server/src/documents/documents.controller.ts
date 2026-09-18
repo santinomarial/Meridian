@@ -136,6 +136,9 @@ export class DocumentsController {
       if (doc.type === DocumentType.FOLDER) {
         await this.sandbox.syncMkdir(workspaceId, doc.path);
       } else {
+        if (doc.crdtGeneration > 0) {
+          await this.documentRestore.applyRestore(doc.id, doc.crdtGeneration);
+        }
         await this.sandbox.syncWriteFile(workspaceId, doc.path, doc.content ?? '');
       }
     }

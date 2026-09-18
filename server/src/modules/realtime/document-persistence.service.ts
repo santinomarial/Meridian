@@ -20,10 +20,6 @@ function seqKey(documentId: string, generation: number): string {
   return `meridian:doc:${documentId}:gen:${generation}:seq`;
 }
 
-function seededKey(documentId: string, generation: number): string {
-  return `${documentId}:${generation}`;
-}
-
 @Injectable()
 export class DocumentPersistenceService implements OnApplicationShutdown {
   // ---------------------------------------------------------------------------
@@ -52,11 +48,6 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
   // chain below is retained as a local batching and shutdown mechanism; it is
   // not the cross-process correctness boundary.
   // ---------------------------------------------------------------------------
-  // Lineages (documentId:generation) whose Redis seq counter this process has
-  // already seeded, so the hot path can use a plain INCR instead of re-seeding
-  // from the DB each write.
-  private readonly redisSeeded = new Set<string>();
-
   // Per-document write chain.  Each new write is appended to the tail of the
   // existing promise so that:
   //   1. Writes for the same document are serialised (preserving seq order).
@@ -201,7 +192,6 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
 
     this.writeChain.delete(documentId);
     this.inFlightWrites.delete(documentId);
-    this.clearSeededFlags(documentId);
     this.updateCountSinceSnapshot.delete(documentId);
     this.lastPersistedSeq.delete(documentId);
     return true;
@@ -212,7 +202,6 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     return new Set([
       ...this.writeChain.keys(),
       ...this.inFlightWrites.keys(),
-      ...[...this.redisSeeded].map((key) => key.slice(0, key.lastIndexOf(':'))),
       ...this.updateCountSinceSnapshot.keys(),
       ...this.lastPersistedSeq.keys(),
     ]).size;
@@ -226,7 +215,6 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
    * counter, which no writer will use again.
    */
   handleGenerationChange(documentId: string, newGeneration: number): void {
-    this.clearSeededFlags(documentId);
     this.updateCountSinceSnapshot.delete(documentId);
     this.lastPersistedSeq.delete(documentId);
     if (newGeneration > 0) {
@@ -327,46 +315,50 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     }));
   }
 
+  /** A consistent snapshot plus deltas, including history removed by compaction. */
+  async fetchStateAfter(
+    documentId: string,
+    generation: number,
+    afterSeq: number,
+  ): Promise<{ seq: number; update: Uint8Array } | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const document = await tx.document.findUnique({
+        where: { id: documentId }, select: { crdtGeneration: true },
+      });
+      if (document?.crdtGeneration !== generation) return null;
+      const snapshot = await tx.snapshot.findFirst({
+        where: { documentId, generation, seq: { gt: afterSeq } },
+        orderBy: { seq: 'desc' }, select: { seq: true, state: true },
+      });
+      const updates = await tx.documentUpdate.findMany({
+        where: { documentId, generation, seq: { gt: snapshot?.seq ?? afterSeq } },
+        orderBy: { seq: 'asc' }, select: { seq: true, update: true },
+      });
+      const chunks: Uint8Array[] = [];
+      if (snapshot !== null) chunks.push(new Uint8Array(snapshot.state));
+      for (const row of updates) chunks.push(new Uint8Array(row.update));
+      if (chunks.length === 0) return null;
+      return {
+        seq: updates.at(-1)?.seq ?? snapshot!.seq,
+        update: Y.mergeUpdates(chunks),
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
+
   private async nextSeq(
     tx: Prisma.TransactionClient,
     documentId: string,
     generation: number,
   ): Promise<number> {
-    // Prefer the shared Redis counter. On any Redis miss/error we derive the
-    // value from PostgreSQL while holding the document advisory lock, which is
-    // collision-free across all application processes using this service.
-    if (this.redis.isAvailable) {
-      const fromRedis = await this.redisNextSeq(tx, documentId, generation);
-      if (fromRedis !== null) return fromRedis;
-    }
-    return this.databaseNextSeq(tx, documentId, generation);
-  }
-
-  private async redisNextSeq(
-    tx: Prisma.TransactionClient,
-    documentId: string,
-    generation: number,
-  ): Promise<number | null> {
-    const key = seqKey(documentId, generation);
-    if (this.redisSeeded.has(seededKey(documentId, generation))) {
-      return this.redis.incr(key);
-    }
-    // First allocation on this process: seed the counter to the DB high-water
-    // mark (only applied if no other instance has seeded it yet) and increment.
+    // Redis may have lost its key, or PostgreSQL may have advanced during a
+    // Redis outage. Reconcile against durable history on EVERY allocation.
+    // The document lock remains held across the read, allocation, and insert.
     const floor = await this.dbHighWaterMark(tx, documentId, generation);
-    const allocated = await this.redis.allocateSeq(key, floor);
-    if (allocated !== null) {
-      this.redisSeeded.add(seededKey(documentId, generation));
+    if (this.redis.isAvailable) {
+      const allocated = await this.redis.allocateSeq(seqKey(documentId, generation), floor);
+      if (allocated !== null && allocated > floor) return allocated;
     }
-    return allocated;
-  }
-
-  private async databaseNextSeq(
-    tx: Prisma.TransactionClient,
-    documentId: string,
-    generation: number,
-  ): Promise<number> {
-    return (await this.dbHighWaterMark(tx, documentId, generation)) + 1;
+    return floor + 1;
   }
 
   /**
@@ -394,13 +386,6 @@ export class DocumentPersistenceService implements OnApplicationShutdown {
     const maxUpdateSeq = updateResult._max.seq ?? -1;
     const maxSnapshotSeq = snapshot?.seq ?? -1;
     return Math.max(maxUpdateSeq, maxSnapshotSeq);
-  }
-
-  private clearSeededFlags(documentId: string): void {
-    const prefix = `${documentId}:`;
-    for (const key of this.redisSeeded) {
-      if (key.startsWith(prefix)) this.redisSeeded.delete(key);
-    }
   }
 
   // ---------------------------------------------------------------------------

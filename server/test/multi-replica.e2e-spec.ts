@@ -321,7 +321,7 @@ describe('Multi-replica collaboration harness', () => {
         update: ArrayBuffer | Buffer | number[];
       }>(socketB, 'yjs:update');
 
-      socketA.emit('yjs:update', { documentId, updateId, update });
+      socketA.emit('yjs:update', { documentId, generation: managerA.getGeneration(documentId), updateId, update });
 
       const ack = await ackPromise;
       expect(ack.documentId).toBe(documentId);

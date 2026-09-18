@@ -130,6 +130,8 @@ export class EditorGateway
   private readonly unsubscribeAuthorization: () => void;
   private authorizationSweep: NodeJS.Timeout | undefined;
   private authorizationSweepRunning = false;
+  private durabilitySweep: NodeJS.Timeout | undefined;
+  private durabilitySweepRunning = false;
 
   constructor(
     private readonly registry: ConnectionRegistryService,
@@ -200,12 +202,18 @@ export class EditorGateway
     }
 
     this.authorizationSweep = setInterval(() => {
-      void this.auditConnectedClients();
+      void this.auditConnectedClients().catch((err: unknown) => {
+        this.logger.error({ err }, 'Authorization audit failed');
+      });
     }, AUTHORIZATION_SWEEP_MS);
     this.authorizationSweep.unref();
+    this.durabilitySweep = setInterval(() => { void this.auditLoadedDocuments(); }, 15_000);
+    this.durabilitySweep.unref();
   }
 
   onModuleDestroy(): void {
+    if (this.durabilitySweep !== undefined) clearInterval(this.durabilitySweep);
+    this.lastCommittedSeq.clear();
     if (this.authorizationSweep !== undefined) {
       clearInterval(this.authorizationSweep);
       this.authorizationSweep = undefined;
@@ -654,7 +662,7 @@ export class EditorGateway
     const joinedGeneration = (
       client.data['documentGenerations'] as Record<string, number> | undefined
     )?.[dto.documentId];
-    if (joinedGeneration !== currentGeneration) {
+    if (joinedGeneration !== currentGeneration || dto.generation !== currentGeneration) {
       this.logger.warn(
         {
           socketId: client.id,
@@ -664,6 +672,10 @@ export class EditorGateway
         },
         'Dropped Yjs update from stale CRDT generation — client told to resync',
       );
+      client.emit('yjs:nack', {
+        documentId: dto.documentId, updateId: dto.updateId,
+        generation: currentGeneration, reason: 'stale_generation',
+      });
       client.emit('document:restored', {
         documentId: dto.documentId,
         generation: currentGeneration,
@@ -677,6 +689,7 @@ export class EditorGateway
     // Cross-replica peers and the durable ack wait for PostgreSQL commit below.
     client.to(`document:${dto.documentId}`).emit('yjs:update', {
       documentId: dto.documentId,
+      generation: currentGeneration,
       update,
     });
 
@@ -714,10 +727,8 @@ export class EditorGateway
       return;
     }
 
-    this.lastCommittedSeq.set(dto.documentId, {
-      generation: currentGeneration,
-      seq: result.seq,
-    });
+    // A local commit is not a contiguous replica watermark: earlier commits
+    // on another replica may not have arrived yet.
 
     // Ack only after PostgreSQL commit — client may drop its outbound queue entry.
     client.emit('yjs:ack', {
@@ -870,7 +881,7 @@ export class EditorGateway
    * replica missed intermediate sequence numbers.
    */
   private async applyCommittedRemoteUpdate(
-    payload: CrossInstanceUpdate,
+    payload: Pick<CrossInstanceUpdate, 'documentId' | 'generation' | 'seq'>,
   ): Promise<void> {
     const documentId = payload.documentId;
     const tracked = this.lastCommittedSeq.get(documentId);
@@ -884,56 +895,52 @@ export class EditorGateway
       return;
     }
 
+    const loadedDoc = this.documentManager.getDoc(documentId);
     try {
-      if (payload.seq > lastSeq + 1) {
-        this.logger.warn(
-          { documentId, lastSeq, incomingSeq: payload.seq },
-          'Redis sequence gap detected — catching up from PostgreSQL',
-        );
-        const missing = await this.persistence.fetchUpdatesAfter(
-          documentId,
-          payload.generation,
-          lastSeq,
-        );
-        for (const row of missing) {
-          if (row.seq > payload.seq) break;
-          this.documentManager.applyUpdate(documentId, new Uint8Array(row.update));
-          this.server.to(`document:${documentId}`).emit('yjs:update', {
-            documentId,
-            update: row.update,
-          });
-          this.lastCommittedSeq.set(documentId, {
-            generation: payload.generation,
-            seq: row.seq,
-          });
-        }
-      }
-
-      // If catch-up already applied this seq (it was in the DB batch), skip.
-      const after = this.lastCommittedSeq.get(documentId);
-      const afterCatchUp =
-        after !== undefined && after.generation === payload.generation
-          ? after.seq
-          : -1;
-      if (payload.seq <= afterCatchUp) {
-        return;
-      }
-
-      const update = Buffer.from(payload.update, 'base64');
-      this.documentManager.applyUpdate(documentId, update);
+      const recovered = await this.persistence.fetchStateAfter(
+        documentId, payload.generation, lastSeq,
+      );
+      // A restore or teardown may have replaced the document during the query.
+      if (this.documentManager.getDoc(documentId) !== loadedDoc ||
+          this.documentManager.getGeneration(documentId) !== payload.generation) return;
+      if (recovered === null) return;
+      this.documentManager.applyUpdate(documentId, recovered.update);
       this.server.to(`document:${documentId}`).emit('yjs:update', {
-        documentId,
-        update,
+        documentId, generation: payload.generation, update: recovered.update,
       });
+      const previous = this.lastCommittedSeq.get(documentId);
       this.lastCommittedSeq.set(documentId, {
         generation: payload.generation,
-        seq: payload.seq,
+        seq: Math.max(recovered.seq, previous?.generation === payload.generation ? previous.seq : -1),
       });
     } catch (err) {
       this.logger.error(
         { err, documentId },
         'Failed to apply cross-instance Yjs update',
       );
+    }
+  }
+
+  /** Repair a missed final Pub/Sub event even when nobody edits again. */
+  async auditLoadedDocuments(): Promise<void> {
+    if (this.durabilitySweepRunning) return;
+    this.durabilitySweepRunning = true;
+    try {
+      const loaded = new Set(this.documentManager.loadedDocumentIds());
+      for (const id of this.lastCommittedSeq.keys()) {
+        if (!loaded.has(id)) this.lastCommittedSeq.delete(id);
+      }
+      for (const documentId of loaded) {
+        const generation = this.documentManager.getGeneration(documentId);
+        if (generation === undefined) continue;
+        await this.applyCommittedRemoteUpdate({
+          documentId, generation, seq: Number.MAX_SAFE_INTEGER,
+        });
+      }
+    } catch (err) {
+      this.logger.error({ err }, 'Durable document audit failed');
+    } finally {
+      this.durabilitySweepRunning = false;
     }
   }
 

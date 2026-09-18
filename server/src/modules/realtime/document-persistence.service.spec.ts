@@ -672,22 +672,21 @@ describe('DocumentPersistenceService', () => {
       );
     });
 
-    it('uses a plain INCR after the counter has been seeded once', async () => {
+    it('reconciles each Redis allocation against durable history', async () => {
       const redis = makeRedis(true);
-      redis.allocateSeq.mockResolvedValue(0); // first (seeded) allocation
-      redis.incr.mockResolvedValue(1); // subsequent allocations
+      redis.allocateSeq.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
       const svc = makeService(prisma, logger, DEFAULT_THRESHOLD, redis);
 
       svc.persistUpdate('doc-1', new Uint8Array([1]), DEFAULT_GENERATION, 'upd-42');
       svc.persistUpdate('doc-1', new Uint8Array([2]), DEFAULT_GENERATION, 'upd-43');
       await svc.flushDocument('doc-1');
 
-      expect(redis.allocateSeq).toHaveBeenCalledTimes(1);
-      expect(redis.incr).toHaveBeenCalledTimes(1);
-      expect(redis.incr).toHaveBeenCalledWith(KEY);
+      expect(redis.allocateSeq).toHaveBeenNthCalledWith(1, KEY, -1);
+      expect(redis.allocateSeq).toHaveBeenNthCalledWith(2, KEY, 0);
+      expect(redis.incr).not.toHaveBeenCalled();
     });
 
-    it('falls back to the in-memory counter when Redis allocation fails', async () => {
+    it('falls back to the database high-water mark when Redis allocation fails', async () => {
       const redis = makeRedis(true);
       redis.allocateSeq.mockResolvedValue(null); // Redis error/miss
       prisma.documentUpdate.aggregate.mockResolvedValue({ _max: { seq: null } } as never);
@@ -714,8 +713,7 @@ describe('DocumentPersistenceService', () => {
 
     it('still compacts after Redis allocates the sequence numbers', async () => {
       const redis = makeRedis(true);
-      redis.allocateSeq.mockResolvedValue(10);
-      redis.incr.mockResolvedValueOnce(11).mockResolvedValueOnce(12);
+      redis.allocateSeq.mockResolvedValueOnce(10).mockResolvedValueOnce(11).mockResolvedValueOnce(12);
       prisma.documentUpdate.aggregate.mockResolvedValue({ _max: { seq: 9 } } as never);
       const updates = makeIncrementalUpdates(3);
       const rows: Array<{

@@ -555,7 +555,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     socket.to.mockReturnValue({ emit: jest.fn() } as never);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', updateId: 'upd-test-1', update: new Uint8Array(10) },
+      { generation: 0, documentId: 'doc-1', updateId: 'upd-test-1', update: new Uint8Array(10) },
       socket,
     );
 
@@ -581,7 +581,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', updateId: 'upd-test-2', update: new Uint8Array(10) },
+      { generation: 0, documentId: 'doc-1', updateId: 'upd-test-2', update: new Uint8Array(10) },
       socket,
     );
 
@@ -608,7 +608,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', updateId: 'upd-test-3', update: new Uint8Array(10) },
+      { generation: 0, documentId: 'doc-1', updateId: 'upd-test-3', update: new Uint8Array(10) },
       socket,
     );
 
@@ -631,7 +631,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     socket.to.mockReturnValue({ emit: jest.fn() } as never);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', updateId: 'upd-test-4', update: new Uint8Array(10) },
+      { generation: 0, documentId: 'doc-1', updateId: 'upd-test-4', update: new Uint8Array(10) },
       socket,
     );
 
@@ -649,7 +649,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     documentManager.hasDocument.mockReturnValue(true);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'another-users-loaded-doc', updateId: 'upd-test-5', update: new Uint8Array(10) },
+      { generation: 0, documentId: 'another-users-loaded-doc', updateId: 'upd-test-5', update: new Uint8Array(10) },
       socket,
     );
 
@@ -671,7 +671,7 @@ describe('EditorGateway.handleYjsUpdate — viewer rejection', () => {
     documentManager.hasDocument.mockReturnValue(true);
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', updateId: 'upd-test-6', update: new Uint8Array(10) },
+      { generation: 0, documentId: 'doc-1', updateId: 'upd-test-6', update: new Uint8Array(10) },
       socket,
     );
 
@@ -802,7 +802,7 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
     const socket = makeAuthenticatedSocket();
 
     const oversized = new Uint8Array(maxBytes + 1);
-    await gateway.handleYjsUpdate({ documentId: 'doc-1', updateId: 'upd-test-7', update: oversized }, socket);
+    await gateway.handleYjsUpdate({ generation: 0, documentId: 'doc-1', updateId: 'upd-test-7', update: oversized }, socket);
 
     expect(socket.emit).toHaveBeenCalledWith(
       'error',
@@ -817,7 +817,7 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
     const socket = makeAuthenticatedSocket();
 
     const oversized = new Uint8Array(maxBytes + 1);
-    await gateway.handleYjsUpdate({ documentId: 'doc-1', updateId: 'upd-test-8', update: oversized }, socket);
+    await gateway.handleYjsUpdate({ generation: 0, documentId: 'doc-1', updateId: 'upd-test-8', update: oversized }, socket);
 
     expect(documentManager.applyUpdate).not.toHaveBeenCalled();
   });
@@ -831,7 +831,7 @@ describe('EditorGateway.handleYjsUpdate — payload cap', () => {
     documentManager.applyUpdate.mockImplementation(() => undefined);
 
     const exactly = new Uint8Array(maxBytes);
-    await gateway.handleYjsUpdate({ documentId: 'doc-1', updateId: 'upd-test-9', update: exactly }, socket);
+    await gateway.handleYjsUpdate({ generation: 0, documentId: 'doc-1', updateId: 'upd-test-9', update: exactly }, socket);
 
     expect(documentManager.applyUpdate).toHaveBeenCalledWith('doc-1', exactly);
   });
@@ -862,14 +862,14 @@ describe('EditorGateway — WebSocket rate limiting', () => {
     // First 3 calls should pass
     for (let i = 0; i < wsLimit; i++) {
       await gateway.handleYjsUpdate(
-        { documentId: 'doc-1', updateId: 'upd-test-10', update: smallUpdate },
+        { generation: 0, documentId: 'doc-1', updateId: 'upd-test-10', update: smallUpdate },
         socket,
       );
     }
 
     // The 4th call exceeds the limit
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', updateId: 'upd-test-11', update: smallUpdate },
+      { generation: 0, documentId: 'doc-1', updateId: 'upd-test-11', update: smallUpdate },
       socket,
     );
 
@@ -900,7 +900,7 @@ describe('EditorGateway — live authorization revocation', () => {
     });
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', updateId: 'upd-test-12', update: new Uint8Array(10) },
+      { generation: 0, documentId: 'doc-1', updateId: 'upd-test-12', update: new Uint8Array(10) },
       socket,
     );
 
@@ -924,7 +924,7 @@ describe('EditorGateway — live authorization revocation', () => {
     });
 
     await gateway.handleYjsUpdate(
-      { documentId: 'doc-1', updateId: 'upd-test-13', update: new Uint8Array(10) },
+      { generation: 0, documentId: 'doc-1', updateId: 'upd-test-13', update: new Uint8Array(10) },
       socket,
     );
 
@@ -1007,7 +1007,7 @@ describe('EditorGateway.handleYjsUpdate — durable ack', () => {
     documentManager.hasDocument.mockReturnValue(true);
 
     await gateway.handleYjsUpdate(
-      {
+      { generation: 0,
         documentId: 'doc-1',
         updateId: 'client-upd-1',
         update: new Uint8Array(10),
@@ -1049,7 +1049,7 @@ describe('EditorGateway.handleYjsUpdate — durable ack', () => {
       .mockReturnValue(1);
 
     await gateway.handleYjsUpdate(
-      {
+      { generation: 0,
         documentId: 'doc-1',
         updateId: 'client-upd-2',
         update: new Uint8Array(10),
@@ -1082,7 +1082,7 @@ describe('EditorGateway.handleYjsUpdate — durable ack', () => {
     documentManager.hasDocument.mockReturnValue(true);
 
     await gateway.handleYjsUpdate(
-      {
+      { generation: 0,
         documentId: 'doc-1',
         updateId: 'client-upd-3',
         update: new Uint8Array(10),

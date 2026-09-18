@@ -82,18 +82,15 @@ export function useSaveActiveFile(): UseSaveActiveFileReturn {
     }
 
     const tabName = state.openTabs.find((t) => t.fileId === id)?.name ?? "file";
-    const contentBefore = state.editorContentByFileId[id] ?? "";
 
     state.setSaveStatus("saving");
     try {
       await flushEditorUpdates(id);
       await waitForPendingAcks(id);
       const result = await checkpointDocument(id);
-      const latest = useWorkspaceStore.getState();
-      // Align the editor mirror with the checkpoint without flipping dirty.
-      if ((latest.editorContentByFileId[id] ?? "") === contentBefore) {
-        latest.applyRemoteFileContent(id, result.content);
-      }
+      // A checkpoint is an observation of durable state, not a replacement
+      // for the live CRDT. Peers can have visible, still-unacknowledged edits;
+      // writing an older response into Monaco would delete those live edits.
       const after = useWorkspaceStore.getState();
       const contentStillMatches =
         (after.editorContentByFileId[id] ?? "") === result.content;

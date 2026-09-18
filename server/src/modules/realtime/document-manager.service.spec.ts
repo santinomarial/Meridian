@@ -49,6 +49,9 @@ describe('DocumentManagerService', () => {
 
   beforeEach(() => {
     prisma = mockDeep<PrismaService>();
+    prisma.$transaction.mockImplementation(
+      ((fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)) as never,
+    );
     persistence = mockDeep<DocumentPersistenceService>();
     persistence.releaseDocument.mockResolvedValue(true);
     // Default: no existing DB state.

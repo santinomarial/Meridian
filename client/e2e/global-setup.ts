@@ -113,13 +113,22 @@ export default async function globalSetup() {
   // a no-op (or unreachable) otherwise — so failures here are non-fatal.
   const backendUrl =
     process.env["MERIDIAN_BACKEND_URL"] ?? "http://localhost:3000";
+  const requireBackend = !!process.env["CI"] || !!process.env["MERIDIAN_BACKEND_URL"];
   try {
-    await fetch(`${backendUrl}/e2e/cleanup`, {
+    if (requireBackend) {
+      const ready = await fetch(`${backendUrl}/ready`);
+      if (!ready.ok()) throw new Error(`E2E backend is not ready: ${ready.status()}`);
+    }
+    const cleanup = await fetch(`${backendUrl}/e2e/cleanup`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ emailPrefix: "e2e-" }),
     });
-  } catch {
-    // Backend not running (offline-only test run) — ignore.
+    if (requireBackend && !cleanup.ok()) {
+      throw new Error(`E2E backend cleanup failed: ${cleanup.status()}. Start the isolated server with E2E_TEST=true.`);
+    }
+  } catch (error) {
+    if (requireBackend) throw error;
+    // An explicitly offline run may omit the backend.
   }
 }

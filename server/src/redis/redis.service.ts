@@ -185,7 +185,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   private static readonly ALLOCATE_SEQ_LUA = `
-if redis.call('EXISTS', KEYS[1]) == 0 then
+local current = redis.call('GET', KEYS[1])
+if not current or tonumber(current) < tonumber(ARGV[1]) then
   redis.call('SET', KEYS[1], ARGV[1])
 end
 return redis.call('INCR', KEYS[1])`;

@@ -1,3 +1,4 @@
+import { SocketIoAdapter, allowedOrigins } from './common/security/socket-io.adapter';
 import cookieParser from 'cookie-parser';
 import {
   BadRequestException,
@@ -27,6 +28,8 @@ const BULK_IMPORT_JSON_LIMIT = '26mb';
  */
 export function configureApp(app: INestApplication): void {
   const config = app.get(ConfigService).getOrThrow<AppConfig>(APP_CONFIG_KEY);
+  app.enableCors({ origin: allowedOrigins(config), credentials: true });
+  app.useWebSocketAdapter(new SocketIoAdapter(app, config));
   const expressApp = app.getHttpAdapter().getInstance() as {
     set: (setting: string, value: unknown) => void;
   };

@@ -88,7 +88,7 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
     userRole !== "OWNER" &&
     userRole !== "EDITOR";
 
-  useYjsMonaco(mountedEditor, activeFileId, backendStatus === "available");
+  const collaborationReady = useYjsMonaco(mountedEditor, activeFileId, backendStatus === "available");
 
   const syncCursorPosition = (monacoEditor: editor.IStandaloneCodeEditor): void => {
     const position = monacoEditor.getPosition();
@@ -182,7 +182,7 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
         language={LANGUAGE_TO_MONACO[language]}
         theme={monacoTheme}
         value={content}
-        options={isViewer ? { ...EDITOR_OPTIONS, readOnly: true } : EDITOR_OPTIONS}
+        options={isViewer || (backendStatus === "available" && !collaborationReady) ? { ...EDITOR_OPTIONS, readOnly: true } : EDITOR_OPTIONS}
         loading={<EditorSkeleton />}
         beforeMount={registerMeridianMonacoThemes}
         onMount={handleMount}

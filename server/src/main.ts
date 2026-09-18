@@ -2,39 +2,11 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from 'nestjs-pino';
-import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import type { INestApplication } from '@nestjs/common';
-import type { ServerOptions } from 'socket.io';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
 import type { AppConfig } from './config/configuration.type';
 import { APP_CONFIG_KEY } from './config/app.config';
-
-const DEV_ORIGINS = [
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:5175',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:5174',
-  'http://127.0.0.1:5175',
-];
-
-class SocketIoAdapter extends IoAdapter {
-  constructor(
-    app: INestApplication,
-    private readonly corsOrigin: string | string[],
-  ) {
-    super(app);
-  }
-
-  override createIOServer(port: number, options: Partial<ServerOptions> = {}) {
-    return super.createIOServer(port, {
-      ...options,
-      cors: { origin: this.corsOrigin, credentials: true },
-    });
-  }
-}
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, {
@@ -47,13 +19,6 @@ async function bootstrap(): Promise<void> {
   configureApp(app);
 
   const config = app.get(ConfigService).getOrThrow<AppConfig>(APP_CONFIG_KEY);
-
-  const corsOrigin: string | string[] =
-    config.nodeEnv === 'development' ? DEV_ORIGINS : config.clientOrigin;
-
-  app.enableCors({ origin: corsOrigin, credentials: true });
-
-  app.useWebSocketAdapter(new SocketIoAdapter(app, corsOrigin));
 
   // Swagger is a development aid — do not expose the full OpenAPI surface in
   // production (auth is cookie-based; the docs UI still discloses the API).

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { editor } from "monaco-editor";
 import * as Y from "yjs";
 import { MonacoBinding } from "y-monaco";
@@ -17,6 +17,7 @@ import {
   decodeUpdateBase64,
   enqueueYjsUpdate,
   listPendingYjsUpdates,
+  quarantineYjsUpdate,
 } from "../lib/yjsOutboundQueue";
 import { colorForUser } from "../lib/collabColors";
 import { registerDocumentUpdateFlusher } from "../lib/yjsUpdateFlush";
@@ -27,7 +28,7 @@ import {
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 
 type SyncPayload = { documentId: string; message: unknown };
-type JoinedPayload = { documentId: string };
+type JoinedPayload = { documentId: string; generation: number };
 type AckPayload = { documentId: string; updateId: string };
 
 function toUint8Array(value: unknown): Uint8Array | null {
@@ -61,7 +62,10 @@ export function useYjsMonaco(
   monacoEditor: editor.IStandaloneCodeEditor | null,
   documentId: string | null,
   backendAvailable: boolean,
-): void {
+): boolean {
+  const [readyBinding, setReadyBinding] = useState<{
+    editor: editor.IStandaloneCodeEditor; documentId: string; epoch: number;
+  } | null>(null);
   const currentUser = useWorkspaceStore((s) => s.currentUser);
   // Bumped by document:restored / local restore so this effect tears down the
   // dead CRDT lineage and re-joins the new generation.
@@ -80,6 +84,10 @@ export function useYjsMonaco(
     const socket = getSocket();
     const doc = acquireDocumentState(documentId);
     let disposed = false;
+    let joinedGeneration: number | null = null;
+    let bindingGeneration: number | null = null;
+    let retryTimer: number | null = null;
+    let replaying = false;
     let setupTimer: number | null = null;
     let teardownBinding: (() => void) | null = null;
     let flushQueuedChanges: (() => void) | null = null;
@@ -87,7 +95,9 @@ export function useYjsMonaco(
 
     const setupBinding = (): void => {
       setupTimer = null;
-      if (disposed || teardownBinding !== null || model.isDisposed()) return;
+      if (disposed || teardownBinding !== null || model.isDisposed() || joinedGeneration === null) return;
+      const generation = joinedGeneration;
+      bindingGeneration = generation;
 
       const ytext = doc.getText("content");
       const awareness = getOrCreateAwareness(documentId);
@@ -99,7 +109,7 @@ export function useYjsMonaco(
       let activeFlush: Promise<void> | null = null;
 
       const emitDurableUpdate = (update: Uint8Array, updateId: string): void => {
-        socket.emit("yjs:update", { documentId, updateId, update });
+        socket.emit("yjs:update", { documentId, updateId, generation, update });
       };
 
       const flushUpdates = (): Promise<void> => {
@@ -123,7 +133,7 @@ export function useYjsMonaco(
 
         // Enqueue even while disconnected. Re-join resends the durable entry;
         // a tab switch or teardown must never discard the in-memory batch.
-        activeFlush = enqueueYjsUpdate(documentId, updateId, merged)
+        activeFlush = enqueueYjsUpdate(documentId, updateId, merged, generation)
           .then(() => {
             if (!disposed && socket.connected) {
               emitDurableUpdate(merged, updateId);
@@ -214,10 +224,16 @@ export function useYjsMonaco(
       // Binding an empty client Y.Doc immediately would blank the REST-loaded
       // editor before the server handshake arrives. We create the binding only
       // after SyncStep2 and mark its initial reconciliation as remote.
+      const checkpointContent = model.getValue();
       const binding = runWithRemoteDocumentUpdate(
         documentId,
         () => new MonacoBinding(ytext, model, new Set([monacoEditor]), awareness),
       );
+
+      if (ytext.toString() !== checkpointContent) {
+        useWorkspaceStore.getState().updateFileContent(documentId, ytext.toString());
+      }
+      setReadyBinding({ editor: monacoEditor, documentId, epoch: resyncEpoch });
 
       // Register the awareness relay before setting identity so the very first
       // presence update is sent without waiting for a cursor movement.
@@ -236,15 +252,46 @@ export function useYjsMonaco(
       };
 
       resendPending = (): void => {
-        void listPendingYjsUpdates(documentId).then((pending) => {
-          if (disposed || !socket.connected) return;
+        if (replaying || disposed || !socket.connected || joinedGeneration !== generation) return;
+        replaying = true;
+        void listPendingYjsUpdates(documentId).then(async (pending) => {
+          if (disposed || !socket.connected || joinedGeneration !== generation) return;
+          let sent = 0;
+          let conflicts = false;
           for (const entry of pending) {
-            emitDurableUpdate(decodeUpdateBase64(entry.updateBase64), entry.updateId);
+            if (disposed || joinedGeneration !== generation) return;
+            if (entry.generation !== generation) {
+              await quarantineYjsUpdate(entry);
+              conflicts = true;
+              continue;
+            }
+            // Bound retry traffic below the socket rate limit. Remaining rows
+            // are retried on the next tick as acknowledgements drain the queue.
+            if (sent++ >= 20) break;
+            const update = decodeUpdateBase64(entry.updateBase64);
+            // On a fresh page, the server has never seen these offline edits.
+            // Apply them locally too: the sender does not receive its own relay.
+            runWithRemoteDocumentUpdate(documentId, () => Y.applyUpdate(doc, update, "remote"));
+            useWorkspaceStore.getState().updateFileContent(documentId, doc.getText("content").toString());
+            emitDurableUpdate(update, entry.updateId);
           }
-        });
+          if (conflicts && !disposed) {
+            useWorkspaceStore.getState().addNotification({
+              icon: "history",
+              text: "Earlier offline edits were set aside after this file changed. Export recovery data from the command palette to keep a copy.",
+            });
+          }
+        }).catch(() => {
+          if (!disposed) useWorkspaceStore.getState().setSaveStatus("error");
+        }).finally(() => { replaying = false; });
       };
+      // joinedDocument normally arrives BEFORE the asynchronous SyncStep2 that
+      // installs this binding. Replay here as well as on a warm reconnect.
+      resendPending();
+      retryTimer = window.setInterval(() => resendPending?.(), 1_000);
 
       teardownBinding = (): void => {
+        if (retryTimer !== null) window.clearInterval(retryTimer);
         unregisterUpdateFlusher();
         doc.off("update", handleUpdate);
         awareness.off("change", syncPresence);
@@ -274,18 +321,26 @@ export function useYjsMonaco(
     };
 
     const join = (): void => {
+      joinedGeneration = null;
       socket.emit("joinDocument", { documentId });
     };
 
     const onJoinedDocument = (payload: JoinedPayload): void => {
       if (payload.documentId !== documentId) return;
+      joinedGeneration = payload.generation;
+      if (bindingGeneration !== null && bindingGeneration !== payload.generation) {
+        useWorkspaceStore.getState().requestDocumentResync(documentId, payload.generation);
+        return;
+      }
       flushQueuedChanges?.();
       resendPending?.();
     };
 
     const onAck = (payload: AckPayload): void => {
       if (payload.documentId !== documentId) return;
-      void ackYjsUpdate(payload.documentId, payload.updateId);
+      void ackYjsUpdate(payload.documentId, payload.updateId).catch(() => {
+        if (!disposed) useWorkspaceStore.getState().setSaveStatus("error");
+      });
     };
 
     socket.on("connect", join);
@@ -307,4 +362,6 @@ export function useYjsMonaco(
       useWorkspaceStore.getState().setCollaborators([]);
     };
   }, [monacoEditor, documentId, backendAvailable, currentUser, resyncEpoch]);
+  return readyBinding !== null && readyBinding.editor === monacoEditor &&
+    readyBinding.documentId === documentId && readyBinding.epoch === resyncEpoch;
 }

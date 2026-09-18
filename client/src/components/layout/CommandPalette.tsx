@@ -7,6 +7,8 @@ import { useFileOperations } from "../../hooks/useFileOperations";
 import { useSaveActiveFile } from "../../hooks/useSaveActiveFile";
 import { useRunActiveFile } from "../../hooks/useRunActiveFile";
 import { useExportWorkspace } from "../../hooks/useExportWorkspace";
+import { listRecoveryUpdates } from "../../lib/yjsOutboundQueue";
+import { downloadBlob } from "../../lib/download";
 import { logout } from "../../lib/api";
 import { flattenFileTree, searchFiles, commandMatches } from "../../lib/commandPalette";
 
@@ -96,6 +98,23 @@ function CommandPaletteBody() {
   // ── Commands ─────────────────────────────────────────────────────────────────
   const commands = useMemo<PaletteCommand[]>(() => {
     const list: PaletteCommand[] = [];
+
+    list.push({
+      id: "export-recovery",
+      title: "Export Recovery Data",
+      icon: "download",
+      keywords: "offline restore backup",
+      disabled: false,
+      run: () => {
+        void listRecoveryUpdates().then((entries) => {
+          if (entries.length === 0) {
+            toast("No offline edits have been set aside.", "info");
+            return;
+          }
+          downloadBlob(new Blob([JSON.stringify(entries, null, 2)], { type: "application/json" }), "meridian-recovery.json");
+        }).catch(() => toast("Could not read recovery data.", "error"));
+      },
+    });
 
     // New File / New Folder — editor+ only.
     list.push({

@@ -240,6 +240,7 @@ describe('DocumentsService', () => {
 
     it('rejects importing over an existing document of another type', async () => {
       prisma.document.findUnique.mockResolvedValue(BASE_DOC);
+      prisma.document.findUniqueOrThrow.mockResolvedValue(BASE_DOC);
 
       await expect(
         service.bulkCreateDocuments('ws-1', [

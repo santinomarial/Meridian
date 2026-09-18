@@ -218,12 +218,16 @@ export class DocumentsService {
             this.assertValidParent(parent, workspaceId);
           }
 
-          const existing = await tx.document.findUnique({
+          let existing = await tx.document.findUnique({
             where: { workspaceId_path: { workspaceId, path: input.path } },
           });
 
           let doc: Document;
           if (existing !== null) {
+            // The lookup can precede a concurrent restore. Read the lineage
+            // again AFTER taking the lock, never increment a stale generation.
+            await acquireDocumentLock(tx, existing.id);
+            existing = await tx.document.findUniqueOrThrow({ where: { id: existing.id } });
             if (existing.type !== input.type) {
               throw new ConflictException(
                 `Cannot import ${input.type.toLowerCase()} "${input.path}" over an existing ${existing.type.toLowerCase()}`,
@@ -237,7 +241,6 @@ export class DocumentsService {
               // Import replaces the saved checkpoint. When CRDT history exists,
               // bump the generation and replace the lineage so cold load never
               // resurrect the pre-import collaborative state.
-              await acquireDocumentLock(tx, existing.id);
               const nextGeneration = existing.crdtGeneration + 1;
               await tx.documentUpdate.deleteMany({ where: { documentId: existing.id } });
               await tx.snapshot.deleteMany({ where: { documentId: existing.id } });
