@@ -93,6 +93,7 @@ describe('Auth (HTTP integration)', () => {
     const me = await agent.get('/auth/me');
     expect(me.status).toBe(200);
     expect(me.body.email).toBe(email);
+    expect(me.body.capabilities).toEqual({ terminal: false });
 
     await agent.post('/auth/logout').expect(204);
 

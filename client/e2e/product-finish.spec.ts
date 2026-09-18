@@ -79,6 +79,26 @@ test.describe("settings + notifications (backend required)", () => {
     test.skip(!backendAvailable, "Backend not available");
   });
 
+  test("unavailable server features stay out of navigation and commands", async ({ page }) => {
+    await page.route("**/auth/me", async (route) => {
+      const response = await route.fetch();
+      const user = await response.json();
+      await route.fulfill({ response, json: { ...user, capabilities: { terminal: false } } });
+    });
+    await page.goto("/");
+    await signUpViaUI(page, uniqueEmail(), STRONG_PASSWORD);
+    await expect(page.getByTestId("file-explorer")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("button", { name: "Toggle Terminal" })).toHaveCount(0);
+    await page.getByTestId("top-menu-file").click();
+    await expect(page.getByRole("menuitem", { name: "Run Active File" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("ControlOrMeta+k");
+    await expect(page.getByTestId("command-palette")).toBeVisible();
+    await expect(page.locator('[data-command-id="toggle-terminal"]')).toHaveCount(0);
+    await expect(page.locator('[data-command-id="run-active-file"]')).toHaveCount(0);
+    await expect(page.getByTestId("terminal-panel")).toHaveCount(0);
+  });
+
   test("notifications panel shows a real empty state in a fresh session", async ({
     page,
   }) => {
@@ -97,7 +117,7 @@ test.describe("settings + notifications (backend required)", () => {
     expect((await panel.textContent()) ?? "").not.toContain("Collaborator joined");
   });
 
-  test("Live Session reports real connection state, no fake /session/demo nav", async ({
+  test("Collaborate opens the collaboration panel without starting a new session", async ({
     page,
   }) => {
     await page.goto("/");
@@ -107,8 +127,10 @@ test.describe("settings + notifications (backend required)", () => {
       timeout: 15_000,
     });
 
-    await page.getByRole("button", { name: /Live session/i }).click();
+    await page.getByRole("button", { name: "Collaboration", exact: true }).click();
+    await expect(page.getByTestId("collaboration-panel")).toHaveCount(0);
+    await page.getByRole("button", { name: "Show collaboration" }).click();
     await expect(page).toHaveURL(/\/workspace/);
-    await expect(page.getByRole("status").filter({ hasText: /Live session|Connected|Connecting|disconnected/i })).toBeVisible();
+    await expect(page.getByTestId("collaboration-panel")).toBeVisible();
   });
 });

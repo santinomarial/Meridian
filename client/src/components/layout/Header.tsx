@@ -41,6 +41,7 @@ type MenuEntry = {
   sep?: true;
   danger?: boolean;
   requiresEdit?: true;
+  requiresTerminal?: true;
   disabled?: boolean;
 };
 
@@ -169,6 +170,7 @@ export function Header() {
   const isExplorerOpen = useWorkspaceStore((s) => s.isExplorerOpen);
   const isCollaborationPanelOpen = useWorkspaceStore((s) => s.isCollaborationPanelOpen);
   const toggleTerminal = useWorkspaceStore((s) => s.toggleTerminal);
+  const terminalEnabled = useWorkspaceStore((s) => s.terminalEnabled);
   const activeFileId = useWorkspaceStore((s) => s.activeFileId);
   const openTabs = useWorkspaceStore((s) => s.openTabs);
   const notifications = useWorkspaceStore((s) => s.notifications);
@@ -454,34 +456,13 @@ export function Header() {
     window.setTimeout(() => setInviteStatus("idle"), 3000);
   }, [inviteEmail, inviteLink, inviteRole, isBackendAvailable, workspaceId, addNotification]);
 
-  // Live Session reflects the real collaboration state. Collaboration in
-  // Meridian is document-based: opening a file in a backend workspace already
-  // joins a live Yjs room, so this surfaces that real state rather than
-  // navigating to a fabricated session route.
-  const handleLiveSession = useCallback(() => {
-    if (!isBackendAvailable) {
-      toast("Live session unavailable — connect the backend first.", "error");
-      return;
+  const handleShowCollaboration = useCallback(() => {
+    if (window.matchMedia("(max-width: 1024px)").matches) {
+      useWorkspaceStore.setState({ isExplorerOpen: false, isCollaborationPanelOpen: true });
+    } else if (!isCollaborationPanelOpen) {
+      togglePanel("collaboration");
     }
-    if (!activeFileId) {
-      toast("Open a file to start a live session.");
-      return;
-    }
-    if (!isCollaborationPanelOpen) togglePanel("collaboration");
-    const message =
-      connectionStatus === "connected"
-        ? "Live session active — collaborators editing this file appear here."
-        : connectionStatus === "connecting"
-          ? "Connecting to the live session…"
-          : "Live session disconnected — reconnecting.";
-    toast(message, connectionStatus === "connected" ? "success" : "info");
-  }, [
-    isBackendAvailable,
-    activeFileId,
-    isCollaborationPanelOpen,
-    connectionStatus,
-    togglePanel,
-  ]);
+  }, [isCollaborationPanelOpen, togglePanel]);
 
   const handleGoToActiveFile = useCallback(() => {
     setOpenPanel(null);
@@ -550,6 +531,7 @@ export function Header() {
       { label: "Save", icon: "save", onClick: handleSave, sep: true, requiresEdit: true },
       {
         label: "Run Active File",
+        requiresTerminal: true,
         icon: "play_arrow",
         onClick: handleRunActiveFile,
         requiresEdit: true,
@@ -615,6 +597,7 @@ export function Header() {
       },
       {
         label: "Toggle Terminal",
+        requiresTerminal: true,
         icon: "terminal",
         onClick: () => { toggleTerminal(); setOpenPanel(null); },
       },
@@ -698,7 +681,7 @@ export function Header() {
               const panelKey = `${item.toLowerCase()}-menu` as OpenPanel;
               const isOpen = openPanel === panelKey;
               const entries = navMenuContent[item].filter(
-                    (e) => !isViewer || e.requiresEdit !== true,
+                    (e) => (!isViewer || e.requiresEdit !== true) && (!e.requiresTerminal || terminalEnabled),
                   );
               return (
                 <div key={item} className="relative">
@@ -822,14 +805,13 @@ export function Header() {
           ) : null}
         </div>
 
-        {/* Live Session */}
+        {/* Opens the panel; collaboration already joins when a file opens. */}
         <button
           type="button"
-          aria-label={
-            isBackendAvailable ? "Start live session" : "Live session unavailable — backend offline"
-          }
+          aria-label="Show collaboration"
+          title={connectionStatus === "connected" ? "Connected — show collaboration" : "Show collaboration"}
           className={[headerButtonSecondary, "hidden items-center gap-1.5 sm:inline-flex"].join(" ")}
-          onClick={handleLiveSession}
+          onClick={handleShowCollaboration}
         >
           <MaterialIcon
             name={connectionStatus === "connected" ? "wifi" : "wifi_off"}
@@ -839,7 +821,7 @@ export function Header() {
             ].join(" ")}
             aria-hidden
           />
-          Live Session
+          Collaborate
         </button>
 
         {/* Share / Invite — owners only */}

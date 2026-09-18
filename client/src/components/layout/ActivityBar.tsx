@@ -52,6 +52,7 @@ export function ActivityBar() {
   const isExplorerOpen = useWorkspaceStore((s) => s.isExplorerOpen);
   const isCollaborationPanelOpen = useWorkspaceStore((s) => s.isCollaborationPanelOpen);
   const isTerminalOpen = useWorkspaceStore((s) => s.isTerminalOpen);
+  const terminalEnabled = useWorkspaceStore((s) => s.terminalEnabled);
   const setSelectedActivityItem = useWorkspaceStore((s) => s.setSelectedActivityItem);
   const togglePanel = useWorkspaceStore((s) => s.togglePanel);
   const toggleTerminal = useWorkspaceStore((s) => s.toggleTerminal);
@@ -104,12 +105,12 @@ export function ActivityBar() {
         ))}
       </div>
       <div className="mt-auto flex w-full flex-col gap-0.5 pb-0.5">
-        <ActivityButton
+        {terminalEnabled && <ActivityButton
           icon="terminal"
           label="Toggle Terminal"
           selected={isTerminalOpen}
           onClick={toggleTerminal}
-        />
+        />}
         <ActivityButton
           icon="settings"
           label="Settings"

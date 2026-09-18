@@ -175,7 +175,7 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
 
   // Wire socket events while the workspaceId is known.
   useEffect(() => {
-    if (workspaceId === null) return;
+    if (workspaceId === null || !useWorkspaceStore.getState().terminalEnabled) return;
 
     const socket = getSocket();
 
@@ -222,7 +222,7 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
   }, [workspaceId, setTerminalStatus, setTerminalSyncStatus, focus]);
 
   const start = useCallback((): void => {
-    if (workspaceId === null) return;
+    if (workspaceId === null || !useWorkspaceStore.getState().terminalEnabled) return;
     getSocket().emit("terminal:start", { workspaceId });
     focus();
   }, [workspaceId, focus]);

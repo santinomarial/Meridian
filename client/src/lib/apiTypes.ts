@@ -1,4 +1,6 @@
 export interface ApiUser {
+  /** Advertised by /auth/me; absence means the feature is unavailable. */
+  capabilities?: { terminal: boolean };
   id: string;
   email: string;
   emailVerifiedAt: string | null;

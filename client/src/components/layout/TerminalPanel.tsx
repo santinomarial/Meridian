@@ -48,6 +48,7 @@ export function TerminalPanel() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const isTerminalOpen = useWorkspaceStore((s) => s.isTerminalOpen);
+  const terminalEnabled = useWorkspaceStore((s) => s.terminalEnabled);
   const terminalStatus = useWorkspaceStore((s) => s.terminalStatus);
   const terminalSyncStatus = useWorkspaceStore((s) => s.terminalSyncStatus);
   const connectionStatus = useWorkspaceStore((s) => s.connectionStatus);
@@ -76,15 +77,17 @@ export function TerminalPanel() {
       startedForOpenRef.current = false;
       return;
     }
-    if (isViewer || workspaceId === null || startedForOpenRef.current) return;
+    if (!terminalEnabled || isViewer || workspaceId === null || startedForOpenRef.current) return;
     startedForOpenRef.current = true;
     start();
-  }, [isTerminalOpen, isViewer, workspaceId, start]);
+  }, [isTerminalOpen, isViewer, workspaceId, start, terminalEnabled]);
 
   const isRunning = terminalStatus === "running" || terminalStatus === "ready";
   const status = statusMeta(terminalStatus, connectionStatus);
   // Keep panel chrome flush with the xterm canvas (same hex as useTerminal themes).
   const terminalBackground = theme === "light" ? "#eceef3" : "#0f1219";
+
+  if (!terminalEnabled) return null;
 
   return (
     <div

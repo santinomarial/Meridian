@@ -30,7 +30,7 @@ See [health and metrics](health-and-metrics.md) for exact fields and exposure.
 | `POST /auth/verify-email` | Public bearer token | `token` | 200; atomically verifies the email, creates a session, sets cookie, returns user + token |
 | `POST /auth/email-verification` | Public | `email` | Generic 200; development fallback may include `previewVerificationUrl` |
 | `POST /auth/login` | Public | `email`, `password` | 200 for a verified account; creates session, sets cookie, returns user + token |
-| `GET /auth/me` | Session | — | Current authenticated user |
+| `GET /auth/me` | Session | — | Current authenticated user and `capabilities.terminal`, derived from server configuration. The client hides terminal/run actions when false or absent. |
 | `POST /auth/logout` | Session | — | 204; revokes current session and clears cookie |
 | `POST /auth/forgot-password` | Public | `email` | Generic 200 message; development fallback may include `previewResetUrl` |
 | `POST /auth/reset-password` | Public | `token`, `password` (policy) | 200 success message; revokes user sessions |

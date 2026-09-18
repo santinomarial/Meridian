@@ -10,6 +10,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
+import { APP_CONFIG_KEY } from '../../config/app.config';
+import type { AppConfig } from '../../config/configuration.type';
 import type { Response } from 'express';
 import { AuthService, type RegisterResult } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -33,7 +36,10 @@ const VERIFICATION_SUCCESS =
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly config: ConfigService,
+  ) {}
 
   @ApiOperation({ summary: 'Register a new account' })
   @Post('register')
@@ -58,8 +64,11 @@ export class AuthController {
   @ApiOperation({ summary: 'Get the currently authenticated user' })
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  me(@CurrentUser() user: AuthUser): AuthUser {
-    return user;
+  me(@CurrentUser() user: AuthUser): AuthUser & { capabilities: { terminal: boolean } } {
+    return {
+      ...user,
+      capabilities: { terminal: this.config.getOrThrow<AppConfig>(APP_CONFIG_KEY).enableTerminal },
+    };
   }
 
   @ApiOperation({ summary: 'Revoke the current session and clear the cookie' })

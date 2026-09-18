@@ -252,6 +252,7 @@ function createWorkspaceSessionState(
     userRole: null,
     memberRoles: {},
     isTerminalOpen: false,
+    terminalEnabled: false,
     terminalStatus: "idle",
     terminalSyncStatus: null,
     backendStatus: "pending",
@@ -294,6 +295,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   // ── Terminal state ────────────────────────────────────────────────────────
   isTerminalOpen: false,
+  terminalEnabled: false,
   terminalStatus: "idle" as TerminalStatus,
   terminalSyncStatus: null,
 
@@ -400,12 +402,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   setSelectedActivityItem: (item) => set({ selectedActivityItem: item }),
 
   togglePanel: (panel) => {
+    const compact = typeof window !== "undefined" && window.matchMedia("(max-width: 1024px)").matches;
     set((state) => {
       switch (panel) {
         case "explorer":
-          return { isExplorerOpen: !state.isExplorerOpen };
+          return { isExplorerOpen: !state.isExplorerOpen, ...(compact ? { isCollaborationPanelOpen: false } : {}) };
         case "collaboration":
-          return { isCollaborationPanelOpen: !state.isCollaborationPanelOpen };
+          return { isCollaborationPanelOpen: !state.isCollaborationPanelOpen, ...(compact ? { isExplorerOpen: false } : {}) };
       }
     });
   },

@@ -110,6 +110,7 @@ export type WorkspaceState = {
   userRole: "OWNER" | "EDITOR" | "VIEWER" | null;
   memberRoles: Record<string, "OWNER" | "EDITOR" | "VIEWER">;
   isTerminalOpen: boolean;
+  terminalEnabled: boolean;
   terminalSyncStatus: TerminalSyncStatus | null;
   terminalStatus: TerminalStatus;
   files: FileNode[];

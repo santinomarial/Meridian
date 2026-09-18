@@ -50,6 +50,7 @@ export function useRunActiveFile(): UseRunActiveFileReturn {
   const userRole = useWorkspaceStore((s) => s.userRole);
   const backendStatus = useWorkspaceStore((s) => s.backendStatus);
   const terminalStatus = useWorkspaceStore((s) => s.terminalStatus);
+  const terminalEnabled = useWorkspaceStore((s) => s.terminalEnabled);
   const setTerminalOpen = useWorkspaceStore((s) => s.setTerminalOpen);
   const addNotification = useWorkspaceStore((s) => s.addNotification);
   const { saveActiveFile } = useSaveActiveFile();
@@ -64,7 +65,7 @@ export function useRunActiveFile(): UseRunActiveFileReturn {
     disabledReason = "Requires editor access";
   } else if (activeFileId === null) {
     disabledReason = "Open a file first";
-  } else if (terminalStatus === "disabled" || backendStatus !== "available" || !hasBackendFile) {
+  } else if (!terminalEnabled || terminalStatus === "disabled" || backendStatus !== "available" || !hasBackendFile) {
     disabledReason = "Terminal is disabled";
   } else if (!RUNNABLE_EXTENSIONS.has(ext)) {
     disabledReason = "This file type is not executable";
@@ -82,6 +83,7 @@ export function useRunActiveFile(): UseRunActiveFileReturn {
       id.startsWith("local-") ||
       (state.userRole !== "OWNER" && state.userRole !== "EDITOR") ||
       state.backendStatus !== "available"
+      || !state.terminalEnabled
     ) {
       return;
     }

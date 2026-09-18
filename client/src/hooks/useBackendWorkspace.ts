@@ -89,6 +89,7 @@ export function useBackendWorkspace(): void {
           }
         }
         if (cancelled) return;
+        useWorkspaceStore.setState({ terminalEnabled: currentUser?.capabilities?.terminal === true });
         useWorkspaceStore.getState().setCurrentUser(
           currentUser !== null
             ? {

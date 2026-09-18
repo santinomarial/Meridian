@@ -50,6 +50,7 @@ function CommandPaletteBody() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const backendStatus = useWorkspaceStore((s) => s.backendStatus);
   const terminalStatus = useWorkspaceStore((s) => s.terminalStatus);
+  const terminalEnabled = useWorkspaceStore((s) => s.terminalEnabled);
   const theme = useWorkspaceStore((s) => s.theme);
 
   const setCommandPaletteOpen = useWorkspaceStore((s) => s.setCommandPaletteOpen);
@@ -174,7 +175,7 @@ function CommandPaletteBody() {
 
     // Run Active File — saves, opens the terminal, and runs the file in the
     // workspace sandbox. Editor/owner only; honest disabled reasons otherwise.
-    list.push({
+    if (terminalEnabled) list.push({
       id: "run-active-file",
       title: "Run Active File",
       icon: "play_arrow",
@@ -227,7 +228,7 @@ function CommandPaletteBody() {
           : terminalStatus === "disabled"
             ? "Terminal is disabled"
             : undefined;
-    list.push({
+    if (terminalEnabled) list.push({
       id: "toggle-terminal",
       title: "Toggle Terminal",
       icon: "terminal",
@@ -321,6 +322,7 @@ function CommandPaletteBody() {
     hasActiveBackendFile,
     workspaceId,
     terminalStatus,
+    terminalEnabled,
     theme,
     createFile,
     createFolder,
