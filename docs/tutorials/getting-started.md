@@ -98,6 +98,12 @@ Run this command and leave it running:
 npm run start:dev
 ```
 
+For the integrated terminal, set `ENABLE_TERMINAL=true` in `server/.env` before
+starting the API, or restart it after changing the setting. In the workspace,
+select the terminal icon in the left activity bar or **View → Toggle Terminal**.
+This development feature runs commands on the host; production requires an
+isolated runner.
+
 In the second terminal, verify the process:
 
 ```bash

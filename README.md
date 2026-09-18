@@ -67,6 +67,11 @@ npm run db:seed
 npm run start:dev
 ```
 
+To use the integrated terminal locally, set `ENABLE_TERMINAL=true` in
+`server/.env` before starting the API (restart it after changing this setting).
+Open it from the left activity bar or **View → Toggle Terminal**. This enables
+host shell execution for development; production requires an isolated runner.
+
 In another terminal, start the client:
 
 ```bash
