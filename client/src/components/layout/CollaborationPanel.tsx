@@ -100,6 +100,7 @@ function LiveChatSection() {
   const connectionStatus = useWorkspaceStore((s) => s.connectionStatus);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const currentUser = useWorkspaceStore((s) => s.currentUser);
+  const canSend = connectionStatus === "connected" && workspaceId !== null && currentUser !== null;
 
   useEffect(() => {
     const feed = feedRef.current;
@@ -108,14 +109,12 @@ function LiveChatSection() {
 
   const sendMessage = (): void => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text || !canSend || !getSocket().connected) return;
 
-    const isLive = connectionStatus === "connected" && workspaceId !== null;
-
-    // Show our own message immediately; when live, the server relays it to
+    // Show our own message immediately; the server relays it to
     // everyone else in the workspace room.
     addChatMessage({
-      id: `msg-${Date.now()}-local`,
+      id: `msg-${crypto.randomUUID()}-local`,
       senderId: currentUser?.id ?? "user-you",
       senderName: currentUser?.displayName ?? "You",
       senderColor:
@@ -123,9 +122,7 @@ function LiveChatSection() {
       text,
       timestamp: Date.now(),
     });
-    if (isLive) {
-      getSocket().emit("chat:message", { workspaceId, text });
-    }
+    getSocket().emit("chat:message", { workspaceId, text });
     setDraft("");
   };
 
@@ -146,14 +143,16 @@ function LiveChatSection() {
       {connectionStatus !== "connected" ? (
         <p className="shrink-0 px-3 py-1 text-[10px] text-on-surface-variant/70">
           {connectionStatus === "connecting"
-            ? "Reconnecting — messages will send when you're back online."
-            : "Offline — messages stay on this device until reconnect."}
+            ? "Reconnecting — wait to send your message."
+            : "Offline — reconnect to send your message."}
         </p>
       ) : null}
 
       <div className="flex shrink-0 items-center gap-1.5 meridian-crisp-border border-t p-2">
         <input
           type="text"
+          aria-label="Message"
+          maxLength={2000}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -172,7 +171,7 @@ function LiveChatSection() {
         <button
           type="button"
           onClick={sendMessage}
-          disabled={!draft.trim()}
+          disabled={!canSend || !draft.trim()}
           className={[iconButtonMutedClass, "disabled:opacity-30"].join(" ")}
           aria-label="Send message"
         >

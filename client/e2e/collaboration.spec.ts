@@ -48,6 +48,37 @@ test.describe("collaboration (backend required)", () => {
     test.skip(!backendAvailable, "Backend not available — skipping collaboration tests");
   });
 
+  test("offline chat keeps the draft until the user reconnects and sends", async ({ page }) => {
+    await freshWorkspace(page, "Chat Tester");
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await expect(input).toHaveAttribute("maxlength", "2000");
+    await input.fill("A draft to send after reconnecting");
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+    await page.evaluate(async () => {
+      const path = "/src/lib/socket.ts";
+      const { getSocket } = await import(path);
+      getSocket().disconnect();
+    });
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await input.press("Enter");
+    await expect(input).toHaveValue("A draft to send after reconnecting");
+    await expect(page.getByText("A draft to send after reconnecting", { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("collaboration-panel")).toContainText("Offline — reconnect to send your message.");
+    await page.evaluate(async () => {
+      const path = "/src/lib/socket.ts";
+      const { getSocket } = await import(path);
+      const socket = getSocket();
+      await new Promise<void>((resolve) => {
+        socket.once("joinedWorkspace", () => resolve());
+        socket.connect();
+      });
+    });
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+    await input.press("Enter");
+    await expect(input).toHaveValue("");
+    await expect(page.getByTestId("collaboration-panel")).toContainText("Chat Tester: A draft to send after reconnecting");
+  });
+
   test("invite → join → presence, chat, and live editing sync between two users", async ({
     browser,
   }) => {
