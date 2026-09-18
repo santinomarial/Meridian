@@ -75,10 +75,9 @@ test("a workspace deep link selects that workspace and clears demo tabs when it 
   );
 
   expect(requestedTrees).toEqual(["empty-workspace"]);
-  await expect(page.getByText("No files", { exact: true })).toBeVisible();
-  await expect(
-    page.locator("#main-content").getByText("No file open", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Files and folders will appear here.")).toBeVisible();
+  await expect(page.getByTestId("workspace-welcome")).toContainText("Empty Workspace");
+  await expect(page.getByRole("button", { name: "Create file", exact: true })).toBeVisible();
   await expect(page.getByText("auth.ts", { exact: true })).toHaveCount(0);
 });
 

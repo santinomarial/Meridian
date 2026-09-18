@@ -137,15 +137,7 @@ function LiveChatSection() {
 
       <div ref={feedRef} className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-1">
         {chatMessages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-6 text-center">
-            <MaterialIcon
-              name="chat_bubble_outline"
-              className="text-[22px] text-on-surface-variant/30"
-              aria-hidden
-            />
-            <p className="mt-1.5 text-[11px] text-on-surface-variant">No messages yet.</p>
-            <p className="text-[10px] text-on-surface-variant/70">Start the conversation.</p>
-          </div>
+          <p className="px-1 py-3 text-xs leading-5 text-on-surface-variant">Discuss changes with everyone in this workspace.</p>
         ) : (
           chatMessages.map((m) => <ChatMessageLine key={m.id} message={m} />)
         )}
@@ -204,6 +196,9 @@ function CollaborationPanelContent({
 }) {
   const collaborators = useWorkspaceStore((s) => s.collaborators);
   const connectionStatus = useWorkspaceStore((s) => s.connectionStatus);
+  const userRole = useWorkspaceStore((s) => s.userRole);
+  const activeFileId = useWorkspaceStore((s) => s.activeFileId);
+  const setShareRequested = useWorkspaceStore((s) => s.setShareRequested);
   const isLive = connectionStatus === "connected";
 
   return (
@@ -242,16 +237,11 @@ function CollaborationPanelContent({
           ))}
         </ul>
       ) : isLive ? (
-        <div className="flex shrink-0 flex-col items-center justify-center gap-1 px-3 py-5 text-center" data-testid="collab-no-collaborators">
-          <MaterialIcon
-            name="group_add"
-            className="text-[22px] text-on-surface-variant/30"
-            aria-hidden
-          />
-          <p className="text-[11px] text-on-surface-variant">No collaborators yet.</p>
-          <p className="text-[10px] text-on-surface-variant/70">
-            Use <strong className="font-semibold">Share</strong> to invite someone.
-          </p>
+        <div className="shrink-0 px-3 py-4 text-xs leading-5 text-on-surface-variant" data-testid="collab-no-collaborators">
+          <p>{activeFileId ? "No teammates in this file." : "Open a file to see who’s editing."}</p>
+          {userRole === "OWNER" ? (
+            <button type="button" onClick={() => { onClose?.(); setShareRequested(true); }} className={`mt-1 min-h-8 rounded text-primary hover:underline ${focusRing}`}>Invite someone to join</button>
+          ) : <p>Teammates appear here when they open the same file.</p>}
         </div>
       ) : (
         <div className="shrink-0 px-3 py-4 text-center text-[11px] text-on-surface-variant">

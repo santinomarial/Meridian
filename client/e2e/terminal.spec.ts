@@ -313,11 +313,11 @@ test.describe("terminal (backend required)", () => {
     await expect(page.locator(".xterm")).toBeVisible({ timeout: 10_000 });
 
     // Default dark theme → Meridian dark terminal background.
-    await expect(page.getByTestId("terminal-panel")).toHaveCSS("background-color", "rgb(15, 18, 25)");
+    await expect(page.getByTestId("terminal-panel")).toHaveCSS("background-color", "rgb(19, 25, 22)");
 
     // Toggle to light → light terminal background, live.
     await page.getByTestId("theme-toggle").click();
-    await expect(page.getByTestId("terminal-panel")).toHaveCSS("background-color", "rgb(236, 238, 243)");
+    await expect(page.getByTestId("terminal-panel")).toHaveCSS("background-color", "rgb(250, 249, 245)");
 
     // Still interactive after the theme change (session not destroyed).
     await runInTerminal(page, "echo theme_$((2+2))");

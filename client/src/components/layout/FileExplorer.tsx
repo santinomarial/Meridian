@@ -9,7 +9,6 @@ import {
 } from "react";
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { PanelSkeleton } from "../ui/Skeleton";
-import { EmptyState } from "../ui/EmptyState";
 import { FileLanguageIcon } from "../../constants/fileDisplay";
 import { getLanguageModeFromFilename } from "../../lib/language";
 import {
@@ -602,7 +601,7 @@ export function FileExplorer({ isLoading = false, mode = "inline", onClose, read
         {isLoading ? (
           <PanelSkeleton rows={9} />
         ) : files.length === 0 && namingTarget === null ? (
-          <EmptyState icon="folder_off" title="No files" description="This workspace has no files yet" />
+          <p className="px-3 py-4 text-xs leading-5 text-on-surface-variant">Files and folders will appear here.</p>
         ) : (
           files.map((node) => (
             <FileTreeNode

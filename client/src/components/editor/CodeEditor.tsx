@@ -2,7 +2,7 @@ import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import "../../lib/monacoLoader";
 import { useEffect, useRef, useState } from "react";
-import { EmptyState } from "../ui/EmptyState";
+import { WorkspaceWelcome } from "./WorkspaceWelcome";
 import { EditorSkeleton } from "../ui/Skeleton";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useYjsMonaco } from "../../hooks/useYjsMonaco";
@@ -148,14 +148,7 @@ export function CodeEditor({ workspaceTheme = "dark" }: CodeEditorProps) {
   }, []);
 
   if (!activeFileId) {
-    return (
-      <EmptyState
-        className="meridian-editor-chrome h-full min-h-0 flex-1 border-t meridian-crisp-border"
-        icon="code"
-        title="No file open"
-        description="Open a file from the explorer to start editing"
-      />
-    );
+    return <WorkspaceWelcome />;
   }
 
   const activeTab = openTabs.find((tab) => tab.fileId === activeFileId);

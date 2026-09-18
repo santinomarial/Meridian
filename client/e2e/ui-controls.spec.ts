@@ -198,7 +198,7 @@ test.describe("collaboration panel", () => {
       await expect(toggle).toHaveAttribute("aria-pressed", "true");
     });
 
-    test("backend mode shows 'No collaborators yet' when no collaborators joined", async ({
+    test("backend mode offers an invite when no collaborators joined", async ({
       page,
     }) => {
       await freshWorkspace(page);
@@ -214,7 +214,9 @@ test.describe("collaboration panel", () => {
       }
 
       await expect(noCollabEl).toBeVisible({ timeout: 8_000 });
-      await expect(noCollabEl).toContainText("No collaborators yet");
+      await expect(noCollabEl).toContainText("Open a file to see who’s editing.");
+      await noCollabEl.getByRole("button", { name: "Invite someone to join" }).click();
+      await expect(page.getByTestId("share-dialog")).toBeVisible();
     });
   });
 });
