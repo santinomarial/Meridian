@@ -14,7 +14,8 @@ import { useFileOperations } from "../../hooks/useFileOperations";
 import { useSaveActiveFile } from "../../hooks/useSaveActiveFile";
 import { useRunActiveFile } from "../../hooks/useRunActiveFile";
 import { useExportWorkspace } from "../../hooks/useExportWorkspace";
-import { createInvite, logout, ApiError } from "../../lib/api";
+import { createInvite, ApiError } from "../../lib/api";
+import { useSignOut } from "../../hooks/useSignOut";
 import { getActiveEditor } from "../../lib/editorRegistry";
 import type { Collaborator } from "../../types";
 
@@ -176,7 +177,7 @@ export function Header() {
   const notifications = useWorkspaceStore((s) => s.notifications);
   const clearNotifications = useWorkspaceStore((s) => s.clearNotifications);
   const addNotification = useWorkspaceStore((s) => s.addNotification);
-  const resetWorkspace = useWorkspaceStore((s) => s.resetWorkspace);
+  const signOut = useSignOut();
   const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
   const toggleCommandPalette = useWorkspaceStore((s) => s.toggleCommandPalette);
   const shareRequested = useWorkspaceStore((s) => s.shareRequested);
@@ -362,15 +363,8 @@ export function Header() {
 
   const handleSignOut = useCallback(async () => {
     setOpenPanel(null);
-    resetWorkspace();
-    try {
-      await logout();
-    } catch {
-      // OK if backend is unavailable — navigate away anyway.
-    }
-    navigate("/", { replace: true });
-    toast("Signed out.");
-  }, [navigate, resetWorkspace]);
+    await signOut();
+  }, [signOut]);
 
   const handleCopyPath = useCallback(async () => {
     setOpenPanel(null);

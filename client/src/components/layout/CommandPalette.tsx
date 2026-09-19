@@ -1,5 +1,4 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
 import { MaterialIcon } from "../ui/MaterialIcon";
 import { toast } from "../ui/Toast";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
@@ -10,7 +9,7 @@ import { useExportWorkspace } from "../../hooks/useExportWorkspace";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { listRecoveryUpdates } from "../../lib/yjsOutboundQueue";
 import { downloadBlob } from "../../lib/download";
-import { logout } from "../../lib/api";
+import { useSignOut } from "../../hooks/useSignOut";
 import { flattenFileTree, searchFiles, commandMatches } from "../../lib/commandPalette";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -42,7 +41,7 @@ export function CommandPalette() {
 }
 
 function CommandPaletteBody() {
-  const navigate = useNavigate();
+  const signOut = useSignOut();
 
   // ── Store state ────────────────────────────────────────────────────────────
   const files = useWorkspaceStore((s) => s.files);
@@ -62,7 +61,6 @@ function CommandPaletteBody() {
   const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
   const setVersionHistoryOpen = useWorkspaceStore((s) => s.setVersionHistoryOpen);
   const setShareRequested = useWorkspaceStore((s) => s.setShareRequested);
-  const resetWorkspace = useWorkspaceStore((s) => s.resetWorkspace);
 
   const { createFile, createFolder } = useFileOperations();
   const { saveActiveFile, canSaveActiveFile } = useSaveActiveFile();
@@ -294,16 +292,7 @@ function CommandPaletteBody() {
       keywords: "logout exit leave",
       disabled: false,
       run: () => {
-        resetWorkspace();
-        void (async () => {
-          try {
-            await logout();
-          } catch {
-            // OK if the backend is unavailable — navigate away regardless.
-          }
-          navigate("/", { replace: true });
-          toast("Signed out.");
-        })();
+        void signOut();
       },
     });
 
@@ -335,8 +324,7 @@ function CommandPaletteBody() {
     togglePanel,
     setShareRequested,
     setSettingsOpen,
-    resetWorkspace,
-    navigate,
+    signOut,
   ]);
 
   // ── Filtered results ─────────────────────────────────────────────────────────
