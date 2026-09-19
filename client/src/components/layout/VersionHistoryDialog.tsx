@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import "../../lib/monacoLoader";
@@ -57,6 +58,7 @@ export function VersionHistoryDialog() {
 }
 
 function VersionHistoryDialogBody() {
+  const dialogRef = useDialogFocus();
   const setOpen = useWorkspaceStore((s) => s.setVersionHistoryOpen);
   const activeFileId = useWorkspaceStore((s) => s.activeFileId);
   const openTabs = useWorkspaceStore((s) => s.openTabs);
@@ -210,6 +212,8 @@ function VersionHistoryDialogBody() {
 
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
       role="dialog"
       aria-modal="true"
@@ -219,16 +223,16 @@ function VersionHistoryDialogBody() {
         if (e.target === e.currentTarget) setOpen(false);
       }}
     >
-      <div className="flex h-[80vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border meridian-crisp-border bg-surface-container shadow-2xl">
+      <div className="flex h-[80dvh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border meridian-crisp-border bg-surface-container shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b meridian-crisp-border px-4 py-3">
-          <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b meridian-crisp-border px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
             <MaterialIcon name="history" className="text-[18px] text-primary" aria-hidden />
-            <h2 className="text-sm font-semibold text-on-surface">
+            <h2 className="shrink-0 text-sm font-semibold text-on-surface">
               Version History
             </h2>
             {activeTab ? (
-              <span className="text-xs text-on-surface-variant">— {activeTab.name}</span>
+              <span className="truncate text-xs text-on-surface-variant">— {activeTab.name}</span>
             ) : null}
           </div>
           <button
@@ -242,9 +246,9 @@ function VersionHistoryDialogBody() {
           </button>
         </div>
 
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
           {/* Version list */}
-          <aside className="flex w-64 shrink-0 flex-col overflow-y-auto border-r meridian-crisp-border bg-surface-container-lowest">
+          <aside className="flex max-h-36 shrink-0 flex-col overflow-y-auto border-b meridian-crisp-border bg-surface-container-lowest sm:max-h-none sm:w-64 sm:border-b-0 sm:border-r">
             {loading ? (
               <div
                 className="flex flex-1 items-center justify-center p-6 text-xs text-on-surface-variant"
@@ -318,13 +322,13 @@ function VersionHistoryDialogBody() {
           </aside>
 
           {/* Preview / diff */}
-          <section className="flex min-w-0 flex-1 flex-col">
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col">
             {selectedId === null ? (
               <EmptyState
                 className="flex-1"
                 icon="difference"
                 title="Select a version"
-                description="Choose a version on the left to preview it or compare it with the current file."
+                description="Choose a saved version to preview it or compare it with the current file."
               />
             ) : detailLoading || selectedDetail === null ? (
               <div
@@ -337,7 +341,7 @@ function VersionHistoryDialogBody() {
             ) : (
               <>
                 {/* Toolbar */}
-                <div className="flex items-center justify-between gap-2 border-b meridian-crisp-border px-3 py-2">
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b meridian-crisp-border px-3 py-2">
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -359,7 +363,7 @@ function VersionHistoryDialogBody() {
                   <div className="flex items-center gap-2">
                     {canRestore ? (
                       confirming ? (
-                        <div className="flex items-center gap-1.5" data-testid="version-restore-confirm-bar">
+                        <div className="flex flex-wrap items-center gap-1.5" data-testid="version-restore-confirm-bar">
                           <span className="text-xs text-on-surface-variant">
                             Restore version {selectedDetail.versionNumber}?
                           </span>

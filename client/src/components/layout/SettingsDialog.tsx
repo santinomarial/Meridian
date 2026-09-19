@@ -3,6 +3,7 @@ import { MaterialIcon } from "../ui/MaterialIcon";
 import { toast } from "../ui/Toast";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { forgotPassword, updateProfile } from "../../lib/api";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 
 /**
  * Real settings panel. Everything here is backed by actual state or backend
@@ -21,6 +22,7 @@ export function SettingsDialog() {
 }
 
 function SettingsDialogBody() {
+  const dialogRef = useDialogFocus();
   const setSettingsOpen = useWorkspaceStore((s) => s.setSettingsOpen);
   const currentUser = useWorkspaceStore((s) => s.currentUser);
   const setCurrentUser = useWorkspaceStore((s) => s.setCurrentUser);
@@ -86,6 +88,8 @@ function SettingsDialogBody() {
 
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
       role="dialog"
       aria-modal="true"
@@ -95,9 +99,9 @@ function SettingsDialogBody() {
         if (e.target === e.currentTarget) setSettingsOpen(false);
       }}
     >
-      <div className="w-full max-w-md rounded-xl border meridian-crisp-border bg-surface-container shadow-2xl">
+      <div className="flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-xl border meridian-crisp-border bg-surface-container shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b meridian-crisp-border px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b meridian-crisp-border px-4 py-3">
           <div className="flex items-center gap-2">
             <MaterialIcon name="settings" className="text-[18px] text-primary" aria-hidden />
             <h2 className="text-sm font-semibold text-on-surface">Settings</h2>
@@ -113,7 +117,7 @@ function SettingsDialogBody() {
           </button>
         </div>
 
-        <div className="space-y-5 px-4 py-4">
+        <div className="min-h-0 space-y-5 overflow-y-auto px-4 py-4">
           {/* Profile */}
           <section>
             <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">

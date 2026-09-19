@@ -7,6 +7,7 @@ import { useFileOperations } from "../../hooks/useFileOperations";
 import { useSaveActiveFile } from "../../hooks/useSaveActiveFile";
 import { useRunActiveFile } from "../../hooks/useRunActiveFile";
 import { useExportWorkspace } from "../../hooks/useExportWorkspace";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { listRecoveryUpdates } from "../../lib/yjsOutboundQueue";
 import { downloadBlob } from "../../lib/download";
 import { logout } from "../../lib/api";
@@ -72,6 +73,7 @@ function CommandPaletteBody() {
     disabledReason: exportDisabledReason,
   } = useExportWorkspace();
 
+  const dialogRef = useDialogFocus();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -421,6 +423,7 @@ function CommandPaletteBody() {
         close();
         return;
       }
+      if (e.target !== inputRef.current) return;
       if (selectable.length === 0) return;
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -446,6 +449,8 @@ function CommandPaletteBody() {
   return (
     <div
       className="fixed inset-0 z-[70] flex items-start justify-center bg-black/50 p-4 pt-[12vh]"
+      ref={dialogRef}
+      tabIndex={-1}
       role="dialog"
       aria-modal="true"
       aria-label="Command palette"
@@ -477,9 +482,10 @@ function CommandPaletteBody() {
             data-testid="command-palette-input"
             className="min-w-0 flex-1 bg-transparent text-sm text-on-surface outline-none placeholder:text-on-surface-variant/50"
           />
-          <kbd className="hidden rounded border meridian-crisp-border px-1.5 py-0.5 text-[10px] text-on-surface-variant sm:block">
-            Esc
-          </kbd>
+          <button type="button" onClick={close} aria-label="Close command palette"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-on-surface-variant hover:bg-surface-container-high focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary">
+            <MaterialIcon name="close" className="text-[16px]" aria-hidden />
+          </button>
         </div>
 
         {/* Results */}
