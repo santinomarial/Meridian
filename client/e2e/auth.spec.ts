@@ -189,9 +189,9 @@ test("email verification consumes the token before opening the workspace", async
 
 // ── 7. Forgot password flow (no backend needed) ────────────────────────────────
 
-test("forgot password flow shows professional success message", async ({ page }) => {
+test("completed password recovery shows an account-neutral success message", async ({ page }) => {
   await page.route("**/auth/forgot-password", (route) =>
-    route.abort("connectionrefused"),
+    route.fulfill({ json: { message: "If the account exists, a reset link has been sent." } }),
   );
   await page.goto("/forgot-password");
 

@@ -31,6 +31,7 @@ function SettingsDialogBody() {
   const [displayName, setDisplayName] = useState(currentUser?.displayName ?? "");
   const [saving, setSaving] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  const [requestingReset, setRequestingReset] = useState(false);
   const [previewResetUrl, setPreviewResetUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -65,7 +66,8 @@ function SettingsDialogBody() {
   };
 
   const handlePasswordReset = async (): Promise<void> => {
-    if (currentUser === null) return;
+    if (currentUser === null || requestingReset || resetSent) return;
+    setRequestingReset(true);
     try {
       const result = await forgotPassword({ email: currentUser.email });
       if (result.previewResetUrl) {
@@ -74,12 +76,12 @@ function SettingsDialogBody() {
       } else {
         toast("Password reset email sent if the account exists.", "info");
       }
+      setResetSent(true);
     } catch {
-      // The endpoint always returns success to avoid leaking account existence;
-      // a network failure is the only real error and is non-fatal here.
-      toast("Password reset email sent if the account exists.", "info");
+      toast("Could not request a reset link. Please try again.", "error");
+    } finally {
+      setRequestingReset(false);
     }
-    setResetSent(true);
   };
 
   return (
@@ -203,11 +205,11 @@ function SettingsDialogBody() {
                   <button
                     type="button"
                     onClick={() => void handlePasswordReset()}
-                    disabled={resetSent}
+                    disabled={resetSent || requestingReset}
                     className="shrink-0 rounded-md bg-surface-container-high px-2.5 py-1 text-xs font-medium text-on-surface transition-colors hover:bg-surface-container-highest disabled:opacity-50"
                     data-testid="settings-reset-password"
                   >
-                    {resetSent ? "Email sent" : "Reset password"}
+                    {requestingReset ? "Requesting…" : resetSent ? (previewResetUrl ? "Link ready" : "Reset requested") : "Reset password"}
                   </button>
                 </div>
                 {previewResetUrl ? (

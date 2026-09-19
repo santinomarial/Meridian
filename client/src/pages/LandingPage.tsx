@@ -139,13 +139,13 @@ function AuthCard({
         if (result.previewResetUrl) {
           setPreviewResetUrl(result.previewResetUrl);
         }
+        // A completed request uses generic copy without revealing account existence.
+        setForgotSuccess(true);
       } catch {
         setError("Unable to send reset link right now. Please try again later.");
       } finally {
         setLoading(false);
       }
-      // Always show the generic success — never reveal whether the email exists.
-      setForgotSuccess(true);
       return;
     }
 
