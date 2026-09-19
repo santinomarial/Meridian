@@ -37,9 +37,16 @@ export function useBackendWorkspace(): void {
 
   useEffect(() => {
     let cancelled = false;
+    let loading = false;
+    let retryAttempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const retryDelays = [2_000, 5_000, 10_000];
     useWorkspaceStore.getState().resetWorkspace();
 
     async function load(): Promise<void> {
+      if (cancelled || loading) return;
+      loading = true;
+      clearTimeout(retryTimer);
       try {
         // Auth check — captures user.id for workspace auto-create.
         let currentUser: ApiUser | null = null;
@@ -89,14 +96,10 @@ export function useBackendWorkspace(): void {
         // Auto-create a default workspace when the user is authenticated
         // but has no workspaces yet (fresh account).
         if (workspace === undefined && currentUser !== null) {
-          try {
-            workspace = await createWorkspace({
-              name: "My Workspace",
-              ownerId: currentUser.id,
-            });
-          } catch {
-            // backend refused — fall through to unavailable
-          }
+          workspace = await createWorkspace({
+            name: "My Workspace",
+            ownerId: currentUser.id,
+          });
         }
 
         if (workspace === undefined) {
@@ -136,16 +139,41 @@ export function useBackendWorkspace(): void {
 
         useWorkspaceStore.getState().batchLoadBackend({ files, editorContent, defaultFileId });
         useWorkspaceStore.getState().setBackendStatus("available");
-      } catch {
+      } catch (error) {
         if (!cancelled) {
+          // The session can expire between any two requests, not just /auth/me.
+          if (error instanceof ApiError && error.status === 401) {
+            navigate("/", { replace: true });
+            return;
+          }
           useWorkspaceStore.getState().setBackendStatus("unavailable");
+          const transient = error instanceof TypeError ||
+            (error instanceof ApiError && error.status >= 500);
+          const delay = retryDelays[retryAttempt];
+          if (transient && delay !== undefined) {
+            retryAttempt += 1;
+            // Reload the session and workspace list rather than replaying a
+            // mutation. A workspace created before a lost response is reused.
+            retryTimer = setTimeout(() => void load(), delay);
+          }
         }
+      } finally {
+        loading = false;
       }
     }
 
+    function reconnect(): void {
+      if (useWorkspaceStore.getState().backendStatus === "unavailable") {
+        void load();
+      }
+    }
+
+    window.addEventListener("online", reconnect);
     void load();
     return () => {
       cancelled = true;
+      clearTimeout(retryTimer);
+      window.removeEventListener("online", reconnect);
     };
   }, [navigate, requestedWorkspaceId, workspaceLoadEpoch]);
 }
