@@ -49,7 +49,8 @@ import { RetentionService } from './common/retention/retention.service';
           //   'default' — broad limit for all endpoints (120 req / 60s)
           //   'auth'    — stricter limit for login/register (10 req / 60s)
           // Non-auth controllers use @SkipThrottle({ auth: true }) to opt out
-          // of the stricter auth throttler.  Auth routes get both by default.
+          // of the stricter auth throttler, as do session checks and logout.
+          // Credential and recovery routes get both by default.
           throttlers: [
             {
               name: 'default',

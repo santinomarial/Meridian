@@ -57,8 +57,7 @@ export function BackendUnavailableGate() {
         <div className="max-w-md space-y-2">
           <h1 className="text-lg font-semibold text-on-surface">Can&apos;t reach Meridian</h1>
           <p className="text-sm leading-relaxed text-on-surface-variant">
-            The workspace server is unavailable. Your files are not loaded until the connection
-            is restored — we won&apos;t open a local demo workspace.
+            We couldn&apos;t load your workspace. Check your connection and try again.
           </p>
         </div>
         <div className="mt-2 flex flex-wrap items-center justify-center gap-2">

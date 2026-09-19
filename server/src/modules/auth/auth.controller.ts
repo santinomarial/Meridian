@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
+import { SkipThrottle } from '@nestjs/throttler';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 import type { AppConfig } from '../../config/configuration.type';
 import type { Response } from 'express';
@@ -61,7 +62,10 @@ export class AuthController {
     return this.authService.login(dto, res);
   }
 
+  // Reloading a workspace checks the session; it is not a sign-in attempt.
+  // Keep the normal HTTP budget without consuming the stricter auth budget.
   @ApiOperation({ summary: 'Get the currently authenticated user' })
+  @SkipThrottle({ auth: true })
   @UseGuards(JwtAuthGuard)
   @Get('me')
   me(@CurrentUser() user: AuthUser): AuthUser & { capabilities: { terminal: boolean } } {
@@ -72,6 +76,7 @@ export class AuthController {
   }
 
   @ApiOperation({ summary: 'Revoke the current session and clear the cookie' })
+  @SkipThrottle({ auth: true })
   @UseGuards(JwtAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)

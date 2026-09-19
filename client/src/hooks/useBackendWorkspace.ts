@@ -87,6 +87,9 @@ export function useBackendWorkspace(): void {
             if (!cancelled) navigate("/", { replace: true });
             return;
           }
+          // Do not load a workspace with missing identity, role, or capabilities.
+          // The unavailable gate lets the user retry the complete session load.
+          throw err;
         }
         if (cancelled) return;
         useWorkspaceStore.setState({ terminalEnabled: currentUser?.capabilities?.terminal === true });
