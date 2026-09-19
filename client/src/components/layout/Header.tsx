@@ -102,7 +102,7 @@ function DropdownPanel({ children, className = "", ...rest }: HTMLAttributes<HTM
   return (
     <div
       className={[
-        "absolute z-50 mt-1 min-w-[10rem] rounded-md border meridian-crisp-border bg-surface-container shadow-xl ring-1 ring-black/5 dark:ring-white/5",
+        "meridian-header-popover absolute z-50 mt-1 min-w-[10rem] rounded-md border meridian-crisp-border bg-surface-container shadow-xl ring-1 ring-black/5 dark:ring-white/5",
         className,
       ].join(" ")}
       {...rest}
@@ -669,7 +669,7 @@ export function Header() {
 
       {/* ── Left: wordmark + nav ────────────────────────────────────────── */}
       <div className="flex min-h-0 min-w-0 items-center gap-4">
-        <MeridianWordmark />
+        <MeridianWordmark compactOnSmallScreens className="shrink-0" />
 
         <div ref={navRef}>
           <nav className="hidden items-center md:flex" aria-label="Main menu">
@@ -722,7 +722,7 @@ export function Header() {
       </div>
 
       {/* ── Right: controls ──────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
 
         {/* Collaborator avatars */}
         <div ref={collaboratorsRef} className="relative">
@@ -734,7 +734,10 @@ export function Header() {
             className="flex items-center rounded px-0.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
             onClick={() => setOpenPanel(openPanel === "collaborators" ? null : "collaborators")}
           >
-            <div className="flex -space-x-2">
+            <span className="inline-flex h-7 w-7 items-center justify-center text-on-surface-variant sm:hidden">
+              <MaterialIcon name="group" className="text-[18px]" aria-hidden />
+            </span>
+            <div className="hidden -space-x-2 sm:flex">
               {visibleCollaborators.map((c) => (
                 <CollaboratorAvatar key={c.id} collaborator={c} />
               ))}

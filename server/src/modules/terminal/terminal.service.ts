@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import * as os from 'os';
+import { basename } from 'path';
 import * as pty from 'node-pty';
 import type { IPty, IDisposable } from 'node-pty';
 import type { Socket } from 'socket.io';
@@ -54,16 +55,22 @@ export class TerminalService implements OnModuleDestroy {
    * real home directory.
    */
   private safeEnv(sandboxDir: string): Record<string, string> {
+    const shell = this.resolveShell();
     const env: Record<string, string> = {
       HOME: sandboxDir,
       PATH: process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
       TERM: 'xterm-256color',
-      SHELL: this.resolveShell(),
+      SHELL: shell,
       LANG: process.env['LANG'] ?? 'en_US.UTF-8',
     };
     // Carry over USER/LOGNAME if present (display only, not secret)
     if (process.env['USER']) env['USER'] = process.env['USER'];
     if (process.env['LOGNAME']) env['LOGNAME'] = process.env['LOGNAME'];
+    // Keep the current folder visible without a host/user prefix consuming
+    // most of a narrow terminal. Do not apply POSIX prompts to other shells.
+    const shellName = basename(shell);
+    if (shellName === 'zsh') env['PS1'] = '%1~ %# ';
+    if (shellName === 'bash') env['PS1'] = '\\W \\$ ';
     return env;
   }
 
@@ -105,11 +112,15 @@ export class TerminalService implements OnModuleDestroy {
     const sandboxDir = await this.sandbox.materialize(socketId, workspaceId, userId);
 
     const shell = this.resolveShell();
-    // No explicit args: attached to a PTY, the shell detects a TTY and starts
-    // interactively on its own (prompt + echo + line editing).
+    // Host startup files can override the compact workspace prompt. These
+    // shells still detect the PTY and retain interactive line editing.
+    const shellName = basename(shell);
+    const shellArgs = shellName === 'zsh'
+      ? ['-f']
+      : shellName === 'bash' ? ['--noprofile', '--norc'] : [];
     let child: IPty;
     try {
-      child = pty.spawn(shell, [], {
+      child = pty.spawn(shell, shellArgs, {
         name: 'xterm-256color',
         cols: options.cols ?? DEFAULT_COLS,
         rows: options.rows ?? DEFAULT_ROWS,

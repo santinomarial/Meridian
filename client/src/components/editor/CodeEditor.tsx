@@ -7,6 +7,7 @@ import { WorkspaceWelcome } from "./WorkspaceWelcome";
 import { EditorSkeleton } from "../ui/Skeleton";
 import { useWorkspaceStore } from "../../store/useWorkspaceStore";
 import { useYjsMonaco } from "../../hooks/useYjsMonaco";
+import { useBreakpoint } from "../../hooks/useBreakpoint";
 import { registerEditor, unregisterEditor } from "../../lib/editorRegistry";
 import { isApplyingRemoteDocumentUpdate } from "../../lib/yjsDocs";
 import type { LanguageMode, WorkspaceTheme } from "../../types";
@@ -70,6 +71,7 @@ type CodeEditorProps = {
 };
 
 export function CodeEditor({ workspaceTheme = "light" }: CodeEditorProps) {
+  const isMobile = useBreakpoint() === "mobile";
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const [mountedEditor, setMountedEditor] = useState<editor.IStandaloneCodeEditor | null>(null);
   const monacoTheme: MeridianEditorTheme = toMeridianMonacoTheme(workspaceTheme);
@@ -176,7 +178,12 @@ export function CodeEditor({ workspaceTheme = "light" }: CodeEditorProps) {
         language={LANGUAGE_TO_MONACO[language]}
         theme={monacoTheme}
         value={content}
-        options={{ ...EDITOR_OPTIONS, readOnly: isViewer || (backendStatus === "available" && !collaborationReady) }}
+        options={{
+          ...EDITOR_OPTIONS,
+          lineNumbersMinChars: isMobile ? 3 : 5,
+          wordWrap: isMobile ? "on" : "off",
+          readOnly: isViewer || (backendStatus === "available" && !collaborationReady),
+        }}
         loading={<EditorSkeleton />}
         beforeMount={registerMeridianMonacoThemes}
         onMount={handleMount}

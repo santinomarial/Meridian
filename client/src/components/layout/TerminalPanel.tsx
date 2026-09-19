@@ -65,10 +65,19 @@ export function TerminalPanel() {
 
   useEffect(() => {
     if (!isTerminalOpen) return;
-    const handler = (): void => fit();
-    window.addEventListener("resize", handler);
-    return () => window.removeEventListener("resize", handler);
-  }, [isTerminalOpen, fit]);
+    const container = terminalRef.current;
+    if (!container) return;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fit);
+    });
+    observer.observe(container);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [isTerminalOpen, fit, terminalRef]);
 
   // Auto-start for editors/owners when the panel opens (VS Code-style).
   const startedForOpenRef = useRef(false);
@@ -92,14 +101,14 @@ export function TerminalPanel() {
   return (
     <div
       className={[
-        "terminal-panel flex flex-col border-t meridian-crisp-border",
+        "terminal-panel flex h-[clamp(180px,30dvh,240px)] shrink-0 flex-col border-t meridian-crisp-border sm:h-[260px]",
         isTerminalOpen ? "" : "hidden",
       ].join(" ")}
-      style={{ height: 260, background: terminalBackground }}
+      style={{ background: terminalBackground }}
       data-testid="terminal-panel"
     >
-      <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b meridian-crisp-border bg-surface-container px-3">
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b meridian-crisp-border bg-surface-container px-2 sm:h-9 sm:px-3">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-2.5">
           <div className="flex items-center gap-1.5">
             <MaterialIcon
               name="terminal"
@@ -128,12 +137,13 @@ export function TerminalPanel() {
               TONE_TEXT[status.tone],
             ].join(" ")}
             data-testid="terminal-status-label"
+            title={status.label}
           >
             <span
               className={["h-1.5 w-1.5 rounded-full", TONE_DOT[status.tone]].join(" ")}
               aria-hidden
             />
-            {status.label}
+            <span className="sr-only sm:not-sr-only">{status.label}</span>
           </span>
 
           {terminalSyncStatus !== null && !isViewer ? (
@@ -183,15 +193,18 @@ export function TerminalPanel() {
       </div>
 
       {!isViewer ? (
-        <p className="shrink-0 border-b meridian-crisp-border px-3 py-1 text-[11px] text-on-surface-variant"
+        <p className="shrink-0 border-b meridian-crisp-border px-2 py-1 text-[11px] text-on-surface-variant sm:px-3"
           data-testid="terminal-file-notice">
-          Text files created or edited here save automatically. Dependencies and build output stay local.
+          <span className="hidden sm:inline">Text files created or edited here save automatically. Dependencies and build output stay local.</span>
+          <span className={terminalSyncStatus === "failed" ? "text-error sm:hidden" : "sm:hidden"}>
+            {terminalSyncStatus === "failed" ? "File sync failed. Keep this session open." : "Text files save automatically."}
+          </span>
         </p>
       ) : null}
 
       <div
         ref={terminalRef}
-        className="terminal-xterm min-h-0 flex-1 overflow-hidden px-3 py-2"
+        className="terminal-xterm min-h-0 flex-1 overflow-hidden px-2 py-2 sm:px-3"
         data-testid="terminal-xterm"
         aria-label="Terminal"
         aria-live="off"
@@ -216,7 +229,7 @@ function IconButton({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+      className="inline-flex h-9 w-9 items-center justify-center rounded-md text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary sm:h-7 sm:w-7"
     >
       <MaterialIcon name={icon} className="text-[16px]" aria-hidden />
     </button>

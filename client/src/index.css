@@ -204,8 +204,17 @@
 
 .terminal-panel .terminal-xterm .xterm-viewport {
   overflow-y: auto !important;
+  /* The row grid can be shorter than its viewport by a few pixels. */
+  background-color: var(--color-surface-container-lowest);
 }
 
-.terminal-panel .terminal-xterm .xterm-screen {
-  padding-bottom: 2px;
+@media (max-width: 639px) {
+  /* Header anchors can sit near either edge on phones. */
+  .meridian-header-popover {
+    position: fixed;
+    inset: 48px 8px auto;
+    width: auto;
+    max-height: calc(100dvh - 64px);
+    overflow-y: auto;
+  }
 }
