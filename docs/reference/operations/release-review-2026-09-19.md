@@ -58,6 +58,34 @@ were not rescanned in this pass; their earlier dated results and scoped
 exceptions remain in the September 18 report. Local HTTPS used Caddy's internal
 certificate authority; public certificate issuance was not exercised.
 
+## Local workflow follow-up
+
+The normal development app at ports 5173/3000 was checked with its real local
+PostgreSQL/Redis and terminal enabled, without enabling E2E mode. A disposable
+account passed signup, six consecutive workspace reloads, nested Python-file
+creation, save/reload persistence, Run Active File, interactive shell commands,
+language icons, and white/dark theme persistence. No browser runtime errors were
+reported. Only that disposable account and its workspace were removed afterward.
+Both themes were also inspected visually with the terminal open.
+
+Two further corrections were committed:
+
+- `fc663b6`: terminal status now says “Saved files loaded” and explains that shell
+  edits are not saved back into the workspace. This clarifies the existing
+  one-way projection; it does not implement bidirectional file synchronization.
+- `98686ff`: session checks and logout use the normal HTTP budget instead of the
+  strict credential-attempt budget. Login retains its strict limit. Failed
+  session checks now show a retry gate rather than loading the workspace without
+  identity, role, and terminal capabilities.
+
+The rate-limit failure and swallowed session errors were reproduced before
+their fixes. Updated validation passed: 58 integration tests across 13 suites,
+17 focused browser tests (including 429, 500, and network-error recovery), all
+51 client unit tests, client lint, and both production builds. The normal local
+acceptance flow passed after the fixes. The earlier complete browser and
+container runs above were not repeated for these changes. The existing local
+development services remain running; the extra test databases were removed.
+
 ## Public launch requirements
 
 These local results establish a release candidate, not a running public service.
