@@ -17,6 +17,7 @@ import { useExportWorkspace } from "../../hooks/useExportWorkspace";
 import { createInvite, ApiError } from "../../lib/api";
 import { useSignOut } from "../../hooks/useSignOut";
 import { getActiveEditor } from "../../lib/editorRegistry";
+import { flattenFileTree } from "../../lib/commandPalette";
 import type { Collaborator } from "../../types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -372,15 +373,19 @@ export function Header() {
       toast("No file open.", "error");
       return;
     }
-    const tab = openTabs.find((t) => t.fileId === activeFileId);
-    const path = `/workspace/${tab?.name ?? activeFileId}`;
+    const file = flattenFileTree(useWorkspaceStore.getState().files)
+      .find((item) => item.id === activeFileId);
+    if (!file) {
+      toast("That file is no longer available.", "error");
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(path);
+      await navigator.clipboard.writeText(file.path);
       toast("Path copied.", "success");
     } catch {
       toast("Could not copy path.", "error");
     }
-  }, [activeFileId, openTabs]);
+  }, [activeFileId]);
 
   // Copies the invite link to clipboard and shows feedback
   const handleCopyLink = useCallback(async () => {

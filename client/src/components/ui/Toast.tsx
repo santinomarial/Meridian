@@ -72,7 +72,7 @@ export function ToastContainer() {
           ].join(" ")}
           role="status"
         >
-          <span className="material-symbols-outlined shrink-0 text-[16px]">{KIND_ICONS[t.kind]}</span>
+          <span className="material-symbols-outlined shrink-0 text-[16px]" aria-hidden>{KIND_ICONS[t.kind]}</span>
           <span className="leading-snug">{t.message}</span>
         </div>
       ))}
