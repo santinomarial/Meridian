@@ -9,7 +9,7 @@ import {
 
 const PREFIX = 'int-user-delete-';
 
-describe('User account deletion (HTTP integration)', () => {
+describe('User profiles and account deletion (HTTP integration)', () => {
   let ctx: TestApp;
 
   beforeAll(async () => {
@@ -19,6 +19,35 @@ describe('User account deletion (HTTP integration)', () => {
   afterAll(async () => {
     await cleanupByEmailPrefix(ctx.prisma, PREFIX);
     await ctx.app.close();
+  });
+
+  it('rejects blank or oversized names at signup without creating an account', async () => {
+    const email = uniqueEmail(PREFIX);
+    for (const displayName of ['   ', 'A'.repeat(101)]) {
+      await request(ctx.server)
+        .post('/auth/register')
+        .send({ email, password: STRONG_PASSWORD, displayName })
+        .expect(400);
+    }
+    expect(await ctx.prisma.user.findUnique({ where: { email } })).toBeNull();
+  });
+
+  it('validates profile names and persists a trimmed name across session reads', async () => {
+    const agent = request.agent(ctx.server);
+    const registration = await agent.post('/auth/register').send({
+      email: uniqueEmail(PREFIX), password: STRONG_PASSWORD, displayName: 'Original',
+    }).expect(201);
+    const userId = registration.body.user.id as string;
+    for (const displayName of ['', '   ', null, 'A'.repeat(101)]) {
+      await agent.patch(`/users/${userId}`).send({ displayName }).expect(400);
+      const me = await agent.get('/auth/me').expect(200);
+      expect(me.body.displayName).toBe('Original');
+    }
+    await agent.patch(`/users/${userId}`).send({ displayName: '  New Name  ' }).expect(200);
+    const me = await agent.get('/auth/me').expect(200);
+    expect(me.body.displayName).toBe('New Name');
+    await agent.patch(`/users/${userId}`).send({ avatarUrl: null }).expect(200);
+    expect((await agent.get('/auth/me')).body.displayName).toBe('New Name');
   });
 
   it('deletes an owner account and all of its owned workspace data atomically', async () => {

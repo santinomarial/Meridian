@@ -1,10 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, Length, ValidateIf } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class UpdateUserDto {
-  @ApiPropertyOptional({ example: 'Alice Chen' })
+  @ApiPropertyOptional({ example: 'Alice Chen', minLength: 1, maxLength: 100 })
+  @ValidateIf((_object: unknown, value: unknown) => value !== undefined)
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
-  @IsOptional()
+  @Length(1, 100)
   displayName?: string;
 
   @ApiPropertyOptional({ example: 'https://example.com/avatar.png', nullable: true })

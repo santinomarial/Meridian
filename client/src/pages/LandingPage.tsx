@@ -40,6 +40,7 @@ type IconFieldProps = {
   onChange: (value: string) => void;
   autoComplete?: string;
   invalid?: boolean;
+  maxLength?: number;
 };
 
 function IconField({
@@ -53,6 +54,7 @@ function IconField({
   onChange,
   autoComplete,
   invalid = false,
+  maxLength,
 }: IconFieldProps) {
   return (
     <div className="space-y-1.5">
@@ -73,6 +75,7 @@ function IconField({
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           autoComplete={autoComplete}
+          maxLength={maxLength}
           required
           aria-invalid={invalid}
           aria-describedby={invalid ? "auth-error" : undefined}
@@ -341,6 +344,7 @@ function AuthCard({
               label="Full Name"
               icon="person"
               placeholder="Your name"
+              maxLength={100}
               value={name}
               onChange={(v) => setName(v)}
               autoComplete="name"

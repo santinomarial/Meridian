@@ -136,6 +136,7 @@ function SettingsDialogBody() {
                     <input
                       id="settings-display-name"
                       type="text"
+                      maxLength={100}
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
                       className="min-w-0 flex-1 rounded-md border meridian-crisp-border bg-surface-container-lowest px-2.5 py-1.5 text-sm text-on-surface outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/20"

@@ -26,7 +26,7 @@ See [health and metrics](health-and-metrics.md) for exact fields and exposure.
 
 | Method and path | Auth | Body | Success |
 |---|---|---|---|
-| `POST /auth/register` | Public | `email` (email), `password` (policy), `displayName` (non-empty string) | 201; production returns a pending-verification result without a session; trusted development/test mode returns user + token |
+| `POST /auth/register` | Public | `email` (email), `password` (policy), `displayName` (trimmed string, 1–100 characters) | 201; production returns a pending-verification result without a session; trusted development/test mode returns user + token |
 | `POST /auth/verify-email` | Public bearer token | `token` | 200; atomically verifies the email, creates a session, sets cookie, returns user + token |
 | `POST /auth/email-verification` | Public | `email` | Generic 200; development fallback may include `previewVerificationUrl` |
 | `POST /auth/login` | Public | `email`, `password` | 200 for a verified account; creates session, sets cookie, returns user + token |
@@ -46,7 +46,7 @@ tokens are one-time bearer credentials stored only as SHA-256 hashes.
 | Method and path | Auth/role | Body | Result |
 |---|---|---|---|
 | `GET /users/:userId` | Session; self or shared-workspace peer | — | Public profile; email is included only for self |
-| `PATCH /users/:userId` | Self | Optional `displayName`, `avatarUrl` (string or null) | Updated public profile |
+| `PATCH /users/:userId` | Self | Optional `displayName` (trimmed string, 1–100 characters; null rejected), `avatarUrl` (string or null) | Updated public profile |
 | `DELETE /users/:userId` | Self | — | 204; deletes account and clears cookie |
 
 ## Workspaces and members

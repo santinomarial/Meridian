@@ -1,4 +1,5 @@
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsString, Length } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { IsStrongPassword } from '../../../common/validation/is-strong-password';
 
@@ -11,8 +12,11 @@ export class RegisterDto {
   @IsStrongPassword()
   password!: string;
 
-  @ApiProperty({ example: 'Alice' })
+  @ApiProperty({ example: 'Alice', minLength: 1, maxLength: 100 })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
-  @MinLength(1)
+  @Length(1, 100)
   displayName!: string;
 }
