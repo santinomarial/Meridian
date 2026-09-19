@@ -33,7 +33,7 @@ export async function fillLogin(
   password: string,
 ): Promise<void> {
   await page.getByLabel("Email Address").fill(email);
-  await page.getByLabel("Password").fill(password);
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByTestId("auth-submit").click();
 }
 
@@ -51,7 +51,7 @@ export async function signUpViaUI(
   await page.getByLabel("Full Name").fill(name);
   await page.getByLabel("Email Address").fill(email);
   await page.getByLabel(/^Password$/).fill(password);
-  await page.getByLabel("Confirm Password").fill(password);
+  await page.getByLabel("Confirm Password", { exact: true }).fill(password);
   await page.getByTestId("auth-submit").click();
 }
 

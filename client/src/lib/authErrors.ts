@@ -2,10 +2,10 @@ import { ApiError } from "./api";
 
 export const AUTH_MESSAGES = {
   invalidCredentials: "Invalid email or password.",
-  rateLimited: "Too many login attempts. Please wait and try again.",
+  rateLimited: "Too many attempts. Please wait a moment and try again.",
   serverError: "Meridian hit a server error. Please try again.",
   serverUnreachable:
-    "Unable to connect to Meridian. Please check that the server is running.",
+    "Unable to connect to Meridian. Check your connection and try again.",
 } as const;
 
 /**

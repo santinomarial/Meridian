@@ -18,7 +18,7 @@ export function PasswordStrength({ password }: { password: string }) {
           />
         ))}
       </div>
-      <ul className="mt-2 space-y-0.5 px-1" aria-label="Password requirements">
+      <ul className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 px-1" aria-label="Password requirements">
         {reqs.map((req) => (
           <li
             key={req.label}

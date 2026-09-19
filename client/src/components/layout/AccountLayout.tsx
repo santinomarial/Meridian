@@ -32,7 +32,7 @@ export function AccountLayout({ children, action, introduction = false }: {
             </button>
           </div>
         </header>
-        <main className="flex flex-1 items-center py-10 sm:py-16">
+        <main className="flex flex-1 items-center py-8 sm:py-10">
           <div className={introduction ? "grid w-full items-center gap-14 lg:grid-cols-[1fr_400px] lg:gap-24" : "mx-auto w-full max-w-[400px]"}>
             {introduction && (
               <section className="hidden max-w-[480px] lg:block" aria-labelledby="account-introduction">

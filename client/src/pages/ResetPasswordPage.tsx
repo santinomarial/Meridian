@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { AccountLayout } from "../components/layout/AccountLayout";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { PasswordStrength } from "../components/ui/PasswordStrength";
 import { resetPassword } from "../lib/api";
 import { getAuthErrorMessage } from "../lib/authErrors";
@@ -21,6 +22,7 @@ export function ResetPasswordPage() {
 
   const handleSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
+    if (loading) return;
     setError(null);
 
     const unmet = getPasswordRequirements(password).filter((r) => !r.met);
@@ -183,23 +185,15 @@ function PasswordField({
       <label htmlFor={id} className="text-body-sm font-medium text-on-surface">
         {label}
       </label>
-      <div className="group relative">
-        <MaterialIcon
-          name="lock"
-          className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-on-surface-variant transition-colors group-focus-within:text-primary"
-          aria-hidden
-        />
-        <input
-          id={id}
-          name={id}
-          type="password"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="••••••••"
-          autoComplete={autoComplete}
-          className="w-full rounded-md border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
-        />
-      </div>
+      <PasswordInput
+        id={id}
+        name={id}
+        label={label.toLowerCase()}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        autoComplete={autoComplete}
+        required
+      />
     </div>
   );
 }

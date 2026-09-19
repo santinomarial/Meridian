@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { MaterialIcon } from "../components/ui/MaterialIcon";
 import { AccountLayout } from "../components/layout/AccountLayout";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { PasswordStrength } from "../components/ui/PasswordStrength";
 import {
   ApiError,
@@ -38,6 +39,7 @@ type IconFieldProps = {
   value: string;
   onChange: (value: string) => void;
   autoComplete?: string;
+  invalid?: boolean;
 };
 
 function IconField({
@@ -50,6 +52,7 @@ function IconField({
   value,
   onChange,
   autoComplete,
+  invalid = false,
 }: IconFieldProps) {
   return (
     <div className="space-y-1.5">
@@ -70,7 +73,12 @@ function IconField({
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           autoComplete={autoComplete}
-          className="w-full rounded-md border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
+          required
+          aria-invalid={invalid}
+          aria-describedby={invalid ? "auth-error" : undefined}
+          autoCapitalize={type === "email" ? "none" : undefined}
+          spellCheck={type === "email" ? false : undefined}
+          className="w-full rounded-md border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-base sm:text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
         />
       </div>
     </div>
@@ -81,19 +89,24 @@ function IconField({
 function AuthCard({
   mode,
   onModeChange,
-  initialEmail = "",
+  email,
+  setEmail,
+  loading,
+  setLoading,
 }: {
   mode: AuthMode;
   onModeChange: (mode: AuthMode, email?: string) => void;
-  initialEmail?: string;
+  email: string;
+  setEmail: (email: string) => void;
+  loading: boolean;
+  setLoading: (loading: boolean) => void;
 }) {
   const navigate = useNavigate();
   const prevModeRef = useRef<AuthMode | null>(null);
   const [name, setName] = useState("");
-  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [invalidField, setInvalidField] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [forgotSuccess, setForgotSuccess] = useState(false);
   const [previewResetUrl, setPreviewResetUrl] = useState<string | null>(null);
@@ -103,15 +116,11 @@ function AuthCard({
   const [resendingVerification, setResendingVerification] = useState(false);
   const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
 
-  // Keep email when switching signin ↔ forgot so the forgot-password form is pre-filled.
-  // Clear email for all other transitions (entering/leaving signup).
+  // Preserve the email across modes; passwords are cleared when modes change.
   useEffect(() => {
     const prevMode = prevModeRef.current;
     prevModeRef.current = mode;
     if (prevMode === null || prevMode === mode) return;
-    const keepEmail =
-      (prevMode === "signin" && mode === "forgot") ||
-      (prevMode === "forgot" && mode === "signin");
     // Intentional reset of form fields on auth-mode transitions.
     setName("");
     setPassword("");
@@ -122,27 +131,44 @@ function AuthCard({
     setPreviewVerificationUrl(null);
     setVerificationDeliveryFailed(false);
     setVerificationNotice(null);
-    if (!keepEmail) {
-      setEmail("");
-    }
+    setInvalidField(null);
   }, [mode]);
 
   const handleSubmit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
+    if (loading) return;
     setError(null);
+    setInvalidField(null);
+    const reject = (field: string, message: string): void => {
+      setError(message);
+      setInvalidField(field);
+      document.getElementById(field)?.focus();
+    };
+    if (mode === "signup" && !name.trim()) {
+      reject("name", "Enter your name.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      reject("email", "Enter a valid email address.");
+      return;
+    }
+    if (mode === "signin" && !password) {
+      reject("password", "Enter your password.");
+      return;
+    }
 
     if (mode === "forgot") {
       setLoading(true);
       setPreviewResetUrl(null);
       try {
-        const result = await forgotPassword({ email });
+        const result = await forgotPassword({ email: email.trim() });
         if (result.previewResetUrl) {
           setPreviewResetUrl(result.previewResetUrl);
         }
         // A completed request uses generic copy without revealing account existence.
         setForgotSuccess(true);
-      } catch {
-        setError("Unable to send reset link right now. Please try again later.");
+      } catch (err) {
+        setError(getAuthErrorMessage(err));
       } finally {
         setLoading(false);
       }
@@ -152,13 +178,13 @@ function AuthCard({
     if (mode === "signup") {
       const unmet = getPasswordRequirements(password).filter((r) => !r.met);
       if (unmet.length > 0) {
-        setError(
+        reject("password",
           `Password must include: ${unmet.map((r) => r.label.toLowerCase()).join(", ")}.`,
         );
         return;
       }
       if (password !== confirmPassword) {
-        setError("Passwords do not match.");
+        reject("confirm-password", "Passwords do not match.");
         return;
       }
     }
@@ -166,7 +192,7 @@ function AuthCard({
     setLoading(true);
     try {
       if (mode === "signup") {
-        const result = await register({ email, password, displayName: name });
+        const result = await register({ email: email.trim(), password, displayName: name.trim() });
         if (result.verificationRequired === true) {
           setVerificationPendingEmail(result.user.email);
           setPreviewVerificationUrl(result.previewVerificationUrl ?? null);
@@ -174,7 +200,7 @@ function AuthCard({
           return;
         }
       } else {
-        await login({ email, password });
+        await login({ email: email.trim(), password });
       }
       navigate(getSafeRedirect());
     } catch (err) {
@@ -198,18 +224,20 @@ function AuthCard({
   const isForgot = mode === "forgot";
 
   const handleResendVerification = async (): Promise<void> => {
-    if (verificationPendingEmail === null) return;
+    if (verificationPendingEmail === null || loading) return;
+    setLoading(true);
     setResendingVerification(true);
     setVerificationNotice(null);
     try {
       const result = await resendEmailVerification(verificationPendingEmail);
       setPreviewVerificationUrl(result.previewVerificationUrl ?? null);
       setVerificationDeliveryFailed(false);
-      setVerificationNotice("Check your inbox for a new verification link.");
+      setVerificationNotice(result.previewVerificationUrl ? "Your new verification link is ready below." : "Check your inbox for a new verification link.");
     } catch (err) {
       setVerificationNotice(getAuthErrorMessage(err));
     } finally {
       setResendingVerification(false);
+      setLoading(false);
     }
   };
 
@@ -268,6 +296,7 @@ function AuthCard({
             </button>
             <button
               type="button"
+              disabled={loading}
               onClick={() => {
                 setVerificationPendingEmail(null);
                 setPreviewVerificationUrl(null);
@@ -328,6 +357,7 @@ function AuthCard({
             value={email}
             onChange={(v) => setEmail(v)}
             autoComplete={isForgot ? "email" : "username"}
+            invalid={invalidField === "email"}
           />
 
           {!isForgot ? (
@@ -339,6 +369,7 @@ function AuthCard({
                 {!isSignUp ? (
                   <button
                     type="button"
+                    disabled={loading}
                     onClick={() => onModeChange("forgot", email)}
                     className="text-body-sm text-accent hover:underline"
                     data-testid="forgot-password-link"
@@ -347,23 +378,17 @@ function AuthCard({
                   </button>
                 ) : null}
               </div>
-              <div className="group relative">
-                <MaterialIcon
-                  name="lock"
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-on-surface-variant transition-colors group-focus-within:text-primary"
-                  aria-hidden
-                />
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="••••••••"
-                  autoComplete={isSignUp ? "new-password" : "current-password"}
-                  className="w-full rounded-md border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
-                />
-              </div>
+              <PasswordInput
+                key={mode}
+                id="password"
+                name="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete={isSignUp ? "new-password" : "current-password"}
+                required
+                aria-invalid={invalidField === "password"}
+                aria-describedby={invalidField === "password" ? "auth-error" : undefined}
+              />
               {isSignUp ? <PasswordStrength password={password} /> : null}
             </div>
           ) : null}
@@ -376,28 +401,22 @@ function AuthCard({
               >
                 Confirm Password
               </label>
-              <div className="group relative">
-                <MaterialIcon
-                  name="lock"
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-lg text-on-surface-variant transition-colors group-focus-within:text-primary"
-                  aria-hidden
-                />
-                <input
-                  id="confirm-password"
-                  name="confirm-password"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  placeholder="••••••••"
-                  autoComplete="new-password"
-                  className="w-full rounded-md border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-4 text-body-md text-on-surface outline-none transition-all placeholder:text-on-surface-variant/55 focus:border-primary focus:ring-2 focus:ring-primary/25"
-                />
-              </div>
+              <PasswordInput
+                id="confirm-password"
+                name="confirm-password"
+                label="confirm password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                autoComplete="new-password"
+                required
+                aria-invalid={invalidField === "confirm-password"}
+                aria-describedby={invalidField === "confirm-password" ? "auth-error" : undefined}
+              />
             </div>
           ) : null}
 
           {error !== null ? (
-            <div role="alert" className="rounded-md bg-error/10 px-3 py-2 text-[12px] text-error" data-testid="auth-error">
+            <div id="auth-error" role="alert" className="rounded-md bg-error/10 px-3 py-2 text-[12px] text-error" data-testid="auth-error">
               <p>{error}</p>
             </div>
           ) : null}
@@ -435,7 +454,8 @@ function AuthCard({
           <p className="text-center text-body-sm text-on-surface-variant">
             <button
               type="button"
-              onClick={() => onModeChange("signin")}
+              disabled={loading}
+              onClick={() => onModeChange("signin", email)}
               className="text-accent hover:underline"
               data-testid="back-to-login"
             >
@@ -447,7 +467,8 @@ function AuthCard({
             {isSignUp ? "Already have an account? " : "Don't have an account? "}
             <button
               type="button"
-              onClick={() => onModeChange(isSignUp ? "signin" : "signup")}
+              disabled={loading}
+              onClick={() => onModeChange(isSignUp ? "signin" : "signup", email)}
               className="text-accent hover:underline"
               data-testid={isSignUp ? "switch-to-login" : "switch-to-signup"}
             >
@@ -468,6 +489,7 @@ function AuthCard({
 export function LandingPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [loading, setLoading] = useState(false);
   const isForgotRoute = location.pathname === "/forgot-password";
   const [standardAuthMode, setStandardAuthMode] = useState<Exclude<AuthMode, "forgot">>(
     "signin",
@@ -481,28 +503,31 @@ export function LandingPage() {
       ? location.state.email
       : "";
 
-  const handleModeChange = (mode: AuthMode, email = ""): void => {
+  const [email, setEmail] = useState(initialEmail);
+
+  const handleModeChange = (mode: AuthMode, nextEmail = email): void => {
+    setEmail(nextEmail);
     if (mode === "forgot") {
       navigate(
         { pathname: "/forgot-password", search: location.search },
-        { state: { email } },
+        { state: { email: nextEmail } },
       );
       return;
     }
     setStandardAuthMode(mode);
     if (isForgotRoute) {
-      navigate({ pathname: "/", search: location.search }, { replace: true });
+      navigate({ pathname: "/", search: location.search }, { replace: true, state: { email: nextEmail } });
     }
   };
 
   return (
     <AccountLayout introduction={!isForgotRoute} action={
-      <button type="button" onClick={() => handleModeChange(authMode === "signin" ? "signup" : "signin")}
+      <button type="button" disabled={loading} onClick={() => handleModeChange(authMode === "signin" ? "signup" : "signin")}
         className="min-h-11 rounded px-2 font-medium text-on-surface hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
         {authMode === "signin" ? "Create account" : "Log in"}
       </button>
     }>
-      <AuthCard key={isForgotRoute ? "forgot" : "standard"} mode={authMode} onModeChange={handleModeChange} initialEmail={initialEmail} />
+      <AuthCard key={isForgotRoute ? "forgot" : "standard"} mode={authMode} onModeChange={handleModeChange} email={email} setEmail={setEmail} loading={loading} setLoading={setLoading} />
     </AccountLayout>
   );
 }

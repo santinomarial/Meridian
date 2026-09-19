@@ -40,7 +40,7 @@ test("auth fields expose password-manager metadata", async ({ page }) => {
 
   const form = page.getByTestId("auth-form");
   const email = page.getByLabel("Email Address");
-  const password = page.getByLabel("Password");
+  const password = page.getByLabel("Password", { exact: true });
 
   await expect(form).toHaveAttribute("autocomplete", "on");
   await expect(email).toHaveAttribute("name", "username");
@@ -53,7 +53,7 @@ test("auth fields expose password-manager metadata", async ({ page }) => {
     "autocomplete",
     "new-password",
   );
-  await expect(page.getByLabel("Confirm Password")).toHaveAttribute(
+  await expect(page.getByLabel("Confirm Password", { exact: true })).toHaveAttribute(
     "name",
     "confirm-password",
   );
@@ -85,7 +85,7 @@ test("weak password is rejected before calling backend", async ({ page }) => {
   await page.getByLabel("Email Address").fill(uniqueEmail());
   // Deliberately weak — only lowercase, no digits/symbols
   await page.getByLabel(/^Password$/).fill("weakpass");
-  await page.getByLabel("Confirm Password").fill("weakpass");
+  await page.getByLabel("Confirm Password", { exact: true }).fill("weakpass");
   await page.getByTestId("auth-submit").click();
 
   // Error shown, no network call made
@@ -107,7 +107,7 @@ test("password mismatch is rejected before calling backend", async ({ page }) =>
   await page.getByLabel("Full Name").fill("Test User");
   await page.getByLabel("Email Address").fill(uniqueEmail());
   await page.getByLabel(/^Password$/).fill(STRONG_PASSWORD);
-  await page.getByLabel("Confirm Password").fill("Different@1!");
+  await page.getByLabel("Confirm Password", { exact: true }).fill("Different@1!");
   await page.getByTestId("auth-submit").click();
 
   await expect(page.getByTestId("auth-error")).toContainText("do not match");
@@ -231,6 +231,8 @@ test.describe("backend required — auth", () => {
     await signUpViaUI(page, email, STRONG_PASSWORD);
     await expect(page).toHaveURL("/workspace", { timeout: 15_000 });
     await expect(page.getByTestId("workspace-root")).toBeVisible();
+    await page.reload();
+    await expect(page.getByTestId("workspace-root")).toHaveAttribute("data-backend-status", "available");
   });
 
   test("sign out navigates back to landing page", async ({ page }) => {
@@ -323,22 +325,22 @@ test.describe("backend required — auth", () => {
     page.on("request", (req) => {
       if (req.url().includes("/auth/")) requests.push(req.url());
     });
-    await page.getByLabel("New Password").fill("weakpass");
-    await page.getByLabel("Confirm Password").fill("weakpass");
+    await page.getByLabel("New Password", { exact: true }).fill("weakpass");
+    await page.getByLabel("Confirm Password", { exact: true }).fill("weakpass");
     await page.getByTestId("reset-submit").click();
     await expect(page.getByTestId("reset-error")).toBeVisible();
     expect(requests.filter((u) => u.includes("reset-password"))).toHaveLength(0);
 
     // Mismatched confirm password is also blocked client-side
-    await page.getByLabel("New Password").fill(newPassword);
-    await page.getByLabel("Confirm Password").fill("Different@1!");
+    await page.getByLabel("New Password", { exact: true }).fill(newPassword);
+    await page.getByLabel("Confirm Password", { exact: true }).fill("Different@1!");
     await page.getByTestId("reset-submit").click();
     await expect(page.getByTestId("reset-error")).toContainText("do not match");
     expect(requests.filter((u) => u.includes("reset-password"))).toHaveLength(0);
 
     // Valid submission succeeds
-    await page.getByLabel("New Password").fill(newPassword);
-    await page.getByLabel("Confirm Password").fill(newPassword);
+    await page.getByLabel("New Password", { exact: true }).fill(newPassword);
+    await page.getByLabel("Confirm Password", { exact: true }).fill(newPassword);
     await page.getByTestId("reset-submit").click();
     await expect(page.getByTestId("reset-success")).toBeVisible({ timeout: 10_000 });
 
@@ -360,8 +362,8 @@ test.describe("backend required — auth", () => {
     await page.goto("/reset-password/this-is-not-a-valid-token");
     await expect(page.getByTestId("reset-password-form")).toBeVisible({ timeout: 10_000 });
 
-    await page.getByLabel("New Password").fill(STRONG_PASSWORD);
-    await page.getByLabel("Confirm Password").fill(STRONG_PASSWORD);
+    await page.getByLabel("New Password", { exact: true }).fill(STRONG_PASSWORD);
+    await page.getByLabel("Confirm Password", { exact: true }).fill(STRONG_PASSWORD);
     await page.getByTestId("reset-submit").click();
 
     // Backend returns 400 with "invalid or expired" message
