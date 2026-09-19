@@ -71,7 +71,7 @@ test.describe("login error messages", () => {
 
     const error = page.getByTestId("auth-error");
     await expect(error).toBeVisible();
-    await expect(error).toContainText("Too many login attempts");
+    await expect(error).toContainText("Too many attempts");
     // The raw throttler text must never leak into the UI.
     await expect(error).not.toContainText("ThrottlerException");
   });

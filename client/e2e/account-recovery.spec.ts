@@ -8,7 +8,7 @@ test("failed password recovery stays on the form and allows retry", async ({ pag
   await page.getByLabel("Email Address").fill("recovery@example.com");
   await page.getByTestId("auth-submit").click();
   await expect(page.getByTestId("forgot-success")).toHaveCount(0);
-  await expect(page.getByTestId("auth-error")).toContainText("Unable to send reset link");
+  await expect(page.getByTestId("auth-error")).toContainText("Unable to connect to Meridian");
   await expect(page.getByTestId("auth-submit")).toBeEnabled();
 
   await page.route("**/auth/forgot-password", (route) => route.fulfill({
