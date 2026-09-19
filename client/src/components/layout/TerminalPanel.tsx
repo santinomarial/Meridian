@@ -25,9 +25,9 @@ function statusMeta(
 }
 
 const SYNC_LABEL: Record<TerminalSyncStatus, string> = {
-  synced: "Saved files loaded",
-  syncing: "Loading saved files",
-  failed: "File loading failed",
+  synced: "Files saved",
+  syncing: "Saving files",
+  failed: "File sync failed",
 };
 
 const TONE_DOT: Record<StatusTone, string> = {
@@ -145,7 +145,7 @@ export function TerminalPanel() {
                   : "text-on-surface-variant/70",
               ].join(" ")}
               data-testid="terminal-sync-status"
-              title="Editor saves update the terminal files. Terminal edits do not update the workspace."
+              title="Editor saves and terminal text edits sync with your workspace."
             >
               {SYNC_LABEL[terminalSyncStatus]}
             </span>
@@ -185,7 +185,7 @@ export function TerminalPanel() {
       {!isViewer ? (
         <p className="shrink-0 border-b meridian-crisp-border px-3 py-1 text-[11px] text-on-surface-variant"
           data-testid="terminal-file-notice">
-          Runs saved files. Files created or edited here aren’t saved back to your workspace.
+          Text files created or edited here save automatically. Dependencies and build output stay local.
         </p>
       ) : null}
 

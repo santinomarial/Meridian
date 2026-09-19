@@ -1,3 +1,4 @@
+import { TerminalFileImportService } from './terminal-file-import.service';
 import { Module } from '@nestjs/common';
 import { DocumentsService } from './documents.service';
 import { DocumentsController } from './documents.controller';
@@ -8,7 +9,7 @@ import { TerminalModule } from '../modules/terminal/terminal.module';
 @Module({
   imports: [WorkspacesModule, RealtimeModule, TerminalModule],
   controllers: [DocumentsController],
-  providers: [DocumentsService],
+  providers: [DocumentsService, TerminalFileImportService],
   exports: [DocumentsService],
 })
 export class DocumentsModule {}

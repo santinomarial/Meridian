@@ -11,7 +11,7 @@ every keystroke while preserving an explicit meaning for Save.
 | `Document.content` | Plain-text checkpoint used by REST reads, export, and terminal materialization |
 | `DocumentVersion.content` | Immutable user-visible save/restore history |
 
-`Document.content` changes only through document creation, bulk import,
+`Document.content` changes only through document creation, bulk/terminal import,
 checkpoint, or version restore. Live Yjs updates never write it. Metadata
 `PATCH` rejects `content`, preventing an independent plain-text write from
 silently diverging from the CRDT.
@@ -56,6 +56,11 @@ Version restore performs the same conceptual replacement while also creating a
 new version and notifying loaded replicas and clients. Its fencing and
 reconciliation details are canonical in
 [Persistence, compaction, and restore](persistence-compaction-and-restore.md).
+
+Terminal text edits use the same locked generation replacement and record a
+version. Before replacement, the importer compares both saved and durable live
+text with the terminal's baseline. Concurrent changes create a separate recovery
+copy rather than overwriting the editor. See [Terminal execution](terminal-execution.md).
 
 ## Tree and export semantics
 

@@ -1,43 +1,10 @@
 import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router";
 import { ApiError, createWorkspace, getCurrentUser, getDocumentTree, getWorkspaces, getWorkspaceMembers } from "../lib/api";
-import { getLanguageFromFilename, toLanguageMode } from "../lib/language";
+import { buildFileNodes, collectFileContent } from "../lib/documentTree";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
-import type { ApiDocument } from "../lib/api";
 import type { ApiUser } from "../lib/apiTypes";
 import type { FileNode } from "../types";
-
-function buildFileNodes(docs: ApiDocument[]): FileNode[] {
-  return docs.map((doc): FileNode => {
-    if (doc.type === "FOLDER") {
-      return {
-        kind: "folder",
-        id: doc.id,
-        name: doc.name,
-        children: buildFileNodes(doc.children ?? []),
-        expanded: true,
-      };
-    }
-    const lang = doc.language ?? null;
-    return {
-      kind: "file",
-      id: doc.id,
-      name: doc.name,
-      language: toLanguageMode(
-        lang !== null ? lang : getLanguageFromFilename(doc.name),
-      ),
-    };
-  });
-}
-
-function collectFileContent(docs: ApiDocument[], acc: Record<string, string>): void {
-  for (const doc of docs) {
-    if (doc.type === "FILE") {
-      acc[doc.id] = doc.content ?? "";
-    }
-    collectFileContent(doc.children ?? [], acc);
-  }
-}
 
 interface FlatFile {
   id: string;

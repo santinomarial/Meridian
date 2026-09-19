@@ -252,7 +252,7 @@ describe('TerminalSandboxService', () => {
       expect(emitted.some(([e]) => e === 'terminal:sync')).toBe(true);
       expect(
         emitted.some(
-          ([e, d]) => e === 'terminal:output' && String((d as { data: string }).data).includes('Could not sync'),
+          ([e, d]) => e === 'terminal:output' && String((d as { data: string }).data).includes('File sync failed'),
         ),
       ).toBe(true);
     });
@@ -315,7 +315,7 @@ describe('TerminalSandboxService', () => {
         emitted.some(
           ([event, data]) =>
             event === 'terminal:output' &&
-            String((data as { data: string }).data).includes('Could not sync'),
+            String((data as { data: string }).data).includes('File sync failed'),
         ),
       ).toBe(true);
     });

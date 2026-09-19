@@ -1,3 +1,5 @@
+import { getDocumentTree } from "../lib/api";
+import { buildFileNodes, collectFileContent } from "../lib/documentTree";
 import { useEffect } from "react";
 import * as Y from "yjs";
 import * as syncProtocol from "y-protocols/sync";
@@ -41,11 +43,41 @@ export function useSessionSocket(): void {
 
     const socket = getSocket();
 
+    let disposed = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let refreshSerial = 0;
+    const refreshFiles = (): void => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      const serial = ++refreshSerial;
+      refreshTimer = setTimeout(() => {
+        if (workspaceId === null || disposed) return;
+        const priorFiles = useWorkspaceStore.getState().files;
+        void getDocumentTree(workspaceId).then((tree) => {
+          if (disposed || serial !== refreshSerial || useWorkspaceStore.getState().workspaceId !== workspaceId) return;
+          if (useWorkspaceStore.getState().files !== priorFiles) { refreshFiles(); return; }
+          const content: Record<string, string> = {};
+          collectFileContent(tree, content);
+          useWorkspaceStore.getState().refreshBackendTree(buildFileNodes(tree), content);
+        }).catch(() => {
+          // Retry a missed notification without remounting the editor.
+          if (!disposed) refreshTimer = setTimeout(refreshFiles, 2000);
+        });
+      }, 100);
+    };
+    const onFilesChanged = (payload: { workspaceId: string; conflicts?: string[] }): void => {
+      if (payload.workspaceId !== workspaceId) return;
+      refreshFiles();
+      for (const file of payload.conflicts ?? []) {
+        useWorkspaceStore.getState().addNotification({ icon: "save", text: `Terminal edit preserved in ${file} because the original changed in the editor.` });
+      }
+    };
+
     const onConnect = (): void => {
       setConnectionStatus("connected");
       // Join the workspace room for workspace-wide events (chat).
       if (workspaceId !== null) {
         socket.emit("joinWorkspace", { workspaceId });
+        refreshFiles();
       }
     };
     const onDisconnect = (): void => setConnectionStatus("disconnected");
@@ -150,6 +182,7 @@ export function useSessionSocket(): void {
     socket.on("awareness:update", onAwarenessUpdate);
     socket.on("chat:message", onChatMessage);
     socket.on("document:restored", onDocumentRestored);
+    socket.on("workspace:files-changed", onFilesChanged);
 
     setConnectionStatus("connecting");
     if (socket.connected) {
@@ -161,6 +194,9 @@ export function useSessionSocket(): void {
     }
 
     return (): void => {
+      disposed = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      socket.off("workspace:files-changed", onFilesChanged);
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("connect_error", onConnectError);

@@ -1,8 +1,9 @@
 # Terminal execution
 
 The terminal is an optional Socket.IO feature that starts a host-backed
-`node-pty` shell. It exists to run saved workspace files near the API; it is not
-a browser sandbox, container runner, or bidirectional filesystem editor.
+`node-pty` shell. It runs saved workspace files near the API and automatically
+saves new and edited terminal text files back into the workspace. It is not a
+browser sandbox or container runner.
 
 Production environment validation rejects `ENABLE_TERMINAL=true`. In
 non-production it is disabled by default and still requires deliberate host
@@ -33,15 +34,44 @@ replicas. This path is best-effort, unversioned, and not replayed. Live Yjs
 updates do not update the projection until a checkpoint changes
 `Document.content`.
 
-The direction is one-way:
+## Terminal text files save back to the workspace
 
-```text
-saved PostgreSQL checkpoint -> disposable temporary projection
-```
+A bounded scan runs every 500 ms while a shell is active. New and edited UTF-8
+text files must match in two consecutive scans before import. A final scan runs
+before normal last-session cleanup, including a shell that writes a file and
+immediately exits. Temporary database failures keep the local files and their
+previous baseline for retry; they do not advance the saved indicator.
 
-Files created or modified by shell commands are never written back to
-PostgreSQL, Yjs, version history, or export. Re-materialization discards such
-terminal-only changes.
+Imports recheck the session and workspace write permission. They create parent
+folders and save PostgreSQL checkpoints with version history. Replacing an
+existing file takes the document advisory lock and advances its CRDT generation,
+using the same stale-update fence as version restore. Open editors resynchronize,
+and a workspace notification refreshes file trees on connected clients without
+closing tabs or replacing unrelated unsaved editor text. Other active terminal
+projections receive the saved content through the existing Redis fan-out.
+
+If the saved checkpoint or durable collaborative text has changed since it was
+projected, the terminal text is preserved under `terminal-conflicts/` rather
+than overwriting the editor. The terminal prints the recovery path and the UI
+adds a notification. Repeated imports of the same conflict reuse that copy.
+Editor-to-terminal writes also leave unimported shell edits intact until they
+can be saved or preserved as a conflict.
+
+The import scope is deliberately text source files:
+
+- Files are limited to 1 MiB each, 1,000 text files and 25 MiB per scanned tree.
+  Traversal is bounded to 4,000 entries and 64 folder levels.
+- Symlinks, hard links, special files, binary/non-UTF-8 files, and oversized files
+  are excluded. Dependency, cache, build, Git-internal, and shell-history paths
+  are excluded by `terminal-files.ts`; for example `node_modules`, `.venv`,
+  `__pycache__`, `.git`, `dist`, and `build` remain local.
+- Shell deletions do not delete saved workspace documents. Rename/delete saved
+  files through the explorer; shell `mv` imports the destination as a new file
+  and retains the previously saved source. Empty directories and executable
+  permission bits are not represented in the document model.
+- The saved indicator confirms an import, not every keystroke. A process crash
+  before a scan commits can still lose recent shell changes. This is not a
+  durable disk mount or a Git working-tree synchronization service.
 
 ## Run-file dispatch
 
@@ -73,7 +103,8 @@ audit failure kills affected PTYs. Sessions are also killed on explicit stop,
 socket disconnect, idle timeout, absolute lifetime, and module shutdown.
 
 Normal final-session teardown removes the shared temporary projection after
-serialized cleanup. A crash or host loss can leave files behind. There is no
+a final import and serialized cleanup. Failed imports retain the local directory
+for retry in the same server process. A crash or host loss can leave files behind. There is no
 global user quota for PTYs, child processes, CPU, memory, network, or temporary
 storage. These residual risks are summarized in
 [Known limitations](../reference/known-limitations.md), while the broader security boundary

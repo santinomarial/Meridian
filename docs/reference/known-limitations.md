@@ -32,7 +32,9 @@ explanation documents own the rationale so it is not repeated here.
    reduced environment, path checks, and cleanup are not operating-system
    isolation. There are no global PTY, CPU, memory, process, network, or disk
    quotas. Production validation prohibits enabling it, and abrupt failure can
-   leave temporary files. See
+   leave temporary files. New and edited terminal text files now persist, but
+   binaries, generated files, permission bits, and shell deletions are not
+   synchronized into the document model. See
    [Terminal execution](../explanation/terminal-execution.md).
 
 6. **HTTP body parsing precedes Nest authorization and throttling.** Built-in

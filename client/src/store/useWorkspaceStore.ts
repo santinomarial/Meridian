@@ -73,6 +73,7 @@ type WorkspaceActions = {
   /** Clears session state and re-triggers `useBackendWorkspace` load. */
   retryWorkspaceLoad: () => void;
   batchLoadBackend: (data: BackendLoadData) => void;
+  refreshBackendTree: (files: FileNode[], content: Record<string, string>) => void;
   clearTabDirty: (fileId: string) => void;
   addFileNode: (file: Extract<FileNode, { kind: "file" }>, content: string) => void;
   addFolderNode: (folder: Extract<FileNode, { kind: "folder" }>) => void;
@@ -669,6 +670,27 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
         openTabs: newTabs,
         activeFileId: firstFileId ?? state.activeFileId,
       };
+    });
+  },
+
+  refreshBackendTree: (files, content) => {
+    set((state) => {
+      const expanded = new Map<string, boolean>();
+      const remember = (nodes: FileNode[]): void => { for (const node of nodes) if (node.kind === "folder") { expanded.set(node.id, node.expanded); remember(node.children); } };
+      remember(state.files);
+      const preserve = (nodes: FileNode[]): FileNode[] => nodes.map((node) => node.kind === "folder"
+        ? { ...node, expanded: expanded.get(node.id) ?? true, children: preserve(node.children) } : node);
+      const nextContent = { ...content };
+      // Open Monaco models own their live state. A tree refresh must never
+      // replace their unsaved text with an older saved checkpoint.
+      const openTabs = state.openTabs.flatMap((tab) => {
+        const file = findFileInTree(files, tab.fileId);
+        if (!file) return [];
+        nextContent[tab.fileId] = state.editorContentByFileId[tab.fileId] ?? content[tab.fileId] ?? "";
+        return [{ ...tab, name: file.name, language: file.language }];
+      });
+      return { files: preserve(files), editorContentByFileId: nextContent, openTabs,
+        activeFileId: openTabs.some((tab) => tab.fileId === state.activeFileId) ? state.activeFileId : openTabs[0]?.fileId ?? null };
     });
   },
 

@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { randomUUID } from 'crypto';
@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { assertSafeRelPath, safeJoin } from './path-safety';
 import type { AppConfig } from '../../config/configuration.type';
+import { readTerminalFiles, type TerminalFileImporter, type TerminalFileResult } from './terminal-files';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 
 // Allowed characters in workspace/user ids used as path segments.
@@ -50,12 +51,13 @@ interface SandboxSyncMessage {
 
 /**
  * Materializes a workspace's DB-backed documents into an on-disk sandbox so the
- * terminal can run them, and keeps that sandbox in sync as documents change.
+ * terminal can run them. Saved editor changes project to disk; settled shell
+ * text edits import through the registered transactional document handler.
  *
  * THE DATABASE IS THE SOURCE OF TRUTH. The sandbox is a disposable runtime
- * projection of the workspace used only for terminal execution. Sync is
- * best-effort: a failed sync warns the user (in the terminal and via a
- * `terminal:sync` event) but never throws into — or corrupts — the DB path.
+ * projection. Failed imports retain local files and their baseline for retry;
+ * incoming projection writes cannot overwrite unimported terminal text.
+ * Notifications and projection fan-out remain best-effort.
  *
  * Cross-instance: a PTY (and its sandbox dir) lives on one server instance, but
  * a document edit can be handled by any instance. So each sync op is applied to
@@ -69,7 +71,7 @@ interface SandboxSyncMessage {
  * NOT container isolation — see docs/explanation/terminal-execution.md.
  */
 @Injectable()
-export class TerminalSandboxService implements OnModuleInit {
+export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
   // socketId → active sandbox (one terminal session per socket).
   private readonly active = new Map<string, ActiveSandbox>();
   // A reservation spans materialization through PTY spawn/registration. It
@@ -79,6 +81,90 @@ export class TerminalSandboxService implements OnModuleInit {
   private readonly rootOperations = new Map<string, Promise<unknown>>();
   private readonly cleanupTimers = new Map<string, NodeJS.Timeout>();
   private readonly enableTerminal: boolean;
+  private importer: TerminalFileImporter | undefined;
+  private readonly baselines = new Map<string, Map<string, string>>();
+  private readonly observations = new Map<string, Map<string, string>>();
+  private readonly lastLeases = new Map<string, ActiveSandbox>();
+  private pollTimer: NodeJS.Timeout | undefined;
+  private polling = false;
+
+  registerFileImporter(importer: TerminalFileImporter): void {
+    this.importer = importer;
+    if (!this.enableTerminal || this.pollTimer) return;
+    this.pollTimer = setInterval(() => {
+      if (this.polling) return;
+      this.polling = true;
+      void this.syncTerminalFiles().finally(() => { this.polling = false; });
+    }, 500);
+    this.pollTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    for (const timer of this.cleanupTimers.values()) clearTimeout(timer);
+    this.cleanupTimers.clear();
+  }
+
+  /** Also used by integration tests to await a deterministic scan. */
+  async syncTerminalFiles(force = false): Promise<void> {
+    for (const root of new Set([...this.active.values()].map((s) => s.root))) {
+      try { await this.flushRoot(root, force); }
+      catch (err) {
+        this.logger.warn({ root, err }, 'Terminal file import failed; files retained for retry');
+        const lease = this.lastLeases.get(root);
+        if (lease) this.warn(lease);
+      }
+    }
+  }
+
+  private async flushRoot(root: string, force: boolean): Promise<void> {
+    if (!this.importer) return;
+    let workspaceId: string | undefined;
+    const projected = await this.runRootOperation(root, async (): Promise<TerminalFileResult[]> => {
+      const lease = [...this.active.values()].find((s) => s.root === root) ?? this.lastLeases.get(root);
+      const baseline = this.baselines.get(root);
+      if (!lease || !baseline) return [];
+      workspaceId = lease.workspaceId;
+      const files = await readTerminalFiles(root);
+      const previous = this.observations.get(root);
+      this.observations.set(root, files);
+      const changes = [...files].filter(([name, content]) =>
+        content !== baseline.get(name) && (force || previous?.get(name) === content),
+      ).map(([name, content]) => ({ path: name, content, baseContent: baseline.get(name) }));
+      if (!changes.length) {
+        if ([...files].some(([name, content]) => content !== baseline.get(name))) lease.socket.emit('terminal:sync', { status: 'syncing' });
+        return [];
+      }
+      lease.socket.emit('terminal:sync', { status: 'syncing' });
+      const result = await this.importer!(lease.workspaceId, lease.userId,
+        lease.socket.data?.['sessionJti'] as string | undefined, changes);
+      // Advance only after durable commit. Errors leave the original baseline
+      // intact, so a later pass retries without pretending the files are saved.
+      for (const change of changes) baseline.set(change.path, change.content);
+      for (const file of result) if (file.conflictSource) {
+        lease.socket.emit('terminal:output', { data: `\r\n[Meridian] ${file.conflictSource} changed in the editor. Terminal copy saved as ${file.path}.\r\n` });
+      }
+      lease.socket.emit('terminal:sync', { status: 'synced' });
+      return result;
+    });
+    // Fan-out happens outside the root lock, preventing recursive lock waits.
+    if (workspaceId) {
+      for (const file of projected) await this.syncWriteFile(workspaceId, file.path, file.content);
+    }
+  }
+
+  private async hasPendingFile(root: string, relPath: string): Promise<boolean> {
+    if (!this.importer) return false;
+    try {
+      const target = safeJoin(root, relPath);
+      if ((await fs.stat(target)).size > 1024 * 1024) return true;
+      const content = await fs.readFile(target, 'utf8');
+      return content !== this.baselines.get(root)?.get(relPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw err;
+    }
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -160,7 +246,11 @@ export class TerminalSandboxService implements OnModuleInit {
     workspaceId: string,
     userId: string,
   ): Promise<void> {
+    // Failed imports retain their files for retry in a later local session.
+    if (this.baselines.has(root)) return;
     await this.recreateSandboxRoot(root);
+    const baseline = new Map<string, string>();
+    this.baselines.set(root, baseline);
 
     const docs = await this.prisma.document.findMany({
       where: { workspaceId },
@@ -176,6 +266,7 @@ export class TerminalSandboxService implements OnModuleInit {
           const target = safeJoin(root, doc.path);
           await fs.mkdir(path.dirname(target), { recursive: true });
           await this.writeFileNoFollow(target, doc.content ?? '');
+          baseline.set(doc.path, doc.content ?? '');
         }
       } catch (err) {
         // Skip any single unsafe/oddly-named document rather than failing the
@@ -269,7 +360,9 @@ export class TerminalSandboxService implements OnModuleInit {
     }
     this.reservations.delete(socketId);
     this.cancelCleanup(root);
-    this.active.set(socketId, { workspaceId, userId, root, socket });
+    const lease = { workspaceId, userId, root, socket };
+    this.active.set(socketId, lease);
+    this.lastLeases.set(root, lease);
   }
 
   async unregister(socketId: string, cleanupDelayMs = 0): Promise<void> {
@@ -342,10 +435,16 @@ export class TerminalSandboxService implements OnModuleInit {
   }
 
   private async cleanupRoot(root: string): Promise<void> {
+    // Flush shell writes before removing the last session's directory. Failure
+    // deliberately retains the directory for retry instead of deleting work.
+    await this.flushRoot(root, true);
     await this.runRootOperation(root, async () => {
       // A new session may have reserved the root while cleanup was queued.
       if (this.hasRootLease(root)) return;
       await fs.rm(root, { recursive: true, force: true });
+      this.baselines.delete(root);
+      this.observations.delete(root);
+      this.lastLeases.delete(root);
       this.logger.info({ root }, 'Terminal sandbox removed');
     });
   }
@@ -353,7 +452,7 @@ export class TerminalSandboxService implements OnModuleInit {
   private warn(sandbox: ActiveSandbox): void {
     sandbox.socket.emit('terminal:sync', { status: 'failed' });
     sandbox.socket.emit('terminal:output', {
-      data: '\r\n\x1b[33m[Meridian] Could not sync workspace file to terminal sandbox.\x1b[0m\r\n',
+      data: '\r\n\x1b[33m[Meridian] File sync failed. Local terminal files are retained; retry when the connection is restored.\x1b[0m\r\n',
     });
   }
 
@@ -441,9 +540,11 @@ export class TerminalSandboxService implements OnModuleInit {
       try {
         const applied = await this.runRootOperation(root, async () => {
           if (!this.hasRootLease(root)) return false;
+          if (await this.hasPendingFile(root, relPath)) return false;
           const target = safeJoin(root, relPath);
           await fs.mkdir(path.dirname(target), { recursive: true });
           await this.writeFileNoFollow(target, content);
+          this.baselines.get(root)?.set(relPath, content);
           return true;
         });
         if (applied) {
@@ -487,8 +588,16 @@ export class TerminalSandboxService implements OnModuleInit {
       try {
         const applied = await this.runRootOperation(root, async () => {
           if (!this.hasRootLease(root)) return false;
+          if (this.importer) {
+            const files = await readTerminalFiles(root);
+            if ([...files].some(([name, content]) => (name === relPath || name.startsWith(relPath + '/')) && content !== this.baselines.get(root)?.get(name))) return false;
+          }
           const target = safeJoin(root, relPath);
           await fs.rm(target, { recursive: true, force: true });
+          const baseline = this.baselines.get(root);
+          if (baseline) for (const name of [...baseline.keys()]) {
+            if (name === relPath || name.startsWith(relPath + '/')) baseline.delete(name);
+          }
           return true;
         });
         if (applied) {
@@ -510,10 +619,21 @@ export class TerminalSandboxService implements OnModuleInit {
       try {
         const applied = await this.runRootOperation(root, async () => {
           if (!this.hasRootLease(root)) return false;
+          if (this.importer) {
+            const files = await readTerminalFiles(root);
+            if ([...files].some(([name, content]) => (name === oldPath || name.startsWith(oldPath + '/') || name === newPath || name.startsWith(newPath + '/')) && content !== this.baselines.get(root)?.get(name))) return false;
+          }
           const from = safeJoin(root, oldPath);
           const to = safeJoin(root, newPath);
           await fs.mkdir(path.dirname(to), { recursive: true });
           await fs.rename(from, to);
+          const baseline = this.baselines.get(root);
+          if (baseline) for (const [name, content] of [...baseline]) {
+            if (name === oldPath || name.startsWith(oldPath + '/')) {
+              baseline.delete(name);
+              baseline.set(newPath + name.slice(oldPath.length), content);
+            }
+          }
           return true;
         });
         if (applied) {

@@ -78,7 +78,20 @@ export class DocumentRestoreService implements OnModuleInit, OnModuleDestroy {
     private readonly logger: PinoLogger,
   ) {}
 
+  async publishWorkspaceFilesChanged(workspaceId: string, conflicts: string[] = []): Promise<void> {
+    const payload = { originId: this.originId, workspaceId, conflicts };
+    this.server?.to(`workspace:${workspaceId}`).emit('workspace:files-changed', payload);
+    await this.redis.publish(`workspace:${workspaceId}:files`, JSON.stringify(payload));
+  }
+
   async onModuleInit(): Promise<void> {
+    await this.redis.subscribe('workspace:*:files', (_channel, raw) => {
+      try {
+        const payload = JSON.parse(String(raw)) as { originId?: string; workspaceId?: string; conflicts?: string[] };
+        if (payload.originId === this.originId || typeof payload.workspaceId !== 'string') return;
+        this.server?.to(`workspace:${payload.workspaceId}`).emit('workspace:files-changed', payload);
+      } catch { this.logger.warn('Ignored malformed workspace file notification'); }
+    });
     await this.redis.subscribe(RESTORE_CHANNEL_PATTERN, (_channel, message) =>
       this.onRedisRestore(message as string),
     );
@@ -94,6 +107,7 @@ export class DocumentRestoreService implements OnModuleInit, OnModuleDestroy {
       this.auditTimer = undefined;
     }
     await this.redis.unsubscribe(RESTORE_CHANNEL_PATTERN);
+    await this.redis.unsubscribe('workspace:*:files');
   }
 
   /** Wires in the Socket.IO server so restores can be broadcast to clients. */

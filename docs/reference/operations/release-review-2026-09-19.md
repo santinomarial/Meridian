@@ -86,6 +86,31 @@ acceptance flow passed after the fixes. The earlier complete browser and
 container runs above were not repeated for these changes. The existing local
 development services remain running; the extra test databases were removed.
 
+## Terminal file persistence follow-up
+
+The one-way terminal limitation recorded above is now superseded for new and
+edited text files. A bounded scanner imports settled UTF-8 files, creates parent
+folders and versions, fences replaced CRDT generations, and refreshes connected
+editors and file explorers. Concurrent editor changes preserve terminal content
+under `terminal-conflicts/`; failed imports retain local files for retry. Shell
+deletions and generated/binary files remain outside this text-import scope.
+See [Terminal execution](../../explanation/terminal-execution.md) for the exact
+limits and lifecycle behavior.
+
+Validation: 448 server unit tests, 52 client unit tests, 67 integration tests,
+and all 128 Chromium tests passed. Client lint/build and the server TypeScript
+build passed. The two new browser scenarios exercise two open editors, shell
+creation and modification, reload, versions, export, and unsaved-edit conflict
+preservation. Integration cases additionally cover final-session flush, retry,
+revoked permissions/sessions, and recreating a file deleted through the editor.
+
+A separate acceptance check against the user's normal local app (ports
+5173/3000, no E2E mode) passed shell creation, live editor updates, shell-exit
+flush, reload, and PostgreSQL persistence with no browser errors. Only its own
+disposable account/workspace was deleted. An early browser run overlapped an
+integration cleanup on the test database; the cleanup invalidated its synthetic
+session. Final integration and browser runs used separate databases.
+
 ## Public launch requirements
 
 These local results establish a release candidate, not a running public service.

@@ -461,7 +461,7 @@ export class DocumentsService {
    * DocumentVersion when the checkpoint differs from the previous column.
    *
    * This is the only writer of `Document.content` for collaborated files
-   * (aside from create, import lineage reset, and version restore). Live
+   * (aside from create, bulk/terminal import lineage reset, and version restore). Live
    * Yjs updates never write the column; Save / export / terminal read the
    * checkpoint.
    */

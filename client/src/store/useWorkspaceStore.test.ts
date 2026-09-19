@@ -161,3 +161,23 @@ describe("workspace session boundaries", () => {
     expect(useWorkspaceStore.getState().activeFileId).toBe("file-b");
   });
 });
+
+describe("external file tree refresh", () => {
+  it("adds terminal files while preserving open unsaved text and collapsed folders", () => {
+    const store = useWorkspaceStore.getState();
+    store.resetWorkspace();
+    store.batchLoadBackend({ files: [{ kind: "folder", id: "src", name: "src", expanded: false, children: [
+      { kind: "file", id: "original", name: "main.py", language: "python" },
+    ] }], editorContent: { original: "saved" }, defaultFileId: "original" });
+    store.updateFileContent("original", "unsaved editor text");
+    useWorkspaceStore.getState().refreshBackendTree([{ kind: "folder", id: "src", name: "src", expanded: true, children: [
+      { kind: "file", id: "original", name: "main.py", language: "python" },
+      { kind: "file", id: "terminal", name: "new.py", language: "python" },
+    ] }], { original: "saved", terminal: "from terminal" });
+    const state = useWorkspaceStore.getState();
+    expect(state.editorContentByFileId).toEqual({ original: "unsaved editor text", terminal: "from terminal" });
+    expect(state.activeFileId).toBe("original");
+    expect(state.openTabs[0]?.dirty).toBe(true);
+    expect(state.files[0]).toMatchObject({ expanded: false });
+  });
+});
