@@ -127,7 +127,7 @@ export function syncRemoteSelectionStyles(awareness: Awareness): void {
   border-radius: 3px 3px 3px 0;
   background-color: ${user.color};
   color: #ffffff;
-  font-family: Geist, ui-sans-serif, system-ui, sans-serif;
+  font-family: Roboto, Arial, Helvetica, sans-serif;
   font-size: 10px;
   font-weight: 600;
   line-height: 14px;

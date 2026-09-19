@@ -1,3 +1,4 @@
+import { CODE_FONT_FAMILY } from "../constants/typography";
 import { useEffect, useRef, useCallback } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -122,7 +123,7 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
         cursorBlink: true,
         cursorStyle: "bar",
         cursorWidth: 2,
-        fontFamily: '"JetBrains Mono", Menlo, Monaco, "Courier New", monospace',
+        fontFamily: CODE_FONT_FAMILY,
         fontSize: 14,
         lineHeight: 1.4,
         letterSpacing: 0,

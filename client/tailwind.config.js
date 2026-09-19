@@ -34,8 +34,8 @@ export default {
         "on-error": "var(--color-on-error)",
       },
       fontFamily: {
-        sans: ["Geist", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["JetBrains Mono", "ui-monospace", "monospace"],
+        sans: ["Roboto", "Arial", "Helvetica", "sans-serif"],
+        mono: ["Menlo", "Monaco", "Consolas", "Courier New", "monospace"],
       },
       fontSize: {
         "display-lg": ["32px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" }],

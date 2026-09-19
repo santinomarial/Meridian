@@ -42,7 +42,7 @@ function Badge({
         backgroundColor: bg,
         color: fg,
         fontSize,
-        fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif",
+        fontFamily: "Roboto, Arial, Helvetica, sans-serif",
       }}
       aria-hidden
     >
@@ -110,7 +110,7 @@ export function FileLanguageIcon({
             fill="#fff"
             fontSize="7"
             fontWeight="700"
-            fontFamily="Geist, ui-sans-serif, system-ui, sans-serif"
+            fontFamily="Roboto, Arial, Helvetica, sans-serif"
           >
             Go
           </text>

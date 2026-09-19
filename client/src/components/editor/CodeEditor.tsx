@@ -1,3 +1,4 @@
+import { CODE_FONT_FAMILY } from "../../constants/typography";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import "../../lib/monacoLoader";
@@ -38,7 +39,7 @@ const EDITOR_OPTIONS: editor.IStandaloneEditorConstructionOptions = {
   minimap: { enabled: false },
   tabSize: 4,
   insertSpaces: true,
-  fontFamily: "JetBrains Mono, ui-monospace, monospace",
+  fontFamily: CODE_FONT_FAMILY,
   fontSize: 14,
   lineHeight: 22,
   smoothScrolling: true,

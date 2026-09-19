@@ -1,3 +1,5 @@
+@import "./fonts.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -86,7 +88,7 @@
   body {
     background-color: var(--color-surface-container-lowest);
     color: var(--color-on-surface);
-    font-family: Geist, ui-sans-serif, system-ui, sans-serif;
+    font-family: Roboto, Arial, Helvetica, sans-serif;
     font-feature-settings: "tnum" 0;
   }
 

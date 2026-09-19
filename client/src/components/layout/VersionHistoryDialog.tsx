@@ -1,3 +1,4 @@
+import { CODE_FONT_FAMILY } from "../../constants/typography";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
@@ -25,7 +26,7 @@ const DIFF_OPTIONS: editor.IDiffEditorConstructionOptions = {
   readOnly: true,
   renderSideBySide: true,
   minimap: { enabled: false },
-  fontFamily: "JetBrains Mono, ui-monospace, monospace",
+  fontFamily: CODE_FONT_FAMILY,
   fontSize: 12,
   lineHeight: 18,
   automaticLayout: true,
