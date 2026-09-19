@@ -28,6 +28,9 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true'),
+  TERMINAL_BACKEND: z.enum(['host', 'isolated']).default('host'),
+  TERMINAL_RUNNER_URL: z.url().optional(),
+  TERMINAL_RUNNER_TOKEN: z.string().min(32).optional(),
   // When true or a hop count, Express trusts X-Forwarded-* for client IP
   // (needed for accurate per-IP throttling behind a reverse proxy).
   TRUST_PROXY: z
@@ -87,13 +90,23 @@ const envSchema = z.object({
       message: 'E2E_TEST cannot be enabled in production',
     });
   }
-  if (env.NODE_ENV === 'production' && env.ENABLE_TERMINAL) {
+  if (env.NODE_ENV === 'production' && env.ENABLE_TERMINAL && env.TERMINAL_BACKEND !== 'isolated') {
     ctx.addIssue({
       code: 'custom',
       path: ['ENABLE_TERMINAL'],
       message:
         'ENABLE_TERMINAL cannot be enabled in production without an isolated runner (see docs)',
     });
+  }
+  if (env.ENABLE_TERMINAL && env.TERMINAL_BACKEND === 'isolated') {
+    if (!env.TERMINAL_RUNNER_URL || !env.TERMINAL_RUNNER_TOKEN) {
+      ctx.addIssue({ code: 'custom', path: ['TERMINAL_RUNNER_URL'], message: 'Isolated terminals require TERMINAL_RUNNER_URL and TERMINAL_RUNNER_TOKEN' });
+    } else {
+      const url = new URL(env.TERMINAL_RUNNER_URL);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+        ctx.addIssue({ code: 'custom', path: ['TERMINAL_RUNNER_URL'], message: 'Runner URL must be an HTTP(S) origin without credentials, path, or query' });
+      }
+    }
   }
   if (
     env.NODE_ENV === 'production' &&

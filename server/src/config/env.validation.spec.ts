@@ -64,6 +64,14 @@ describe('environment validation', () => {
     ).toThrow(/ENABLE_TERMINAL cannot be enabled in production/);
   });
 
+  it('requires worker credentials for isolated terminals and accepts the production backend', () => {
+    expect(() => validateEnv({ ...REQUIRED_ENV, ENABLE_TERMINAL: 'true', TERMINAL_BACKEND: 'isolated' })).toThrow(/Isolated terminals require/);
+    const env = validateEnv({ ...REQUIRED_ENV, NODE_ENV: 'production', ENABLE_TERMINAL: 'true', TERMINAL_BACKEND: 'isolated',
+      TERMINAL_RUNNER_URL: 'http://runner:4000', TERMINAL_RUNNER_TOKEN: 'x'.repeat(32), RESEND_API_KEY: 're_key', MAIL_FROM: 'Meridian <accounts@example.com>' });
+    expect(env.TERMINAL_BACKEND).toBe('isolated');
+    expect(() => validateEnv({ ...REQUIRED_ENV, ENABLE_TERMINAL: 'true', TERMINAL_BACKEND: 'isolated', TERMINAL_RUNNER_URL: 'http://user:password@runner/path', TERMINAL_RUNNER_TOKEN: 'x'.repeat(32) })).toThrow(/Runner URL/);
+  });
+
   it('parses TRUST_PROXY hop counts', () => {
     expect(
       validateEnv({ ...REQUIRED_ENV, TRUST_PROXY: '1' }).TRUST_PROXY,

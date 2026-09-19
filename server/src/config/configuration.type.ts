@@ -16,6 +16,9 @@ export interface AppConfig {
   wsMessageLimitPerSecond: number;
   wsMaxYjsUpdateBytes: number;
   enableTerminal: boolean;
+  terminalBackend?: 'host' | 'isolated';
+  terminalRunnerUrl?: string;
+  terminalRunnerToken?: string;
   /** Express trust proxy setting (false, true, or hop count). */
   trustProxy: boolean | number;
   /**

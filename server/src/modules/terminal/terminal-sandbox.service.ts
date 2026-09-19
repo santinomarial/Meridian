@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { randomUUID } from 'crypto';
@@ -13,6 +13,7 @@ import { RedisService } from '../../redis/redis.service';
 import { assertSafeRelPath, safeJoin } from './path-safety';
 import type { AppConfig } from '../../config/configuration.type';
 import { readTerminalFiles, type TerminalFileImporter, type TerminalFileResult } from './terminal-files';
+import { IsolatedTerminalService } from './isolated-terminal.service';
 import { APP_CONFIG_KEY } from '../../config/app.config';
 
 // Allowed characters in workspace/user ids used as path segments.
@@ -107,8 +108,12 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
 
   /** Also used by integration tests to await a deterministic scan. */
   async syncTerminalFiles(force = false): Promise<void> {
-    for (const root of new Set([...this.active.values()].map((s) => s.root))) {
-      try { await this.flushRoot(root, force); }
+    for (const root of new Set([...this.active.values(), ...this.lastLeases.values()].map((s) => s.root))) {
+      try {
+        if (this.cleanupTimers.has(root)) continue;
+        if (!this.hasRootLease(root)) await this.cleanupRoot(root);
+        else await this.flushRoot(root, force);
+      }
       catch (err) {
         this.logger.warn({ root, err }, 'Terminal file import failed; files retained for retry');
         const lease = this.lastLeases.get(root);
@@ -125,7 +130,7 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
       const baseline = this.baselines.get(root);
       if (!lease || !baseline) return [];
       workspaceId = lease.workspaceId;
-      const files = await readTerminalFiles(root);
+      const files = await this.readFiles(root);
       const previous = this.observations.get(root);
       this.observations.set(root, files);
       const changes = [...files].filter(([name, content]) =>
@@ -153,6 +158,10 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private readFiles(root: string): Promise<Map<string, string>> {
+    return this.runner?.enabled ? this.runner.files(root) : readTerminalFiles(root);
+  }
+
   private async hasPendingFile(root: string, relPath: string): Promise<boolean> {
     if (!this.importer) return false;
     try {
@@ -172,6 +181,7 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
     configService: ConfigService,
     @InjectPinoLogger(TerminalSandboxService.name)
     private readonly logger: PinoLogger,
+    @Optional() private readonly runner?: IsolatedTerminalService,
   ) {
     this.enableTerminal = configService.getOrThrow<AppConfig>(APP_CONFIG_KEY).enableTerminal;
   }
@@ -206,7 +216,7 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
    * other's live projection.
    */
   async materialize(socketId: string, workspaceId: string, userId: string): Promise<string> {
-    const root = this.getSandboxDir(workspaceId, userId);
+    const root = this.getSandboxDir(workspaceId, this.runner?.enabled ? `${userId}-${randomUUID()}` : userId);
     if (this.active.has(socketId) || this.reservations.has(socketId)) {
       throw new Error(`Terminal sandbox already reserved for socket ${socketId}`);
     }
@@ -248,7 +258,7 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     // Failed imports retain their files for retry in a later local session.
     if (this.baselines.has(root)) return;
-    await this.recreateSandboxRoot(root);
+    if (!this.runner?.enabled) await this.recreateSandboxRoot(root);
     const baseline = new Map<string, string>();
     this.baselines.set(root, baseline);
 
@@ -257,6 +267,19 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
       orderBy: { path: 'asc' },
       select: { type: true, path: true, content: true },
     });
+
+    if (this.runner?.enabled) {
+      const files: Record<string, string> = Object.create(null) as Record<string, string>;
+      const folders: string[] = [];
+      for (const doc of docs) {
+        assertSafeRelPath(doc.path);
+        if (doc.type === DocumentType.FOLDER) folders.push(doc.path);
+        else { files[doc.path] = doc.content ?? ''; baseline.set(doc.path, doc.content ?? ''); }
+      }
+      try { await this.runner.create(root, workspaceId, userId, files, folders); }
+      catch (error) { this.baselines.delete(root); throw error; }
+      return;
+    }
 
     for (const doc of docs) {
       try {
@@ -441,7 +464,8 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
     await this.runRootOperation(root, async () => {
       // A new session may have reserved the root while cleanup was queued.
       if (this.hasRootLease(root)) return;
-      await fs.rm(root, { recursive: true, force: true });
+      if (this.runner?.enabled) await this.runner.destroy(root);
+      else await fs.rm(root, { recursive: true, force: true });
       this.baselines.delete(root);
       this.observations.delete(root);
       this.lastLeases.delete(root);
@@ -540,6 +564,11 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
       try {
         const applied = await this.runRootOperation(root, async () => {
           if (!this.hasRootLease(root)) return false;
+          if (this.runner?.enabled) {
+            const applied = await this.runner.apply(root, { op: 'write', path: relPath, content, expected: this.baselines.get(root)?.get(relPath) ?? null });
+            if (applied) this.baselines.get(root)?.set(relPath, content);
+            return applied;
+          }
           if (await this.hasPendingFile(root, relPath)) return false;
           const target = safeJoin(root, relPath);
           await fs.mkdir(path.dirname(target), { recursive: true });
@@ -566,6 +595,7 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
       try {
         const applied = await this.runRootOperation(root, async () => {
           if (!this.hasRootLease(root)) return false;
+          if (this.runner?.enabled) return this.runner.apply(root, { op: 'mkdir', path: relPath });
           await fs.mkdir(safeJoin(root, relPath), { recursive: true });
           return true;
         });
@@ -589,11 +619,16 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
         const applied = await this.runRootOperation(root, async () => {
           if (!this.hasRootLease(root)) return false;
           if (this.importer) {
-            const files = await readTerminalFiles(root);
+            const files = await this.readFiles(root);
             if ([...files].some(([name, content]) => (name === relPath || name.startsWith(relPath + '/')) && content !== this.baselines.get(root)?.get(name))) return false;
           }
-          const target = safeJoin(root, relPath);
-          await fs.rm(target, { recursive: true, force: true });
+          if (this.runner?.enabled) {
+            const expected = Object.fromEntries([...this.baselines.get(root) ?? []].filter(([name]) => name === relPath || name.startsWith(relPath + '/')));
+            if (!await this.runner.apply(root, { op: 'delete', path: relPath, expected })) return false;
+          } else {
+            const target = safeJoin(root, relPath);
+            await fs.rm(target, { recursive: true, force: true });
+          }
           const baseline = this.baselines.get(root);
           if (baseline) for (const name of [...baseline.keys()]) {
             if (name === relPath || name.startsWith(relPath + '/')) baseline.delete(name);
@@ -620,13 +655,18 @@ export class TerminalSandboxService implements OnModuleInit, OnModuleDestroy {
         const applied = await this.runRootOperation(root, async () => {
           if (!this.hasRootLease(root)) return false;
           if (this.importer) {
-            const files = await readTerminalFiles(root);
+            const files = await this.readFiles(root);
             if ([...files].some(([name, content]) => (name === oldPath || name.startsWith(oldPath + '/') || name === newPath || name.startsWith(newPath + '/')) && content !== this.baselines.get(root)?.get(name))) return false;
           }
-          const from = safeJoin(root, oldPath);
-          const to = safeJoin(root, newPath);
-          await fs.mkdir(path.dirname(to), { recursive: true });
-          await fs.rename(from, to);
+          if (this.runner?.enabled) {
+            const expected = Object.fromEntries([...this.baselines.get(root) ?? []].filter(([name]) => name === oldPath || name.startsWith(oldPath + '/')));
+            if (!await this.runner.apply(root, { op: 'rename', path: oldPath, to: newPath, expected })) return false;
+          } else {
+            const from = safeJoin(root, oldPath);
+            const to = safeJoin(root, newPath);
+            await fs.mkdir(path.dirname(to), { recursive: true });
+            await fs.rename(from, to);
+          }
           const baseline = this.baselines.get(root);
           if (baseline) for (const [name, content] of [...baseline]) {
             if (name === oldPath || name.startsWith(oldPath + '/')) {

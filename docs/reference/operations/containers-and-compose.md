@@ -146,7 +146,9 @@ Optional/defaulted Compose inputs:
 
 The API service fixes `NODE_ENV=production`, `PORT=3000`,
 `REDIS_REQUIRED=true`, `TRUST_PROXY=1`, `METRICS_ENABLED=true`, and
-`ENABLE_TERMINAL=false`. It also fixes `EMAIL_VERIFICATION_REQUIRED=true`;
+`ENABLE_TERMINAL=false` in the base topology. The optional
+[isolated terminal overlay](../../how-to/run-isolated-terminals.md) enables the
+gVisor worker backend after host qualification. The base topology also fixes `EMAIL_VERIFICATION_REQUIRED=true`;
 production configuration validation rejects attempts to disable it.
 
 ## Caddy routing

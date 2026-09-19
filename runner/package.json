@@ -1,0 +1,14 @@
+{
+  "name": "meridian-runner",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.cjs",
+    "test": "node --test *.test.cjs",
+    "postinstall": "node scripts/fix-node-pty-helper.cjs",
+    "test:integration": "node smoke.cjs"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0"
+  }
+}

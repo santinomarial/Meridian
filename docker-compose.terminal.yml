@@ -1,0 +1,44 @@
+# Opt-in production terminal. Requires Linux Docker with the runsc runtime.
+# First build the workload image:
+#   docker build -f runner/Dockerfile.sandbox -t meridian-sandbox:local runner
+# Then combine this file with docker-compose.prod.yml. Never publish runner's port.
+services:
+  api:
+    environment:
+      ENABLE_TERMINAL: "true"
+      TERMINAL_BACKEND: isolated
+      TERMINAL_RUNNER_URL: http://runner:4000
+      TERMINAL_RUNNER_TOKEN: ${RUNNER_TOKEN:?set a random RUNNER_TOKEN of at least 32 characters}
+    depends_on:
+      runner:
+        condition: service_healthy
+
+  runner:
+    build: ./runner
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      RUNNER_TOKEN: ${RUNNER_TOKEN:?set RUNNER_TOKEN}
+      RUNNER_NAMESPACE: ${RUNNER_NAMESPACE:-meridian-production}
+      RUNNER_IMAGE: ${RUNNER_IMAGE:-meridian-sandbox:local}
+      PORT: 4000
+    # Only this trusted broker controls Docker; API and workload containers do not.
+    # The broker's socket grants host administration: keep it private and deploy
+    # it on a dedicated execution host for stronger infrastructure separation.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "4000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health',{headers:{authorization:'Bearer '+process.env.RUNNER_TOKEN},signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

@@ -111,6 +111,19 @@ describe('TerminalService', () => {
   // ── createSession ──────────────────────────────────────────────────────────
 
   describe('createSession', () => {
+    it('cancels an in-flight allocation on disconnect without spawning a shell', async () => {
+      let finish!: (root: string) => void;
+      sandbox.materialize.mockImplementation(() => new Promise<string>(resolve => { finish = resolve; }));
+      const pending = service.createSession('pending', 'user-1', 'ws-1', makeSocket().socket);
+      await expect(service.createSession('pending', 'user-1', 'ws-1', makeSocket().socket)).rejects.toThrow('already starting');
+      service.killSession('pending');
+      finish(SANDBOX_DIR);
+      await expect(pending).rejects.toThrow('cancelled');
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(sandbox.unregister).toHaveBeenCalledWith('pending');
+      expect(service.sessionCount()).toBe(0);
+    });
+
     it('materializes the workspace, spawns a PTY in the sandbox, and registers it', async () => {
       const { pty } = makeFakePty();
       spawnMock.mockReturnValue(pty);

@@ -118,8 +118,9 @@ export class TerminalGateway
   }
 
   handleDisconnect(client: Socket): void {
-    if (this.terminalService.hasSession(client.id)) {
-      this.terminalService.killSession(client.id);
+    const hadSession = this.terminalService.hasSession(client.id);
+    this.terminalService.killSession(client.id);
+    if (hadSession) {
       this.logger.info({ socketId: client.id }, 'Terminal session cleaned up on disconnect');
     }
     this.rateLimiter.clear(this.rateLimitKey(client.id));
@@ -179,10 +180,15 @@ export class TerminalGateway
 
     try {
       await this.terminalService.createSession(client.id, user.id, dto.workspaceId, client);
+      if (client.connected === false) { this.terminalService.killSession(client.id); return; }
+      const latestRole = await this.currentWorkspaceRole(client, dto.workspaceId, true);
+      if (latestRole === undefined || latestRole === null || latestRole === WorkspaceRole.VIEWER) {
+        this.terminalService.killSession(client.id); return;
+      }
       this.terminalClients.set(client.id, client);
       client.emit('terminal:status', { status: 'ready' });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to start terminal';
+      const message = 'Unable to start terminal. Please retry or close another terminal.';
       this.logger.error({ err, socketId: client.id }, 'Terminal session creation failed');
       client.emit('terminal:error', { message });
     }
@@ -262,10 +268,15 @@ export class TerminalGateway
     if (!this.terminalService.hasSession(client.id)) {
       try {
         await this.terminalService.createSession(client.id, user.id, dto.workspaceId, client);
+        if (client.connected === false) { this.terminalService.killSession(client.id); return; }
+        const latestRole = await this.currentWorkspaceRole(client, dto.workspaceId, true);
+        if (latestRole === undefined || latestRole === null || latestRole === WorkspaceRole.VIEWER) {
+          this.terminalService.killSession(client.id); return;
+        }
         this.terminalClients.set(client.id, client);
         client.emit('terminal:status', { status: 'ready' });
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to start terminal';
+        const message = 'Unable to start terminal. Please retry or close another terminal.';
         client.emit('terminal:error', { message });
         return;
       }
@@ -346,8 +357,6 @@ export class TerminalGateway
   handleStop(
     @ConnectedSocket() client: Socket,
   ): void {
-    if (!this.terminalService.hasSession(client.id)) return;
-
     this.terminalService.killSession(client.id);
     this.terminalClients.delete(client.id);
     client.emit('terminal:exit', { code: null });

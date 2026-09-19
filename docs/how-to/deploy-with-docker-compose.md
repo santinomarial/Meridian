@@ -51,9 +51,10 @@ Keep `secrets/` out of backups and source control. The committed `.gitignore`
 excludes it. For a different host path, set `ALERTMANAGER_WEBHOOK_URL_FILE`.
 
 Leave `API_UPSTREAMS=api:3000`, `VITE_API_URL`, and `VITE_SOCKET_URL` at their
-same-origin defaults. Production must keep `ENABLE_TERMINAL=false` and
-`E2E_TEST=false`; the former is forced by Compose and either true value is
-rejected by production validation. Compose also forces email verification on;
+same-origin defaults. The base Compose deployment keeps terminals disabled.
+For public execution, add the [isolated terminal overlay](run-isolated-terminals.md)
+after qualifying the Linux/gVisor worker. `E2E_TEST` must remain false in production;
+the host terminal backend is rejected. Compose also forces email verification on;
 the API refuses to start without working mail configuration. Swagger is not
 mounted in production.
 

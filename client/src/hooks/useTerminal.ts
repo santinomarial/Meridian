@@ -80,6 +80,9 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
   // The nullable initial value matches the JSX ref lifecycle before mount and
   // after unmount.
   const terminalRef = useRef<HTMLDivElement>(null);
+  const pendingInputRef = useRef<string[]>([]);
+  const pendingCharsRef = useRef(0);
+  const pendingOverflowRef = useRef(false);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
 
@@ -141,7 +144,24 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
 
       // Forward every keystroke to the server PTY's stdin.
       term.onData((data) => {
-        getSocket().emit("terminal:input", { data });
+        const state = useWorkspaceStore.getState();
+        if (!state.terminalEnabled || (state.userRole !== "OWNER" && state.userRole !== "EDITOR")) return;
+        if (state.terminalStatus === "starting") {
+          if (pendingOverflowRef.current) return;
+          if (pendingCharsRef.current + data.length > 16_384) {
+            pendingInputRef.current = [];
+            pendingCharsRef.current = 0;
+            pendingOverflowRef.current = true;
+            term.writeln("\r\n[Meridian] Startup input limit reached. Re-enter your command after connecting.");
+            return;
+          }
+          pendingInputRef.current.push(data);
+          pendingCharsRef.current += data.length;
+        } else if (state.terminalStatus === "ready" || state.terminalStatus === "running") {
+          for (let offset = 0; offset < data.length; offset += 16_384) {
+            getSocket().emit("terminal:input", { data: data.slice(offset, offset + 16_384) });
+          }
+        }
       });
 
       xtermRef.current = term;
@@ -184,7 +204,14 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
       xtermRef.current?.write(data);
     };
 
+    const clearPending = (): void => {
+      pendingInputRef.current = [];
+      pendingCharsRef.current = 0;
+      pendingOverflowRef.current = false;
+    };
+    const onDisconnect = (): void => { clearPending(); setTerminalStatus("idle"); };
     const onError = ({ message }: ErrorPayload): void => {
+      clearPending();
       xtermRef.current?.writeln(`\r\n\x1b[31m[Error] ${message}\x1b[0m`);
       setTerminalStatus(
         /terminal (?:feature )?is disabled/i.test(message) ? "disabled" : "error",
@@ -192,6 +219,7 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
     };
 
     const onExit = ({ code }: ExitPayload): void => {
+      clearPending();
       const label = code !== null ? `code ${code}` : "signal";
       xtermRef.current?.writeln(`\r\n\x1b[33m[Process exited: ${label}]\x1b[0m`);
       setTerminalStatus("idle");
@@ -199,7 +227,11 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
 
     const onStatus = ({ status }: StatusPayload): void => {
       setTerminalStatus(status === "running" ? "running" : "ready");
-      // The shell is live — make sure keystrokes land in it.
+      fit();
+      // Preserve command/Enter ordering for input typed during allocation.
+      const buffered = pendingInputRef.current.join("");
+      clearPending();
+      if (buffered) socket.emit("terminal:input", { data: buffered });
       focus();
     };
 
@@ -207,6 +239,7 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
       setTerminalSyncStatus(status);
     };
 
+    socket.on("disconnect", onDisconnect);
     socket.on("terminal:output", onOutput);
     socket.on("terminal:error", onError);
     socket.on("terminal:exit", onExit);
@@ -214,21 +247,33 @@ export function useTerminal(workspaceId: string | null): UseTerminalReturn {
     socket.on("terminal:sync", onSync);
 
     return (): void => {
+      clearPending();
+      setTerminalStatus("idle");
+      if (socket.connected) socket.emit("terminal:stop");
+      socket.off("disconnect", onDisconnect);
       socket.off("terminal:output", onOutput);
       socket.off("terminal:error", onError);
       socket.off("terminal:exit", onExit);
       socket.off("terminal:status", onStatus);
       socket.off("terminal:sync", onSync);
     };
-  }, [workspaceId, setTerminalStatus, setTerminalSyncStatus, focus]);
+  }, [workspaceId, setTerminalStatus, setTerminalSyncStatus, fit, focus]);
 
   const start = useCallback((): void => {
     if (workspaceId === null || !useWorkspaceStore.getState().terminalEnabled) return;
+    if (useWorkspaceStore.getState().terminalStatus === "starting") return;
+    pendingInputRef.current = [];
+    pendingCharsRef.current = 0;
+    pendingOverflowRef.current = false;
+    setTerminalStatus("starting");
     getSocket().emit("terminal:start", { workspaceId });
     focus();
-  }, [workspaceId, focus]);
+  }, [workspaceId, focus, setTerminalStatus]);
 
   const stop = useCallback((): void => {
+    pendingInputRef.current = [];
+    pendingCharsRef.current = 0;
+    pendingOverflowRef.current = false;
     getSocket().emit("terminal:stop");
     setTerminalStatus("idle");
   }, [setTerminalStatus]);

@@ -1,3 +1,4 @@
+import type { IsolatedTerminalService } from './modules/terminal/isolated-terminal.service';
 import { mockDeep } from 'jest-mock-extended';
 import type { ConfigService } from '@nestjs/config';
 import { AppService } from './app.service';
@@ -36,6 +37,14 @@ describe('AppService', () => {
   describe('getReadiness', () => {
     afterEach(() => {
       jest.useRealTimers();
+    });
+
+    it('fails readiness when an enabled execution worker is unavailable', async () => {
+      const { prisma, redis } = makeService();
+      prisma.$queryRaw.mockResolvedValue([] as never);
+      const runner = { enabled: true, health: jest.fn().mockRejectedValue(new Error('unavailable')) } as unknown as IsolatedTerminalService;
+      const service = new AppService(prisma, redis, makeConfig(), runner);
+      expect(await service.getReadiness()).toMatchObject({ status: 'not_ready', dependencies: { terminal: 'error' } });
     });
 
     it('returns ready when postgres is reachable and redis is available + responsive', async () => {

@@ -258,6 +258,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Test worker policy and audit dependencies
+        run: npm ci --prefix runner && npm test --prefix runner && npm audit --prefix runner --omit=dev --audit-level=high
+      - name: Build execution images
+        run: |
+          docker build -t meridian-runner:ci ./runner
+          docker build -f runner/Dockerfile.sandbox -t meridian-sandbox:ci ./runner
+      - name: Exercise local worker transport and workload limits
+        run: |
+          export RUNNER_TOKEN="$(openssl rand -hex 32)"
+          export RUNNER_IMAGE=meridian-sandbox:ci
+          export RUNNER_NAMESPACE=meridian-ci
+          export NODE_ENV=development RUNNER_ALLOW_UNSAFE_LOCAL=true PORT=4400
+          node runner/server.cjs > /tmp/meridian-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS -H "Authorization: Bearer $RUNNER_TOKEN" http://127.0.0.1:4400/health > /dev/null; then break; fi
+            sleep 1
+          done
+          RUNNER_URL=http://127.0.0.1:4400 npm run test:integration --prefix runner
       - name: Build API image
         run: docker build -t meridian-api:ci ./server
       - name: Build migration image
@@ -282,6 +302,18 @@ jobs:
             -v "$PWD/deploy/monitoring:/etc/alertmanager:ro" \
             "${{ env.ALERTMANAGER_IMAGE }}" \
             check-config /etc/alertmanager/alertmanager.yml
+      - name: Trivy execution worker image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: meridian-runner:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Trivy execution sandbox image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: meridian-sandbox:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
       - name: Trivy API image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

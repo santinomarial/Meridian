@@ -84,7 +84,7 @@ export type SaveStatus = "saved" | "saving" | "unsaved" | "error";
 
 export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 
-export type TerminalStatus = "idle" | "ready" | "running" | "error" | "disabled";
+export type TerminalStatus = "starting" | "idle" | "ready" | "running" | "error" | "disabled";
 
 export type TerminalSyncStatus = "synced" | "syncing" | "failed";
 

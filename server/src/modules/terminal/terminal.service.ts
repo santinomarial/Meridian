@@ -1,10 +1,11 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, Optional } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import * as os from 'os';
 import { basename } from 'path';
 import * as pty from 'node-pty';
-import type { IPty, IDisposable } from 'node-pty';
+import type { IDisposable } from 'node-pty';
 import type { Socket } from 'socket.io';
+import { IsolatedTerminalService, type TerminalProcess } from './isolated-terminal.service';
 import { TerminalSandboxService } from './terminal-sandbox.service';
 
 // 30-minute idle timeout; 4-hour absolute lifetime
@@ -17,7 +18,7 @@ const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 
 export interface TerminalSession {
-  pty: IPty;
+  pty: TerminalProcess;
   workspaceId: string;
   userId: string;
   sandboxDir: string;
@@ -35,12 +36,14 @@ export interface CreateSessionOptions {
 @Injectable()
 export class TerminalService implements OnModuleDestroy {
   // socketId → session
+  private readonly starting = new Map<string, { cancelled: boolean; promise: Promise<TerminalSession> }>();
   private readonly sessions = new Map<string, TerminalSession>();
 
   constructor(
     private readonly sandbox: TerminalSandboxService,
     @InjectPinoLogger(TerminalService.name)
     private readonly logger: PinoLogger,
+    @Optional() private readonly runner?: IsolatedTerminalService,
   ) {}
 
   /** The shell to launch — the user's login shell, or a sane default. */
@@ -96,21 +99,35 @@ export class TerminalService implements OnModuleDestroy {
    *
    * Emits terminal:output and terminal:exit to the socket.
    */
-  async createSession(
+  createSession(socketId: string, userId: string, workspaceId: string, socket: Socket, options: CreateSessionOptions = {}): Promise<TerminalSession> {
+    if (process.env['NODE_ENV'] === 'production' && !this.runner?.enabled) {
+      return Promise.reject(new Error('Production terminals require an isolated worker'));
+    }
+    if (this.starting.has(socketId)) return Promise.reject(new Error('Terminal is already starting'));
+    if (this.sessions.has(socketId)) this.killSession(socketId);
+    if (this.starting.size + this.sessions.size >= 32) return Promise.reject(new Error('Terminal capacity reached'));
+    const attempt = { cancelled: false, promise: undefined as unknown as Promise<TerminalSession> };
+    this.starting.set(socketId, attempt);
+    attempt.promise = this.startSession(socketId, userId, workspaceId, socket, options, () => attempt.cancelled)
+      .finally(() => { if (this.starting.get(socketId) === attempt) this.starting.delete(socketId); });
+    return attempt.promise;
+  }
+
+  private async startSession(
     socketId: string,
     userId: string,
     workspaceId: string,
     socket: Socket,
-    options: CreateSessionOptions = {},
+    options: CreateSessionOptions,
+    cancelled: () => boolean,
   ): Promise<TerminalSession> {
-    if (this.sessions.has(socketId)) {
-      this.killSession(socketId);
-    }
+    if (this.sessions.has(socketId)) throw new Error('Terminal session is still closing');
 
     // Project the workspace's DB-backed documents onto disk before spawning so
     // `ls`/`pwd` immediately reflect the editor's files.
     const sandboxDir = await this.sandbox.materialize(socketId, workspaceId, userId);
 
+    if (cancelled()) { await this.sandbox.unregister(socketId); throw new Error('Terminal start cancelled'); }
     const shell = this.resolveShell();
     // Host startup files can override the compact workspace prompt. These
     // shells still detect the PTY and retain interactive line editing.
@@ -118,9 +135,9 @@ export class TerminalService implements OnModuleDestroy {
     const shellArgs = shellName === 'zsh'
       ? ['-f']
       : shellName === 'bash' ? ['--noprofile', '--norc'] : [];
-    let child: IPty;
+    let child: TerminalProcess;
     try {
-      child = pty.spawn(shell, shellArgs, {
+      child = this.runner?.enabled ? await this.runner.spawn(sandboxDir) : pty.spawn(shell, shellArgs, {
         name: 'xterm-256color',
         cols: options.cols ?? DEFAULT_COLS,
         rows: options.rows ?? DEFAULT_ROWS,
@@ -130,6 +147,12 @@ export class TerminalService implements OnModuleDestroy {
     } catch (err) {
       await this.sandbox.unregister(socketId);
       throw err;
+    }
+
+    if (cancelled()) {
+      child.kill('SIGKILL');
+      await this.sandbox.unregister(socketId);
+      throw new Error('Terminal start cancelled');
     }
 
     const resetIdle = (): void => {
@@ -241,6 +264,8 @@ export class TerminalService implements OnModuleDestroy {
   }
 
   killSession(socketId: string): void {
+    const pending = this.starting.get(socketId);
+    if (pending) pending.cancelled = true;
     const released = this.releaseSession(socketId, KILL_CLEANUP_DELAY_MS);
     if (!released) return;
     const { session } = released;
@@ -260,6 +285,8 @@ export class TerminalService implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    for (const attempt of this.starting.values()) attempt.cancelled = true;
+    await Promise.allSettled([...this.starting.values()].map(attempt => attempt.promise));
     const cleanups: Promise<void>[] = [];
     for (const socketId of this.sessions.keys()) {
       const released = this.releaseSession(socketId);

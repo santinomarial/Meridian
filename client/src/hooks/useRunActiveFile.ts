@@ -21,19 +21,23 @@ export interface UseRunActiveFileReturn {
 }
 
 /** Waits until the terminal session is ready (or a short timeout elapses). */
-function waitForTerminalReady(timeoutMs = 5_000): Promise<void> {
+function waitForTerminalReady(timeoutMs = 25_000): Promise<boolean> {
   const ready = (status: string): boolean => status === "ready" || status === "running";
-  if (ready(useWorkspaceStore.getState().terminalStatus)) return Promise.resolve();
+  if (ready(useWorkspaceStore.getState().terminalStatus)) return Promise.resolve(true);
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       unsub();
-      resolve();
+      resolve(false);
     }, timeoutMs);
     const unsub = useWorkspaceStore.subscribe((state) => {
       if (ready(state.terminalStatus)) {
         clearTimeout(timer);
         unsub();
-        resolve();
+        resolve(true);
+      } else if (state.terminalStatus === "error" || state.terminalStatus === "disabled") {
+        clearTimeout(timer);
+        unsub();
+        resolve(false);
       }
     });
   });
@@ -104,10 +108,19 @@ export function useRunActiveFile(): UseRunActiveFileReturn {
 
     // 2. Make sure the terminal panel is open (this auto-starts a session).
     if (!state.isTerminalOpen) setTerminalOpen(true);
+    else if (state.terminalStatus === "idle" || state.terminalStatus === "error") {
+      useWorkspaceStore.getState().setTerminalStatus("starting");
+      getSocket().emit("terminal:start", { workspaceId: wsId });
+    }
 
-    // 3. Wait for the session to be ready (best-effort), then run. The backend
-    //    also starts a session on demand, so a timeout here is non-fatal.
-    await waitForTerminalReady();
+    // A worker may take time to allocate. Never dispatch into a pending or
+    // different workspace session when the user navigates during startup.
+    if (!await waitForTerminalReady()) {
+      addNotification({ icon: "error", text: "Terminal did not become ready. Reconnect it and run the file again." });
+      return;
+    }
+    const current = useWorkspaceStore.getState();
+    if (current.workspaceId !== wsId || current.currentUser?.id !== state.currentUser?.id) return;
     getSocket().emit("terminal:run-file", { workspaceId: wsId, documentId: id });
 
     addNotification({ icon: "play_arrow", text: `Running ${tab?.name ?? "file"}` });

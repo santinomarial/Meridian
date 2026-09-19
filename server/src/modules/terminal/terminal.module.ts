@@ -1,3 +1,4 @@
+import { IsolatedTerminalService } from './isolated-terminal.service';
 import { Module } from '@nestjs/common';
 import { WorkspacesModule } from '../../workspaces/workspaces.module';
 import { TerminalGateway } from './terminal.gateway';
@@ -9,6 +10,7 @@ import { WsRateLimiter } from '../realtime/ws-rate-limiter.service';
 @Module({
   imports: [WorkspacesModule, RealtimeAuthorizationModule],
   providers: [
+    IsolatedTerminalService,
     TerminalGateway,
     TerminalService,
     TerminalSandboxService,
@@ -18,6 +20,6 @@ import { WsRateLimiter } from '../realtime/ws-rate-limiter.service';
   ],
   // TerminalSandboxService is exported so the documents/realtime layers can
   // project DB mutations onto active terminal sandboxes (best-effort sync).
-  exports: [TerminalSandboxService, TerminalService],
+  exports: [TerminalSandboxService, TerminalService, IsolatedTerminalService],
 })
 export class TerminalModule {}

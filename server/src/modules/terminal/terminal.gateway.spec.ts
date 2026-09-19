@@ -227,7 +227,7 @@ describe('TerminalGateway', () => {
 
       await gateway.handleStart(dto, socket);
 
-      expect(emitted).toContainEqual(['terminal:error', { message: 'spawn failed' }]);
+      expect(emitted).toContainEqual(['terminal:error', { message: 'Unable to start terminal. Please retry or close another terminal.' }]);
     });
   });
 
@@ -361,15 +361,15 @@ describe('TerminalGateway', () => {
   // ── terminal:stop ──────────────────────────────────────────────────────────
 
   describe('handleStop', () => {
-    it('does nothing when no session exists', () => {
+    it('cancels pending startup even when no session exists', () => {
       const { gateway, terminalService } = makeGateway(true);
       terminalService.hasSession.mockReturnValue(false);
       const { socket, emitted } = makeSocket();
 
       gateway.handleStop(socket);
 
-      expect(terminalService.killSession).not.toHaveBeenCalled();
-      expect(emitted).toHaveLength(0);
+      expect(terminalService.killSession).toHaveBeenCalledWith('socket-1');
+      expect(emitted).toContainEqual(['terminal:exit', { code: null }]);
     });
 
     it('kills the session and emits terminal:exit', () => {
@@ -405,7 +405,7 @@ describe('TerminalGateway', () => {
       const { socket } = makeSocket();
 
       expect(() => gateway.handleDisconnect(socket)).not.toThrow();
-      expect(terminalService.killSession).not.toHaveBeenCalled();
+      expect(terminalService.killSession).toHaveBeenCalledWith('socket-1');
     });
   });
 

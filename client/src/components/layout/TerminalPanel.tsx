@@ -169,7 +169,7 @@ export function TerminalPanel() {
             </span>
           ) : (
             <>
-              {!isRunning ? (
+              {!isRunning && terminalStatus !== "starting" ? (
                 <IconButton onClick={start} label="Start terminal" icon="play_arrow" />
               ) : (
                 <IconButton onClick={stop} label="Stop terminal" icon="stop" />

@@ -56,9 +56,12 @@ test("terminal stays usable across mobile resizing and theme changes", async ({ 
       }
 
       await page.getByTestId("terminal-xterm").click();
-      await page.keyboard.insertText("echo $MERIDIAN_LAYOUT_CHECK");
+      const marker = `layout-${size.width}`;
+      // The assignment echo also contains "alive". Wait for a unique evaluated
+      // result so clearing cannot race an as-yet unprocessed remote command.
+      await page.keyboard.insertText(`printf '${marker}:%s\\n' "$MERIDIAN_LAYOUT_CHECK"`);
       await page.keyboard.press("Enter");
-      await expect(rows).toContainText("alive");
+      await expect(rows).toContainText(`${marker}:alive`);
       await page.getByRole("button", { name: "Clear terminal", exact: true }).click();
       await expect(rows).not.toContainText("alive");
     }

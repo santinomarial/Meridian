@@ -1,13 +1,14 @@
 # Terminal execution
 
-The terminal is an optional Socket.IO feature that starts a host-backed
-`node-pty` shell. It runs saved workspace files near the API and automatically
-saves new and edited terminal text files back into the workspace. It is not a
-browser sandbox or container runner.
+The terminal supports a development-only host PTY backend and a separate isolated
+worker backend. Both import settled text changes back into saved documents.
+Production rejects the host backend and requires an authenticated worker using
+gVisor. See [isolated terminal setup](../how-to/run-isolated-terminals.md) for
+resource limits, deployment requirements, and remaining host qualification.
 
-Production environment validation rejects `ENABLE_TERMINAL=true`. In
-non-production it is disabled by default and still requires deliberate host
-isolation.
+The worker receives files through bounded JSON operations; no API directories or
+credentials are mounted into workloads. Its file helper runs inside the sandbox.
+The host implementation described below remains available for trusted local work.
 
 ## Projection model
 

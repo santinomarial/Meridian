@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { IsolatedTerminalService } from './modules/terminal/isolated-terminal.service';
+import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from './prisma/prisma.service';
 import { RedisService } from './redis/redis.service';
@@ -10,6 +11,7 @@ export interface ReadinessResponse {
   dependencies: {
     postgres: 'ok' | 'error';
     redis: 'ok' | 'error' | 'disabled';
+    terminal?: 'ok' | 'error';
   };
   timestamp: string;
 }
@@ -22,6 +24,7 @@ export class AppService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     configService: ConfigService,
+    @Optional() private readonly runner?: IsolatedTerminalService,
   ) {
     this.redisRequired =
       configService.getOrThrow<AppConfig>(APP_CONFIG_KEY).redisRequired;
@@ -42,18 +45,19 @@ export class AppService {
   }
 
   async getReadiness(): Promise<ReadinessResponse> {
-    const [postgres, redis] = await Promise.all([
+    const [postgres, redis, terminal] = await Promise.all([
       this.checkPostgres(),
       this.checkRedis(),
+      this.runner?.enabled ? this.runner.health().then(() => 'ok' as const, () => 'error' as const) : Promise.resolve(undefined),
     ]);
 
     const redisBlocking =
       this.redisRequired && redis !== 'ok';
     const status =
-      postgres === 'ok' && !redisBlocking ? 'ready' : 'not_ready';
+      postgres === 'ok' && !redisBlocking && terminal !== 'error' ? 'ready' : 'not_ready';
     return {
       status,
-      dependencies: { postgres, redis },
+      dependencies: { postgres, redis, ...(terminal ? { terminal } : {}) },
       timestamp: new Date().toISOString(),
     };
   }

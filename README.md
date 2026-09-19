@@ -18,7 +18,7 @@ export, and a production-oriented NestJS backend.
   coordination, structured logs, health checks, and Prometheus metrics.
 - A supported single-server production stack with Caddy TLS, private data
   services, Alertmanager paging, and encrypted off-host backup hooks.
-- An optional host-backed terminal for isolated non-production development.
+- An optional isolated execution worker with bidirectional terminal text-file saving.
   Production configuration rejects this feature because it is not a sandbox.
 
 ## Architecture
@@ -137,8 +137,8 @@ before changing the supported topology.
 
 ## Important boundaries
 
-- The integrated terminal is intentionally unavailable in production and does
-  not provide workload isolation in development.
+- Public terminal execution requires the [isolated worker](docs/how-to/run-isolated-terminals.md)
+  and a qualified Linux/gVisor host. The host backend remains development-only.
 - Browser authentication is designed for a same-site frontend and API. A
   cross-site deployment needs a deliberate cookie, CORS, CSRF, and TLS review.
 - HTTP and socket rate limits are process-local; authoritative abuse controls
