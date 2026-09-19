@@ -197,6 +197,8 @@ export function useFileOperations() {
 
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const backendStatus = useWorkspaceStore((s) => s.backendStatus);
+  const userId = useWorkspaceStore((s) => s.currentUser?.id);
+  const loadEpoch = useWorkspaceStore((s) => s.workspaceLoadEpoch);
   const addFileNode = useWorkspaceStore((s) => s.addFileNode);
   const addFolderNode = useWorkspaceStore((s) => s.addFolderNode);
   const importFiles = useWorkspaceStore((s) => s.importFiles);
@@ -206,6 +208,16 @@ export function useFileOperations() {
   const setSaveStatus = useWorkspaceStore((s) => s.setSaveStatus);
 
   const isBackendAvailable = backendStatus === "available" && workspaceId !== null;
+
+  // Requests may finish after sign-out, navigation, or a workspace reload.
+  // Keep their results in the workspace/account that initiated them.
+  const isCurrentWorkspace = useCallback(() => {
+    const current = useWorkspaceStore.getState();
+    return current.workspaceId === workspaceId &&
+      current.currentUser?.id === userId &&
+      current.workspaceLoadEpoch === loadEpoch &&
+      current.backendStatus === backendStatus;
+  }, [workspaceId, userId, loadEpoch, backendStatus]);
 
   // ── Create new file ────────────────────────────────────────────────────────
   const createFile = useCallback(
@@ -244,6 +256,7 @@ export function useFileOperations() {
                 { type: "FILE", name, path, language, content },
               ],
             });
+            if (!isCurrentWorkspace()) return {};
             fileId = created.find((doc) => doc.path === path)?.id ?? fileId;
 
             const entry: FileEntry = { id: fileId, path, name, language, content };
@@ -258,6 +271,7 @@ export function useFileOperations() {
               language,
               content,
             });
+            if (!isCurrentWorkspace()) return {};
             fileId = doc.id;
             addFileNode({ kind: "file", id: fileId, name, language }, content);
           }
@@ -286,6 +300,7 @@ export function useFileOperations() {
       importFiles,
       clearTabDirty,
       setSaveStatus,
+      isCurrentWorkspace,
     ],
   );
 
@@ -307,6 +322,7 @@ export function useFileOperations() {
             name: trimmed,
             path: trimmed,
           });
+          if (!isCurrentWorkspace()) return {};
           folderId = doc.id;
         } catch {
           return { error: "Could not create the folder. Please try again." };
@@ -316,7 +332,7 @@ export function useFileOperations() {
       addFolderNode({ kind: "folder", id: folderId, name: trimmed, children: [], expanded: true });
       return {};
     },
-    [workspaceId, isBackendAvailable, addFolderNode],
+    [workspaceId, isBackendAvailable, addFolderNode, isCurrentWorkspace],
   );
 
   // ── Open local file from disk ──────────────────────────────────────────────
@@ -336,6 +352,7 @@ export function useFileOperations() {
       } catch {
         return { error: `Could not read file: ${file.name}.` };
       }
+      if (!isCurrentWorkspace()) return {};
 
       const language = toLanguageMode(getLanguageFromFilename(file.name));
       let fileId = generateId();
@@ -350,6 +367,7 @@ export function useFileOperations() {
             language,
             content,
           });
+          if (!isCurrentWorkspace()) return {};
           fileId = doc.id;
           savedToBackend = true;
         } catch {
@@ -364,7 +382,7 @@ export function useFileOperations() {
       }
       return {};
     },
-    [workspaceId, isBackendAvailable, addFileNode, clearTabDirty, setSaveStatus],
+    [workspaceId, isBackendAvailable, addFileNode, clearTabDirty, setSaveStatus, isCurrentWorkspace],
   );
 
   // ── Import ZIP ─────────────────────────────────────────────────────────────
@@ -480,6 +498,7 @@ export function useFileOperations() {
         // the returned ids so the local tree matches the persisted documents.
         let folderIdByPath: Map<string, string> | undefined;
         let syncedToBackend = false;
+        if (!isCurrentWorkspace()) return {};
         if (isBackendAvailable) {
           try {
             const documents: CreateDocumentPayload[] = [
@@ -504,6 +523,7 @@ export function useFileOperations() {
               };
             }
             const created = await bulkCreateDocuments(workspaceId!, payload);
+            if (!isCurrentWorkspace()) return {};
             const idByPath = new Map(created.map((doc) => [doc.path, doc.id]));
             folderIdByPath = idByPath;
             for (const entry of entries) {
@@ -535,7 +555,7 @@ export function useFileOperations() {
         setIsImporting(false);
       }
     },
-    [importFiles, isBackendAvailable, workspaceId, setSaveStatus],
+    [importFiles, isBackendAvailable, workspaceId, setSaveStatus, isCurrentWorkspace],
   );
 
   // ── Rename file or folder ──────────────────────────────────────────────────
@@ -565,6 +585,7 @@ export function useFileOperations() {
               ? { language: getLanguageFromFilename(trimmed) }
               : {}),
           });
+          if (!isCurrentWorkspace()) return {};
         } catch {
           return { error: "Could not rename the item. Please try again." };
         }
@@ -573,7 +594,7 @@ export function useFileOperations() {
       renameNode(nodeId, trimmed);
       return {};
     },
-    [isBackendAvailable, renameNode],
+    [isBackendAvailable, renameNode, isCurrentWorkspace],
   );
 
   // ── Delete file or folder ──────────────────────────────────────────────────
@@ -582,6 +603,7 @@ export function useFileOperations() {
       if (isBackendAvailable && !nodeId.startsWith("local-")) {
         try {
           await deleteDocument(nodeId);
+          if (!isCurrentWorkspace()) return {};
         } catch {
           return { error: "Could not delete the item. Please try again." };
         }
@@ -590,7 +612,7 @@ export function useFileOperations() {
       deleteNode(nodeId);
       return {};
     },
-    [isBackendAvailable, deleteNode],
+    [isBackendAvailable, deleteNode, isCurrentWorkspace],
   );
 
   return { createFile, createFolder, openLocalFile, importZip, renameItem, deleteItem, isImporting };

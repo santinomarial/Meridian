@@ -100,10 +100,12 @@ export function useBackendWorkspace(): void {
         }
 
         if (workspace === undefined) {
+          if (cancelled) return;
           useWorkspaceStore.getState().setBackendStatus("unavailable");
           return;
         }
 
+        if (cancelled) return;
         useWorkspaceStore.getState().setWorkspaceId(workspace.id);
         useWorkspaceStore.getState().setWorkspaceName(workspace.name);
 
