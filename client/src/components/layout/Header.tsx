@@ -196,7 +196,9 @@ export function Header() {
   // Share / invite state
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<InviteRole>("EDITOR");
-  const [inviteStatus, setInviteStatus] = useState<"idle" | "sent">("idle");
+  const [inviteStatus, setInviteStatus] = useState<"idle" | "sent" | "created">("idle");
+  const [isSendingInvite, setIsSendingInvite] = useState(false);
+  const invitePending = useRef(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
   const [inviteToken, setInviteToken] = useState<string | null>(null);
 
@@ -398,62 +400,51 @@ export function Header() {
     }
   }, [inviteLink]);
 
-  // Creates an invite for the provided email address and emails the link.
+  // Creates one invite at a time and reports email and clipboard outcomes separately.
   const handleSendInvite = useCallback(async () => {
+    if (invitePending.current || !isBackendAvailable || workspaceId === null) return;
     const email = inviteEmail.trim();
     if (!email || !email.includes("@")) {
       toast("Please enter a valid email address.", "error");
       return;
     }
 
-    if (isBackendAvailable && workspaceId !== null) {
-      try {
-        const invite = await createInvite(workspaceId, { role: inviteRole, email });
-        const url =
-          invite.previewInviteUrl ??
-          invite.inviteUrl ??
-          `${window.location.origin}/invite/${invite.token}`;
-        setInviteToken(invite.token);
-        try {
-          await navigator.clipboard.writeText(url);
-        } catch {
-          // Clipboard failed — still show the link in the share panel.
-        }
-        addNotification({ icon: "person_add", text: `Invite created for ${email}` });
-
-        if (invite.emailDelivered === false) {
-          toast(
-            invite.emailError ??
-              `Invite created for ${email}, but email could not be delivered. Link copied — share it with them directly.`,
-            "info",
-          );
-        } else {
-          toast(`Invite sent to ${email}. Link copied to clipboard.`, "success");
-        }
-        setInviteEmail("");
-        setInviteStatus("sent");
-        window.setTimeout(() => setInviteStatus("idle"), 3000);
-      } catch (err) {
-        const message =
-          err instanceof ApiError && err.message.length > 0
-            ? err.message
-            : "Could not create invite — try again.";
-        toast(message, "error");
-      }
-      return;
-    }
-
-    // Offline — no backend to persist or email the invite.
+    invitePending.current = true;
+    setIsSendingInvite(true);
     try {
-      await navigator.clipboard.writeText(inviteLink);
-    } catch {
-      // Clipboard failed — still show the message.
+      const invite = await createInvite(workspaceId, { role: inviteRole, email });
+      const current = useWorkspaceStore.getState();
+      if (current.workspaceId !== workspaceId || current.currentUser?.id !== currentUser?.id) return;
+      const url = invite.previewInviteUrl ?? invite.inviteUrl ??
+        `${window.location.origin}/invite/${invite.token}`;
+      setInviteToken(invite.token);
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(url);
+        copied = true;
+      } catch {
+        // The invite remains available in the share panel for manual copying.
+      }
+      const copyFeedback = copied ? "Link copied to clipboard." : "You can copy the link below.";
+      addNotification({ icon: "person_add", text: `Invite created for ${email}` });
+      if (invite.emailDelivered === true) {
+        toast(`Invite sent to ${email}. ${copyFeedback}`, "success");
+        setInviteStatus("sent");
+      } else {
+        toast(`Invite created for ${email}, but email delivery was not confirmed. ${copyFeedback}`, "info");
+        setInviteStatus("created");
+      }
+      setInviteEmail("");
+      window.setTimeout(() => setInviteStatus("idle"), 3000);
+    } catch (err) {
+      const message = err instanceof ApiError && err.message.length > 0
+        ? err.message : "Could not create invite — try again.";
+      toast(message, "error");
+    } finally {
+      invitePending.current = false;
+      setIsSendingInvite(false);
     }
-    toast(`Invite link for ${email} copied. (Server offline — no email sent.)`, "info");
-    setInviteEmail("");
-    setInviteStatus("sent");
-    window.setTimeout(() => setInviteStatus("idle"), 3000);
-  }, [inviteEmail, inviteLink, inviteRole, isBackendAvailable, workspaceId, addNotification]);
+  }, [inviteEmail, inviteRole, isBackendAvailable, workspaceId, currentUser, addNotification]);
 
   const handleShowCollaboration = useCallback(() => {
     if (window.matchMedia("(max-width: 1024px)").matches) {
@@ -855,6 +846,7 @@ export function Header() {
                   <input
                     type="email"
                     value={inviteEmail}
+                    disabled={isSendingInvite}
                     onChange={(e) => setInviteEmail(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") void handleSendInvite();
@@ -865,6 +857,7 @@ export function Header() {
                   />
                   <select
                     value={inviteRole}
+                    disabled={isSendingInvite}
                     onChange={(e) => {
                       // Hide the previous role's token while its replacement is
                       // generated. Otherwise a fast copy can grant editor access
@@ -882,17 +875,17 @@ export function Header() {
                   <button
                     type="button"
                     onClick={() => void handleSendInvite()}
-                    disabled={inviteStatus === "sent"}
+                    disabled={isSendingInvite || inviteStatus !== "idle"}
                     aria-label="Send invite"
                     className={[
                       "shrink-0 rounded-sm px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
-                      inviteStatus === "sent"
+                      inviteStatus !== "idle"
                         ? "bg-primary/15 text-primary"
                         : "btn-primary",
                       "disabled:cursor-default",
                     ].join(" ")}
                   >
-                    {inviteStatus === "sent" ? "Sent!" : "Invite"}
+                    {isSendingInvite ? "Sending…" : inviteStatus === "sent" ? "Sent!" : inviteStatus === "created" ? "Link ready" : "Invite"}
                   </button>
                 </div>
                 <p className="mt-1.5 text-[10px] leading-snug text-on-surface-variant/70">
