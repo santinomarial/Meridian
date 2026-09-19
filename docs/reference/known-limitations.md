@@ -70,10 +70,11 @@ explanation documents own the rationale so it is not repeated here.
     or expired invites are purged hourly. Application retention does not define
     retention for logs, backups, version history, or crash-left temporary files.
 
-12. **Capacity evidence is narrow and historical.** The retained July 24, 2026
-    numbers cover one local API process and were not reverified during this
-    rewrite. They omit WAN, TLS, load balancers, multi-replica load, failure
-    injection, and soak behavior. See
+12. **Capacity evidence is narrow and historical.** The retained July baseline
+    and [September 18 local load probe](operations/production-readiness-2026-09-18.md)
+    do not establish public-service capacity. The September probe used loopback
+    networking and relaxed test throttles; production WAN/TLS latency,
+    multi-replica load, and sustained soak behavior remain unmeasured. See
     [Performance baseline](../explanation/performance-baseline.md).
 
 13. **Production API documentation is intentionally absent.** Swagger is

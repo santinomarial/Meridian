@@ -35,6 +35,7 @@ Facts, commands, and package entry points:
 - [CI jobs](reference/ci-jobs.md)
 - [Known limitations](reference/known-limitations.md)
 - [Containers and Compose](reference/operations/containers-and-compose.md)
+- [Release review — September 19, 2026](reference/operations/release-review-2026-09-19.md)
 - Client
   - [Commands](reference/client/commands.md)
   - [Configuration](reference/client/configuration.md)
