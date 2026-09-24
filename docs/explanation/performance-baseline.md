@@ -1,5 +1,9 @@
 # Performance baseline
 
+For the latest repeated measurements and convergence checks, see the
+[September 23, 2026 benchmark](../reference/operations/realtime-benchmark-2026-09-23.md).
+The July results below remain historical and use a different harness/workload.
+
 > Historical evidence, not a current benchmark: these numbers were recorded on
 > July 24, 2026 and were not independently re-run or verified during this
 > documentation rewrite. They are not a production capacity guarantee.

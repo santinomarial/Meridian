@@ -110,6 +110,12 @@ behavior, and performs backup/restore smoke tests. See
 [Run CI checks locally](docs/how-to/run-ci-locally.md) for the matching local
 commands and safety notes.
 
+The [repeated local collaboration benchmark](docs/reference/operations/realtime-benchmark-2026-09-23.md)
+records 250 simulated users across 25 documents at a median 1,726 durable
+updates/second, with 179 ms median run p95 acknowledgment latency. All nine
+measured runs passed acknowledgment, peer-delivery, and document-convergence
+checks. These are local synthetic results, not a production capacity guarantee.
+
 ## Production deployment
 
 The supported production path is a single VPS running one API replica, the

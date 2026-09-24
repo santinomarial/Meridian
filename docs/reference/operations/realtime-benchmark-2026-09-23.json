@@ -1,0 +1,808 @@
+{
+  "applicationRevision": "396585fd815490242098eb9221e84dcab1fb4f13",
+  "recordedAt": "2026-09-24T01:21:34.470Z",
+  "environment": {
+    "node": "v24.13.1",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "cpu": "Apple M4",
+    "logicalCpus": 10,
+    "hostRamGiB": 16,
+    "dockerRamGiB": 7.75,
+    "api": "one compiled NestJS process on loopback:3300",
+    "database": "disposable PostgreSQL 16 / Redis 7.4.11 in Docker Desktop",
+    "mode": "NODE_ENV=test; E2E_TEST=true; LOG_LEVEL=info; terminal disabled; no TLS",
+    "snapshotEveryNUpdates": 100,
+    "notes": "Same machine hosts generator, API, DB and Redis. Other existing apps were not stopped. Unit/integration tests finished before measurement.",
+    "macOS": "26.6.2",
+    "postgresVersion": "16.15",
+    "redisVersion": "7.4.11",
+    "postgresFsync": "on",
+    "postgresSynchronousCommit": "on",
+    "bootstrap": "Same AppModule, configureApp, logger and shutdown hooks; explicit 127.0.0.1 bind; development Swagger initialization omitted."
+  },
+  "protocol": {
+    "repetitions": 3,
+    "updatesPerUser": 100,
+    "ordering": "round robin shared-50, shared-100, distributed-250",
+    "warmup": "separate 10,25,50,100 users x 5 updates excluded",
+    "acknowledgment": "one in-flight update per client; includes PostgreSQL commit",
+    "fanout": "unique incremental update/client pairs; extra recovery and duplicates tracked separately",
+    "convergence": "every client Y.Doc text equals a reference merged from all submitted updates",
+    "profiles": [
+      {
+        "name": "shared-50",
+        "users": 50,
+        "perDocument": 0,
+        "updates": 100
+      },
+      {
+        "name": "shared-100",
+        "users": 100,
+        "perDocument": 0,
+        "updates": 100
+      },
+      {
+        "name": "distributed-250",
+        "users": 250,
+        "perDocument": 10,
+        "updates": 100
+      }
+    ]
+  },
+  "runs": [
+    {
+      "profile": "shared-50",
+      "repetition": 1,
+      "exitCode": 0,
+      "elapsedSeconds": 14.363,
+      "stages": [
+        {
+          "concurrency": 50,
+          "usersPerDocument": 50,
+          "documentCount": 1,
+          "expectedUpdates": 5000,
+          "successfulUpdates": 5000,
+          "failedUsers": 0,
+          "durationMs": 12366.78,
+          "throughputPerSecond": 404.31,
+          "connectLatencyMs": {
+            "min": 13.99,
+            "p50": 17.16,
+            "p95": 20.98,
+            "p99": 22.2,
+            "max": 22.2,
+            "mean": 17.64
+          },
+          "joinLatencyMs": {
+            "min": 21.56,
+            "p50": 22.96,
+            "p95": 24.41,
+            "p99": 24.48,
+            "max": 24.48,
+            "mean": 23
+          },
+          "ackLatencyMs": {
+            "min": 28.87,
+            "p50": 120.71,
+            "p95": 150.06,
+            "p99": 174.25,
+            "max": 244.67,
+            "mean": 123.02
+          },
+          "fanoutLatencyMs": {
+            "min": 0.25,
+            "p50": 0.71,
+            "p95": 1.4,
+            "p99": 23.44,
+            "max": 157.85,
+            "mean": 1.41
+          },
+          "fanoutEvents": 245050,
+          "uniqueFanoutEvents": 245000,
+          "recoveryFanoutEvents": 50,
+          "duplicateFanoutEvents": 0,
+          "undeliveredUpdates": 0,
+          "convergence": {
+            "checkedClients": 50,
+            "convergedClients": 50,
+            "documents": 1
+          },
+          "expectedFanout": 245000,
+          "fanoutDeliveryRatio": 1,
+          "serverErrors": [],
+          "failures": [],
+          "resources": {
+            "residentMemoryMiB": 270,
+            "heapUsedMiB": 82.64,
+            "eventLoopLagP99Ms": 11.35,
+            "cpuSeconds": 6.758,
+            "socketsActive": 50,
+            "documentsLoaded": 1,
+            "writeChainsAtScrape": 0,
+            "persistenceFailuresDelta": 0
+          }
+        }
+      ]
+    },
+    {
+      "profile": "shared-100",
+      "repetition": 1,
+      "exitCode": 0,
+      "elapsedSeconds": 33.301,
+      "stages": [
+        {
+          "concurrency": 100,
+          "usersPerDocument": 100,
+          "documentCount": 1,
+          "expectedUpdates": 10000,
+          "successfulUpdates": 10000,
+          "failedUsers": 0,
+          "durationMs": 29654.78,
+          "throughputPerSecond": 337.21,
+          "connectLatencyMs": {
+            "min": 20.14,
+            "p50": 20.9,
+            "p95": 24.71,
+            "p99": 28.48,
+            "max": 30.68,
+            "mean": 22.18
+          },
+          "joinLatencyMs": {
+            "min": 29.96,
+            "p50": 38.27,
+            "p95": 42.77,
+            "p99": 43.34,
+            "max": 43.48,
+            "mean": 37.42
+          },
+          "ackLatencyMs": {
+            "min": 58.82,
+            "p50": 289.11,
+            "p95": 342.86,
+            "p99": 406.54,
+            "max": 1015.84,
+            "mean": 294.66
+          },
+          "fanoutLatencyMs": {
+            "min": 0.36,
+            "p50": 1.87,
+            "p95": 23.03,
+            "p99": 172.75,
+            "max": 718.3,
+            "mean": 7.95
+          },
+          "fanoutEvents": 990200,
+          "uniqueFanoutEvents": 990000,
+          "recoveryFanoutEvents": 200,
+          "duplicateFanoutEvents": 0,
+          "undeliveredUpdates": 0,
+          "convergence": {
+            "checkedClients": 100,
+            "convergedClients": 100,
+            "documents": 1
+          },
+          "expectedFanout": 990000,
+          "fanoutDeliveryRatio": 1,
+          "serverErrors": [],
+          "failures": [],
+          "resources": {
+            "residentMemoryMiB": 338.42,
+            "heapUsedMiB": 75.8,
+            "eventLoopLagP99Ms": 12.62,
+            "cpuSeconds": 17.512,
+            "socketsActive": 100,
+            "documentsLoaded": 1,
+            "writeChainsAtScrape": 0,
+            "persistenceFailuresDelta": 0
+          }
+        }
+      ]
+    },
+    {
+      "profile": "distributed-250",
+      "repetition": 1,
+      "exitCode": 0,
+      "elapsedSeconds": 20.867,
+      "stages": [
+        {
+          "concurrency": 250,
+          "usersPerDocument": 10,
+          "documentCount": 25,
+          "expectedUpdates": 25000,
+          "successfulUpdates": 25000,
+          "failedUsers": 0,
+          "durationMs": 14486.82,
+          "throughputPerSecond": 1725.71,
+          "connectLatencyMs": {
+            "min": 35,
+            "p50": 37.72,
+            "p95": 122.31,
+            "p99": 127.08,
+            "max": 127.36,
+            "mean": 52.22
+          },
+          "joinLatencyMs": {
+            "min": 1.58,
+            "p50": 68.06,
+            "p95": 75.15,
+            "p99": 75.55,
+            "max": 75.75,
+            "mean": 60.7
+          },
+          "ackLatencyMs": {
+            "min": 24.06,
+            "p50": 137.54,
+            "p95": 178.6,
+            "p99": 223.26,
+            "max": 391.56,
+            "mean": 143.55
+          },
+          "fanoutLatencyMs": {
+            "min": 0.12,
+            "p50": 1.92,
+            "p95": 10.68,
+            "p99": 24.38,
+            "max": 232.22,
+            "mean": 3.23
+          },
+          "fanoutEvents": 225250,
+          "uniqueFanoutEvents": 225000,
+          "recoveryFanoutEvents": 250,
+          "duplicateFanoutEvents": 0,
+          "undeliveredUpdates": 0,
+          "convergence": {
+            "checkedClients": 250,
+            "convergedClients": 250,
+            "documents": 25
+          },
+          "expectedFanout": 225000,
+          "fanoutDeliveryRatio": 1,
+          "serverErrors": [],
+          "failures": [],
+          "resources": {
+            "residentMemoryMiB": 488.33,
+            "heapUsedMiB": 190.51,
+            "eventLoopLagP99Ms": 12.49,
+            "cpuSeconds": 33.681,
+            "socketsActive": 250,
+            "documentsLoaded": 26,
+            "writeChainsAtScrape": 0,
+            "persistenceFailuresDelta": 0
+          }
+        }
+      ]
+    },
+    {
+      "profile": "shared-50",
+      "repetition": 2,
+      "exitCode": 0,
+      "elapsedSeconds": 14.47,
+      "stages": [
+        {
+          "concurrency": 50,
+          "usersPerDocument": 50,
+          "documentCount": 1,
+          "expectedUpdates": 5000,
+          "successfulUpdates": 5000,
+          "failedUsers": 0,
+          "durationMs": 12474.68,
+          "throughputPerSecond": 400.81,
+          "connectLatencyMs": {
+            "min": 15.71,
+            "p50": 21.26,
+            "p95": 30.33,
+            "p99": 30.35,
+            "max": 30.35,
+            "mean": 23.87
+          },
+          "joinLatencyMs": {
+            "min": 6.19,
+            "p50": 10.21,
+            "p95": 15.79,
+            "p99": 15.84,
+            "max": 15.84,
+            "mean": 10.84
+          },
+          "ackLatencyMs": {
+            "min": 26.84,
+            "p50": 122.45,
+            "p95": 144.59,
+            "p99": 156.5,
+            "max": 174.65,
+            "mean": 124.11
+          },
+          "fanoutLatencyMs": {
+            "min": 0.23,
+            "p50": 0.7,
+            "p95": 1.28,
+            "p99": 8.1,
+            "max": 32.76,
+            "mean": 0.91
+          },
+          "fanoutEvents": 245050,
+          "uniqueFanoutEvents": 245000,
+          "recoveryFanoutEvents": 50,
+          "duplicateFanoutEvents": 0,
+          "undeliveredUpdates": 0,
+          "convergence": {
+            "checkedClients": 50,
+            "convergedClients": 50,
+            "documents": 1
+          },
+          "expectedFanout": 245000,
+          "fanoutDeliveryRatio": 1,
+          "serverErrors": [],
+          "failures": [],
+          "resources": {
+            "residentMemoryMiB": 492.53,
+            "heapUsedMiB": 288.38,
+            "eventLoopLagP99Ms": 11.11,
+            "cpuSeconds": 6.048,
+            "socketsActive": 50,
+            "documentsLoaded": 26,
+            "writeChainsAtScrape": 0,
+            "persistenceFailuresDelta": 0
+          }
+        }
+      ]
+    },
+    {
+      "profile": "shared-100",
+      "repetition": 2,
+      "exitCode": 0,
+      "elapsedSeconds": 48.838,
+      "stages": [
+        {
+          "concurrency": 100,
+          "usersPerDocument": 100,
+          "documentCount": 1,
+          "expectedUpdates": 10000,
+          "successfulUpdates": 10000,
+          "failedUsers": 0,
+          "durationMs": 45133.75,
+          "throughputPerSecond": 221.56,
+          "connectLatencyMs": {
+            "min": 16.32,
+            "p50": 19.17,
+            "p95": 22.66,
+            "p99": 22.74,
+            "max": 22.75,
+            "mean": 19.52
+          },
+          "joinLatencyMs": {
+            "min": 30.71,
+            "p50": 40.93,
+            "p95": 51.26,
+            "p99": 51.95,
+            "max": 53.71,
+            "mean": 41.28
+          },
+          "ackLatencyMs": {
+            "min": 64.44,
+            "p50": 312.32,
+            "p95": 477.1,
+            "p99": 744.41,
+            "max": 12733.87,
+            "mean": 449.33
+          },
+          "fanoutLatencyMs": {
+            "min": 0.37,
+            "p50": 1.88,
+            "p95": 17.05,
+            "p99": 192.94,
+            "max": 11098.75,
+            "mean": 9.08
+          },
+          "fanoutEvents": 990300,
+          "uniqueFanoutEvents": 990000,
+          "recoveryFanoutEvents": 300,
+          "duplicateFanoutEvents": 0,
+          "undeliveredUpdates": 0,
+          "convergence": {
+            "checkedClients": 100,
+            "convergedClients": 100,
+            "documents": 1
+          },
+          "expectedFanout": 990000,
+          "fanoutDeliveryRatio": 1,
+          "serverErrors": [],
+          "failures": [],
+          "resources": {
+            "residentMemoryMiB": 274.73,
+            "heapUsedMiB": 128.97,
+            "eventLoopLagP99Ms": 14.34,
+            "cpuSeconds": 19.134,
+            "socketsActive": 100,
+            "documentsLoaded": 1,
+            "writeChainsAtScrape": 0,
+            "persistenceFailuresDelta": 0
+          }
+        }
+      ]
+    },
+    {
+      "profile": "distributed-250",
+      "repetition": 2,
+      "exitCode": 0,
+      "elapsedSeconds": 21.802,
+      "stages": [
+        {
+          "concurrency": 250,
+          "usersPerDocument": 10,
+          "documentCount": 25,
+          "expectedUpdates": 25000,
+          "successfulUpdates": 25000,
+          "failedUsers": 0,
+          "durationMs": 15494.56,
+          "throughputPerSecond": 1613.47,
+          "connectLatencyMs": {
+            "min": 38.4,
+            "p50": 43.55,
+            "p95": 52.29,
+            "p99": 52.71,
+            "max": 52.78,
+            "mean": 45.64
+          },
+          "joinLatencyMs": {
+            "min": 53.71,
+            "p50": 60.78,
+            "p95": 70.51,
+            "p99": 70.62,
+            "max": 70.71,
+            "mean": 60.29
+          },
+          "ackLatencyMs": {
+            "min": 45.23,
+            "p50": 139.48,
+            "p95": 220.33,
+            "p99": 334.34,
+            "max": 545.03,
+            "mean": 153.39
+          },
+          "fanoutLatencyMs": {
+            "min": 0.11,
+            "p50": 1.94,
+            "p95": 10.4,
+            "p99": 18.31,
+            "max": 328.46,
+            "mean": 3.04
+          },
+          "fanoutEvents": 225250,
+          "uniqueFanoutEvents": 225000,
+          "recoveryFanoutEvents": 250,
+          "duplicateFanoutEvents": 0,
+          "undeliveredUpdates": 0,
+          "convergence": {
+            "checkedClients": 250,
+            "convergedClients": 250,
+            "documents": 25
+          },
+          "expectedFanout": 225000,
+          "fanoutDeliveryRatio": 1,
+          "serverErrors": [],
+          "failures": [],
+          "resources": {
+            "residentMemoryMiB": 497.17,
+            "heapUsedMiB": 199.74,
+            "eventLoopLagP99Ms": 12.56,
+            "cpuSeconds": 34.202,
+            "socketsActive": 250,
+            "documentsLoaded": 26,
+            "writeChainsAtScrape": 0,
+            "persistenceFailuresDelta": 0
+          }
+        }
+      ]
+    },
+    {
+      "profile": "shared-50",
+      "repetition": 3,
+      "exitCode": 0,
+      "elapsedSeconds": 14.94,
+      "stages": [
+        {
+          "concurrency": 50,
+          "usersPerDocument": 50,
+          "documentCount": 1,
+          "expectedUpdates": 5000,
+          "successfulUpdates": 5000,
+          "failedUsers": 0,
+          "durationMs": 12931.74,
+          "throughputPerSecond": 386.65,
+          "connectLatencyMs": {
+            "min": 11.22,
+            "p50": 12.03,
+            "p95": 15.03,
+            "p99": 15.17,
+            "max": 15.17,
+            "mean": 12.58
+          },
+          "joinLatencyMs": {
+            "min": 19.76,
+            "p50": 22.25,
+            "p95": 24.57,
+            "p99": 24.72,
+            "max": 24.72,
+            "mean": 22.34
+          },
+          "ackLatencyMs": {
+            "min": 77.95,
+            "p50": 122.55,
+            "p95": 157.95,
+            "p99": 223.89,
+            "max": 455.54,
+            "mean": 128.58
+          },
+          "fanoutLatencyMs": {
+            "min": 0.24,
+            "p50": 0.7,
+            "p95": 1.32,
+            "p99": 5.17,
+            "max": 77.19,
+            "mean": 1.18
+          },
+          "fanoutEvents": 245000,
+          "uniqueFanoutEvents": 245000,
+          "recoveryFanoutEvents": 0,
+          "duplicateFanoutEvents": 0,
+          "undeliveredUpdates": 0,
+          "convergence": {
+            "checkedClients": 50,
+            "convergedClients": 50,
+            "documents": 1
+          },
+          "expectedFanout": 245000,
+          "fanoutDeliveryRatio": 1,
+          "serverErrors": [],
+          "failures": [],
+          "resources": {
+            "residentMemoryMiB": 485.64,
+            "heapUsedMiB": 306.05,
+            "eventLoopLagP99Ms": 11.06,
+            "cpuSeconds": 6.176,
+            "socketsActive": 50,
+            "documentsLoaded": 26,
+            "writeChainsAtScrape": 0,
+            "persistenceFailuresDelta": 0
+          }
+        }
+      ]
+    },
+    {
+      "profile": "shared-100",
+      "repetition": 3,
+      "exitCode": 0,
+      "elapsedSeconds": 34.251,
+      "stages": [
+        {
+          "concurrency": 100,
+          "usersPerDocument": 100,
+          "documentCount": 1,
+          "expectedUpdates": 10000,
+          "successfulUpdates": 10000,
+          "failedUsers": 0,
+          "durationMs": 30509.45,
+          "throughputPerSecond": 327.77,
+          "connectLatencyMs": {
+            "min": 16.07,
+            "p50": 39.94,
+            "p95": 40.45,
+            "p99": 44.19,
+            "max": 44.34,
+            "mean": 34.18
+          },
+          "joinLatencyMs": {
+            "min": 68.8,
+            "p50": 77.37,
+            "p95": 83.1,
+            "p99": 84.38,
+            "max": 84.61,
+            "mean": 76.25
+          },
+          "ackLatencyMs": {
+            "min": 19.01,
+            "p50": 295.14,
+            "p95": 369.46,
+            "p99": 459.51,
+            "max": 1118.35,
+            "mean": 303.38
+          },
+          "fanoutLatencyMs": {
+            "min": 0.38,
+            "p50": 1.83,
+            "p95": 26.04,
+            "p99": 148.97,
+            "max": 744.28,
+            "mean": 7.58
+          },
+          "fanoutEvents": 990200,
+          "uniqueFanoutEvents": 990000,
+          "recoveryFanoutEvents": 200,
+          "duplicateFanoutEvents": 0,
+          "undeliveredUpdates": 0,
+          "convergence": {
+            "checkedClients": 100,
+            "convergedClients": 100,
+            "documents": 1
+          },
+          "expectedFanout": 990000,
+          "fanoutDeliveryRatio": 1,
+          "serverErrors": [],
+          "failures": [],
+          "resources": {
+            "residentMemoryMiB": 423.7,
+            "heapUsedMiB": 84.77,
+            "eventLoopLagP99Ms": 13.4,
+            "cpuSeconds": 18.059,
+            "socketsActive": 100,
+            "documentsLoaded": 1,
+            "writeChainsAtScrape": 0,
+            "persistenceFailuresDelta": 0
+          }
+        }
+      ]
+    },
+    {
+      "profile": "distributed-250",
+      "repetition": 3,
+      "exitCode": 0,
+      "elapsedSeconds": 19.955,
+      "stages": [
+        {
+          "concurrency": 250,
+          "usersPerDocument": 10,
+          "documentCount": 25,
+          "expectedUpdates": 25000,
+          "successfulUpdates": 25000,
+          "failedUsers": 0,
+          "durationMs": 13710.92,
+          "throughputPerSecond": 1823.36,
+          "connectLatencyMs": {
+            "min": 34.66,
+            "p50": 40.54,
+            "p95": 58.25,
+            "p99": 114.29,
+            "max": 115.82,
+            "mean": 44.8
+          },
+          "joinLatencyMs": {
+            "min": 9.73,
+            "p50": 67.62,
+            "p95": 75.99,
+            "p99": 80.21,
+            "max": 80.38,
+            "mean": 65.73
+          },
+          "ackLatencyMs": {
+            "min": 32.59,
+            "p50": 131.61,
+            "p95": 164.76,
+            "p99": 209.86,
+            "max": 325.05,
+            "mean": 135.91
+          },
+          "fanoutLatencyMs": {
+            "min": 0.11,
+            "p50": 1.99,
+            "p95": 9.5,
+            "p99": 16.01,
+            "max": 144.96,
+            "mean": 2.9
+          },
+          "fanoutEvents": 225250,
+          "uniqueFanoutEvents": 225000,
+          "recoveryFanoutEvents": 250,
+          "duplicateFanoutEvents": 0,
+          "undeliveredUpdates": 0,
+          "convergence": {
+            "checkedClients": 250,
+            "convergedClients": 250,
+            "documents": 25
+          },
+          "expectedFanout": 225000,
+          "fanoutDeliveryRatio": 1,
+          "serverErrors": [],
+          "failures": [],
+          "resources": {
+            "residentMemoryMiB": 504.47,
+            "heapUsedMiB": 263.56,
+            "eventLoopLagP99Ms": 12.51,
+            "cpuSeconds": 32.944,
+            "socketsActive": 250,
+            "documentsLoaded": 26,
+            "writeChainsAtScrape": 0,
+            "persistenceFailuresDelta": 0
+          }
+        }
+      ]
+    }
+  ],
+  "harnessSha256": "f731be41d7d132ea52a09948597e3da4f7e9846c9ae3f7b5071f060b0faf4f3a",
+  "validation": {
+    "serverUnit": 459,
+    "clientUnit": 52,
+    "databaseIntegration": 69,
+    "loadHarness": 12,
+    "failedTests": 0,
+    "postRunRemainingUsers": 0
+  },
+  "totals": {
+    "acknowledgedUpdates": 120000,
+    "uniquePeerDeliveries": 4380000,
+    "convergedClientSessions": 1200,
+    "recoveryEvents": 1550,
+    "duplicateEvents": 0
+  },
+  "summary": [
+    {
+      "profile": "shared-50",
+      "throughput": {
+        "median": 400.81,
+        "min": 386.65,
+        "max": 404.31
+      },
+      "runAckP95": {
+        "median": 150.06,
+        "min": 144.59,
+        "max": 157.95
+      },
+      "runPeerP95": {
+        "median": 1.32,
+        "min": 1.28,
+        "max": 1.4
+      },
+      "durationSeconds": {
+        "median": 12.474680000000001,
+        "min": 12.36678,
+        "max": 12.93174
+      }
+    },
+    {
+      "profile": "shared-100",
+      "throughput": {
+        "median": 327.77,
+        "min": 221.56,
+        "max": 337.21
+      },
+      "runAckP95": {
+        "median": 369.46,
+        "min": 342.86,
+        "max": 477.1
+      },
+      "runPeerP95": {
+        "median": 23.03,
+        "min": 17.05,
+        "max": 26.04
+      },
+      "durationSeconds": {
+        "median": 30.50945,
+        "min": 29.65478,
+        "max": 45.13375
+      }
+    },
+    {
+      "profile": "distributed-250",
+      "throughput": {
+        "median": 1725.71,
+        "min": 1613.47,
+        "max": 1823.36
+      },
+      "runAckP95": {
+        "median": 178.6,
+        "min": 164.76,
+        "max": 220.33
+      },
+      "runPeerP95": {
+        "median": 10.4,
+        "min": 9.5,
+        "max": 10.68
+      },
+      "durationSeconds": {
+        "median": 14.48682,
+        "min": 13.71092,
+        "max": 15.49456
+      }
+    }
+  ]
+}
