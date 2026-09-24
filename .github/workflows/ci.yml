@@ -42,6 +42,7 @@ jobs:
       - run: npx prisma generate
       - run: npm run build
       - run: npm test
+      - run: npm run test:load-harness
 
   # ── Client: typecheck + unit tests + production build ──────────────────────
   client:

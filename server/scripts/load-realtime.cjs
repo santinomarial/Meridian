@@ -283,15 +283,17 @@ async function connectUser(user, documentId, stageState) {
     try {
       const key = updateKey(payload.update);
       const sent = stageState.sentUpdates.get(key);
-      if (!sent) return;
+      if (!sent || sent.seen.has(socket.id)) {
+        stageState.unexpectedFanoutEvents += 1;
+        return;
+      }
       stageState.fanoutLatencyMs.push(performance.now() - sent.startedAt);
-      sent.seen += 1;
-      if (sent.seen >= sent.expectedPeers) {
+      sent.seen.add(socket.id);
+      if (sent.seen.size >= sent.expectedPeers) {
         stageState.sentUpdates.delete(key);
       }
     } catch {
-      // Delivery counting remains useful if an unexpected transport shape
-      // prevents latency correlation.
+      stageState.unexpectedFanoutEvents += 1;
     }
   });
   socket.on('error', (payload) => {
@@ -360,7 +362,7 @@ function sendUpdate(client, stageState, expectedPeers, userIndex, updateIndex) {
       stageState.sentUpdates.set(updateKey(update), {
         startedAt,
         expectedPeers,
-        seen: 0,
+        seen: new Set(),
       });
     }
     const timeout = setTimeout(() => {
@@ -413,6 +415,7 @@ async function runStage(owner, users, workspaceId, concurrency) {
 
   const stageState = {
     fanoutEvents: 0,
+    unexpectedFanoutEvents: 0,
     fanoutLatencyMs: [],
     sentUpdates: new Map(),
     serverErrors: [],
@@ -511,6 +514,8 @@ async function runStage(owner, users, workspaceId, concurrency) {
       ackLatencyMs: rounded(summarize(ackLatency)),
       fanoutLatencyMs: rounded(summarize(stageState.fanoutLatencyMs)),
       fanoutEvents: stageState.fanoutEvents,
+      unexpectedFanoutEvents: stageState.unexpectedFanoutEvents,
+      undeliveredUpdates: stageState.sentUpdates.size,
       expectedFanout,
       fanoutDeliveryRatio:
         expectedFanout === 0
@@ -600,6 +605,16 @@ function printStage(result) {
   }
 }
 
+function stageFailed(result) {
+  return result.failedUsers > 0 ||
+    result.successfulUpdates !== result.expectedUpdates ||
+    result.resources.persistenceFailuresDelta > 0 ||
+    result.fanoutEvents !== result.expectedFanout ||
+    result.unexpectedFanoutEvents > 0 ||
+    result.undeliveredUpdates > 0 ||
+    result.serverErrors.length > 0;
+}
+
 async function main() {
   assertConfiguration();
   const health = await api('/ready');
@@ -646,7 +661,7 @@ async function main() {
       );
       results.push(result);
       printStage(result);
-      if (result.failedUsers > 0 || result.resources.persistenceFailuresDelta > 0) {
+      if (stageFailed(result)) {
         console.log('Stopping after the first stage with failures.');
         break;
       }
@@ -665,19 +680,16 @@ async function main() {
   }
 
   console.log(`\nLOAD_RESULT_JSON=${JSON.stringify(results)}`);
-  if (
-    results.some(
-      (result) =>
-        result.failedUsers > 0 ||
-        result.successfulUpdates !== result.expectedUpdates ||
-        result.resources.persistenceFailuresDelta > 0,
-    )
-  ) {
+  if (results.some(stageFailed)) {
     process.exitCode = 1;
   }
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.stack : err);
-  process.exitCode = 1;
-});
+module.exports = { stageFailed };
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.stack : err);
+    process.exitCode = 1;
+  });
+}
