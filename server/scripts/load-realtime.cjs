@@ -277,23 +277,31 @@ async function connectUser(user, documentId, stageState) {
     throw err;
   });
   const connectLatencyMs = performance.now() - connectedAt;
+  const ydoc = new Y.Doc();
 
   socket.on('yjs:update', (payload) => {
     stageState.fanoutEvents += 1;
     try {
+      if (payload.documentId !== documentId || payload.generation !== 0) {
+        throw new Error('Unexpected document or generation');
+      }
+      Y.applyUpdate(ydoc, new Uint8Array(payload.update));
       const key = updateKey(payload.update);
       const sent = stageState.sentUpdates.get(key);
-      if (!sent || sent.seen.has(socket.id)) {
-        stageState.unexpectedFanoutEvents += 1;
+      if (!sent || sent.sender === socket.id) {
+        // The durability audit can broadcast merged state to the whole room.
+        // Apply it for convergence, but do not count it as incremental delivery.
+        stageState.recoveryFanoutEvents += 1;
+        return;
+      }
+      if (sent.seen.has(socket.id)) {
+        stageState.duplicateFanoutEvents += 1;
         return;
       }
       stageState.fanoutLatencyMs.push(performance.now() - sent.startedAt);
       sent.seen.add(socket.id);
-      if (sent.seen.size >= sent.expectedPeers) {
-        stageState.sentUpdates.delete(key);
-      }
-    } catch {
-      stageState.unexpectedFanoutEvents += 1;
+    } catch (error) {
+      stageState.serverErrors.push(`Invalid peer update: ${error.message}`);
     }
   });
   socket.on('error', (payload) => {
@@ -307,12 +315,16 @@ async function connectUser(user, documentId, stageState) {
   const joinedAt = performance.now();
   const joined = waitForSocketEvent(socket, 'joinedDocument', ACK_TIMEOUT_MS);
   socket.emit('joinDocument', { documentId });
-  await joined;
+  await joined.catch((error) => {
+    socket.close();
+    ydoc.destroy();
+    throw error;
+  });
 
   return {
     socket,
     documentId,
-    ydoc: new Y.Doc(),
+    ydoc,
     pending: new Map(),
     connectLatencyMs,
     joinLatencyMs: performance.now() - joinedAt,
@@ -358,13 +370,14 @@ function sendUpdate(client, stageState, expectedPeers, userIndex, updateIndex) {
   const update = createIncrementalUpdate(client, userIndex, updateIndex);
   return new Promise((resolve, reject) => {
     const startedAt = performance.now();
-    if (expectedPeers > 0) {
-      stageState.sentUpdates.set(updateKey(update), {
-        startedAt,
-        expectedPeers,
-        seen: new Set(),
-      });
-    }
+    stageState.sentUpdates.set(updateKey(update), {
+      documentId: client.documentId,
+      sender: client.socket.id,
+      update,
+      startedAt,
+      expectedPeers,
+      seen: new Set(),
+    });
     const timeout = setTimeout(() => {
       client.pending.delete(updateId);
       reject(new Error(`Ack timed out after ${ACK_TIMEOUT_MS}ms`));
@@ -387,6 +400,26 @@ function closeClient(client) {
   client.pending.clear();
   client.socket.close();
   client.ydoc.destroy();
+}
+
+function verifyConvergence(clients, sentUpdates) {
+  const references = new Map();
+  try {
+    for (const sent of sentUpdates.values()) {
+      if (!references.has(sent.documentId)) references.set(sent.documentId, new Y.Doc());
+      Y.applyUpdate(references.get(sent.documentId), sent.update);
+    }
+    let convergedClients = 0;
+    for (const client of clients) {
+      const reference = references.get(client.documentId);
+      if (reference && client.ydoc.getText('content').toString() === reference.getText('content').toString()) {
+        convergedClients += 1;
+      }
+    }
+    return { checkedClients: clients.length, convergedClients, documents: references.size };
+  } finally {
+    for (const doc of references.values()) doc.destroy();
+  }
 }
 
 async function runStage(owner, users, workspaceId, concurrency) {
@@ -415,7 +448,8 @@ async function runStage(owner, users, workspaceId, concurrency) {
 
   const stageState = {
     fanoutEvents: 0,
-    unexpectedFanoutEvents: 0,
+    recoveryFanoutEvents: 0,
+    duplicateFanoutEvents: 0,
     fanoutLatencyMs: [],
     sentUpdates: new Map(),
     serverErrors: [],
@@ -488,6 +522,8 @@ async function runStage(owner, users, workspaceId, concurrency) {
     const durationMs = performance.now() - startedAt;
     await new Promise((resolve) => setTimeout(resolve, 500));
     const metricsAtPeak = await metrics();
+    const convergence = verifyConvergence(clients, stageState.sentUpdates);
+    const uniqueFanoutEvents = stageState.fanoutLatencyMs.length;
 
     const expectedUpdates = concurrency * UPDATES_PER_USER;
     const fullGroups = Math.floor(concurrency / usersPerDocument);
@@ -514,13 +550,16 @@ async function runStage(owner, users, workspaceId, concurrency) {
       ackLatencyMs: rounded(summarize(ackLatency)),
       fanoutLatencyMs: rounded(summarize(stageState.fanoutLatencyMs)),
       fanoutEvents: stageState.fanoutEvents,
-      unexpectedFanoutEvents: stageState.unexpectedFanoutEvents,
-      undeliveredUpdates: stageState.sentUpdates.size,
+      uniqueFanoutEvents,
+      recoveryFanoutEvents: stageState.recoveryFanoutEvents,
+      duplicateFanoutEvents: stageState.duplicateFanoutEvents,
+      undeliveredUpdates: [...stageState.sentUpdates.values()].filter((sent) => sent.seen.size !== sent.expectedPeers).length,
+      convergence,
       expectedFanout,
       fanoutDeliveryRatio:
         expectedFanout === 0
           ? 1
-          : Number((stageState.fanoutEvents / expectedFanout).toFixed(4)),
+          : Number((uniqueFanoutEvents / expectedFanout).toFixed(4)),
       serverErrors: stageState.serverErrors.slice(0, 10),
       failures: failures.slice(0, 10),
       resources: {
@@ -583,9 +622,10 @@ function printStage(result) {
       `join p95: ${result.joinLatencyMs.p95} ms`,
   );
   console.log(
-    `  fan-out: ${result.fanoutEvents}/${result.expectedFanout} ` +
+    `  unique fan-out: ${result.uniqueFanoutEvents}/${result.expectedFanout} ` +
       `(${(result.fanoutDeliveryRatio * 100).toFixed(2)}%)`,
   );
+  console.log(`  convergence: ${result.convergence.convergedClients}/${result.convergence.checkedClients} clients; recovery/duplicate events: ${result.recoveryFanoutEvents}/${result.duplicateFanoutEvents}`);
   if (result.fanoutLatencyMs.p95 !== null) {
     console.log(
       `  peer delivery ms: p50 ${result.fanoutLatencyMs.p50}, ` +
@@ -609,9 +649,9 @@ function stageFailed(result) {
   return result.failedUsers > 0 ||
     result.successfulUpdates !== result.expectedUpdates ||
     result.resources.persistenceFailuresDelta > 0 ||
-    result.fanoutEvents !== result.expectedFanout ||
-    result.unexpectedFanoutEvents > 0 ||
+    result.uniqueFanoutEvents !== result.expectedFanout ||
     result.undeliveredUpdates > 0 ||
+    result.convergence.convergedClients !== result.concurrency ||
     result.serverErrors.length > 0;
 }
 
@@ -685,7 +725,7 @@ async function main() {
   }
 }
 
-module.exports = { stageFailed };
+module.exports = { stageFailed, verifyConvergence };
 
 if (require.main === module) {
   main().catch((err) => {

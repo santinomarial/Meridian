@@ -64,9 +64,13 @@ The run must print the selected target, stage summaries, and a final
 updates, no persistence-failure delta, and complete expected fan-out. Preserve
 the JSON with the server build and test-environment details.
 
-The harness exits nonzero for missing, duplicate, or uncorrelated peer deliveries,
-incomplete acknowledgments, persistence failures, and server errors. Run
-`npm run test:load-harness` to check these failure gates without a backend.
+The harness checks each incremental update's unique peer recipients and applies
+updates to a real Y.Doc per client. All clients must converge to the complete
+submitted document state. Recovery broadcasts and idempotent duplicates are
+reported separately and cannot inflate delivery counts. Missing peer deliveries,
+divergence, incomplete acknowledgments, persistence failures, and server errors
+cause a nonzero exit. Run `npm run test:load-harness` to check these failure gates
+without a backend.
 
 For 250 users split across documents:
 
