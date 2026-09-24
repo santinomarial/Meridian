@@ -19,7 +19,9 @@ export, and a production-oriented NestJS backend.
 - A supported single-server production stack with Caddy TLS, private data
   services, Alertmanager paging, and encrypted off-host backup hooks.
 - An optional isolated execution worker with bidirectional terminal text-file saving.
-  Production configuration rejects this feature because it is not a sandbox.
+  Production requires a separate worker using gVisor; direct host shell execution
+  is restricted to local development. See
+  [Run isolated terminals](docs/how-to/run-isolated-terminals.md) for setup and limits.
 
 ## Architecture
 
